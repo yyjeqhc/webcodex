@@ -78,7 +78,17 @@ export function useAgentWorkspace(
   const [inbox, setInbox] = useState<InboxDelivery[]>([]);
   const [inboxRevision, setInboxRevision] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("");
+  const [status, setStatusState] = useState("");
+  // Ordinary inventory refreshes clear transient status text, but an
+  // uncertain operation outcome (status 0/503) must survive them: the
+  // operation may still have taken effect and the existing recovery flow is
+  // retrying the same idempotency key. Uncertain writes opt in with
+  // `{ uncertain: true }`; every other write makes the status clearable again.
+  const stickyStatusRef = useRef(false);
+  const setStatus = useCallback((text: string, options?: { uncertain?: boolean }) => {
+    stickyStatusRef.current = options?.uncertain === true;
+    setStatusState(text);
+  }, []);
   const [revision, setRevision] = useState(0);
   const request = useRef<AbortController | null>(null);
   const refreshQueued = useRef(false);
@@ -155,7 +165,7 @@ export function useAgentWorkspace(
         ? current
         : nextAgents[0]?.agent_id || "");
       setSelectedConversationId((current) => current || nextConversations[0]?.conversation_id || "");
-      setStatus("");
+      if (!stickyStatusRef.current) setStatus("");
     }).finally(() => {
       if (request.current !== controller) return;
       request.current = null;
@@ -357,7 +367,7 @@ export function useAgentWorkspace(
         return false;
       }
       if (!response || response.status === 0 || response.status === 503) {
-        setStatus("Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key.");
+        setStatus("Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key.", { uncertain: true });
         return false;
       }
       if (!response.ok || !response.data?.agent) {
@@ -409,7 +419,7 @@ export function useAgentWorkspace(
         return false;
       }
       if (!response || response.status === 0 || response.status === 503) {
-        setStatus("Outcome uncertain. Refresh the Card before deciding whether to retry.");
+        setStatus("Outcome uncertain. Refresh the Card before deciding whether to retry.", { uncertain: true });
         return false;
       }
       if (!response.ok) {
@@ -442,7 +452,7 @@ export function useAgentWorkspace(
           return false;
         }
         if (!detached || detached.status === 0 || detached.status === 503) {
-          setStatus("Previous Endpoint detach is uncertain. Refresh before switching Agents.");
+          setStatus("Previous Endpoint detach is uncertain. Refresh before switching Agents.", { uncertain: true });
           return false;
         }
         if (!detached.ok && detached.status !== 404) return false;
@@ -475,7 +485,7 @@ export function useAgentWorkspace(
         return false;
       }
       if (!response || response.status === 0 || response.status === 503) {
-        setStatus("Outcome uncertain. Retry Attach to replay the same idempotency key.");
+        setStatus("Outcome uncertain. Retry Attach to replay the same idempotency key.", { uncertain: true });
         return false;
       }
       const attached = response.data?.endpoint;
@@ -515,7 +525,7 @@ export function useAgentWorkspace(
         return false;
       }
       if (!response || response.status === 0 || response.status === 503) {
-        setStatus("Detach outcome uncertain. Refresh before retry.");
+        setStatus("Detach outcome uncertain. Refresh before retry.", { uncertain: true });
         return false;
       }
       if (!response.ok && response.status !== 404) {
@@ -566,7 +576,7 @@ export function useAgentWorkspace(
         return false;
       }
       if (!response || response.status === 0 || response.status === 503) {
-        setStatus("Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key.");
+        setStatus("Outcome uncertain. Keep inputs unchanged and retry to replay the same idempotency key.", { uncertain: true });
         return false;
       }
       const conversationId = response.data?.conversation?.conversation?.conversation_id;
@@ -628,7 +638,7 @@ export function useAgentWorkspace(
         return false;
       }
       if (!response || response.status === 0 || response.status === 503) {
-        setStatus("Outcome uncertain. Keep the message unchanged and retry only to replay the same idempotency key.");
+        setStatus("Outcome uncertain. Keep the message unchanged and retry only to replay the same idempotency key.", { uncertain: true });
         return false;
       }
       if (!response.ok || !response.data?.message) {
@@ -658,7 +668,7 @@ export function useAgentWorkspace(
       return false;
     }
     if (!response || response.status === 0 || response.status === 503) {
-      setStatus("Consume outcome uncertain. Refresh before retry; desired-state replay is safe.");
+      setStatus("Consume outcome uncertain. Refresh before retry; desired-state replay is safe.", { uncertain: true });
       return false;
     }
     if (!response.ok) {

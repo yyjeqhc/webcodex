@@ -54,7 +54,17 @@ export function useSessionWorkspace(
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [messages, setMessages] = useState<MessagesResponse | null>(null);
   const [sending, setSending] = useState(false);
-  const [mutationNotice, setMutationNotice] = useState("");
+  const [mutationNotice, setMutationNoticeState] = useState("");
+  // Ordinary message observations clear transient notice text, but an
+  // uncertain mutation outcome (status 0) may already have taken effect and
+  // the existing recovery flow retries the same idempotency key. Uncertain
+  // writes opt in with `{ uncertain: true }`; every other write makes the
+  // notice clearable again.
+  const stickyNoticeRef = useRef(false);
+  const setMutationNotice = useCallback((text: string, options?: { uncertain?: boolean }) => {
+    stickyNoticeRef.current = options?.uncertain === true;
+    setMutationNoticeState(text);
+  }, []);
   const [mutationAllowed, setMutationAllowed] = useState<boolean | null>(null);
   const [detailRevision, setDetailRevision] = useState(0);
   const [messageRevision, setMessageRevision] = useState(0);
@@ -108,7 +118,8 @@ export function useSessionWorkspace(
       if (!response?.ok || !response.data || response.data.session_id !== sessionId) {
         setMessagesAvailability(value => value === "available" || value === "stale" ? "stale" : "error"); return;
       }
-      setMessages(response.data); setMessagesAvailability("available"); setMutationNotice("");
+      setMessages(response.data); setMessagesAvailability("available");
+      if (!stickyNoticeRef.current) setMutationNotice("");
     });
     return () => messageRequest.cancel();
   }, [client, authorityRevision, enabled, loadMessages, projectId, sessionId, onUnauthorized, messageRevision, messageRequest]);
@@ -144,7 +155,7 @@ export function useSessionWorkspace(
         return false;
       }
       if (response?.status === 0) {
-        setMutationNotice("Send outcome unknown. Refresh and review retained messages before retrying.");
+        setMutationNotice("Send outcome unknown. Refresh and review retained messages before retrying.", { uncertain: true });
         return false;
       }
       if (response?.status === 403) {
@@ -182,7 +193,7 @@ export function useSessionWorkspace(
         return false;
       }
       if (response?.status === 0) {
-        setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.");
+        setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.", { uncertain: true });
         return false;
       }
       if (response?.status === 403) {
@@ -217,7 +228,7 @@ export function useSessionWorkspace(
       return false;
     }
     if (response?.status === 0) {
-      setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.");
+      setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.", { uncertain: true });
       return false;
     }
     if (response?.status === 403) {

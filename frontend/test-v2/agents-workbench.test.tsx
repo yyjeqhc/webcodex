@@ -498,6 +498,15 @@ it("protects Agent creation inputs while the create request is in flight", async
   fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "First Agent" } });
   expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  // Repeated same-tick submissions must not enqueue duplicate writes before
+  // React has committed the disabled state.
+  act(() => {
+    const form = screen.getByRole("button", { name: "Create" }).closest("form")!;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+  });
+  expect(createCalls).toBe(1);
+
 
   // While the request is in flight the inputs are locked, so nothing new can
   // be typed into the form that success would then wipe. (fireEvent bypasses
@@ -520,4 +529,44 @@ it("protects Agent creation inputs while the create request is in flight", async
   await waitFor(() => expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(false));
   expect((screen.getByLabelText("Handle") as HTMLInputElement).value).toBe("retry-agent");
   expect((screen.getByLabelText("Display name") as HTMLInputElement).value).toBe("Retry Agent");
+});
+
+it("keeps an uncertain creation notice across inventory refreshes until a definitive result", async () => {
+  let createCalls = 0;
+  const client = clientFor(() => ok({ messages: [] }), (path: string) => {
+    if (path === "communication/agent/create") {
+      createCalls += 1;
+      return createCalls === 1 ? { ok: false, status: 0, data: null } : ok({ agent: agents[0], replayed: true });
+    }
+    return ok({});
+  });
+  const unauthorized = vi.fn();
+  const hook = renderHook(() => useAgentWorkspace(client, true, unauthorized));
+  await act(async () => {});
+  expect(hook.result.current.status).toBe("");
+
+  await act(async () => {
+    await hook.result.current.createAgent({ handle: "reviewer", displayName: "Reviewer", description: "", labels: "" });
+  });
+  expect(hook.result.current.status).toContain("Outcome uncertain");
+
+  // An ordinary inventory refresh must not erase the uncertain notice.
+  act(() => hook.result.current.refresh());
+  await act(async () => {});
+  expect(hook.result.current.status).toContain("Outcome uncertain");
+
+  // Retrying the same input reaches a definitive result through the existing
+  // idempotency key, which replaces the notice and is clearable again.
+  await act(async () => {
+    await hook.result.current.createAgent({ handle: "reviewer", displayName: "Reviewer", description: "", labels: "" });
+  });
+  expect(hook.result.current.status).not.toContain("Outcome uncertain");
+  act(() => hook.result.current.refresh());
+  await act(async () => {});
+  expect(hook.result.current.status).toBe("");
+
+  // The retry reused the exact idempotency key from the uncertain attempt.
+  const createCalls2 = vi.mocked(client.post).mock.calls.filter(([path]) => path === "communication/agent/create");
+  expect(createCalls2).toHaveLength(2);
+  expect(createCalls2[0][1].idempotency_key).toBe(createCalls2[1][1].idempotency_key);
 });

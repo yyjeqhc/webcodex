@@ -72,9 +72,13 @@ export function AgentsPanel({ client, language, onUnauthorized, selectedAgentId,
   useEffect(() => { setSendAsAgent(false); }, [state.selectedAgentId]);
 
   const [submittingCreate, setSubmittingCreate] = useState(false);
+  // A synchronous guard also covers two submit events in one React batch,
+  // before state disables the form on the next render.
+  const submittingCreateRef = useRef(false);
   const submitCreate = async (event: FormEvent) => {
     event.preventDefault();
-    if (submittingCreate) return;
+    if (submittingCreateRef.current) return;
+    submittingCreateRef.current = true;
     setSubmittingCreate(true);
     try {
       const ok = await state.createAgent({
@@ -90,6 +94,7 @@ export function AgentsPanel({ client, language, onUnauthorized, selectedAgentId,
         setCreateLabels("");
       }
     } finally {
+      submittingCreateRef.current = false;
       setSubmittingCreate(false);
     }
   };

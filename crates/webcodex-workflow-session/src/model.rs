@@ -1224,6 +1224,14 @@ pub struct SessionSummary {
     /// consumers that already interpret it as the returned-window base.
     #[serde(default)]
     pub first_retained_sequence: usize,
+    /// True when the full retained history contains a mutating tool call
+    /// without exactly one matching finish. The store computes this over all
+    /// retained events — not just this bounded summary window — so an
+    /// unfinished mutation older than the window still blocks a resume with
+    /// `unconfirmed_tool_execution`. Internal projection fact; never
+    /// model-facing state.
+    #[serde(skip_serializing)]
+    pub unclosed_mutating_call: bool,
     pub messages: SessionMessagesSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_instructions: Option<ProjectInstructionsSummarySnapshot>,

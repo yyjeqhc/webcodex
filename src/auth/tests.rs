@@ -2520,36 +2520,60 @@ async fn auth_middleware_no_challenge_when_oauth2_disabled() {
 }
 
 /// Structural proof that the verifier chain's database work crosses the
-/// blocking boundary: with the store's writer connection held from the runtime
-/// thread, authentication must still complete on a current-thread runtime. If
-/// the database work ran inline on the runtime thread, the await below could
-/// never make progress and the deadline fires (a deadlock, not a timing
-/// measurement).
-#[tokio::test(flavor = "current_thread")]
-async fn authenticate_database_work_runs_on_the_blocking_pool() {
+/// blocking boundary. The main test thread holds the store's writer
+/// connection while the auth chain runs on a separate thread's single-thread
+/// runtime with a heartbeat task: the heartbeat can only fire while the
+/// writer lock is still held if the runtime thread stayed free — i.e. the
+/// database work ran on the blocking pool. With inline database work (the
+/// pre-fix behavior) the runtime thread blocks inside the task poll, the
+/// heartbeat never fires, and the bounded wait below fails the test
+/// deterministically; unwinding drops the lock, the leaked probe finishes,
+/// and the process exits normally instead of hanging.
+#[test]
+fn authenticate_database_work_runs_on_the_blocking_pool() {
+    use std::sync::mpsc;
     use std::time::Duration;
     let config = gate_test_config(Some("secret"));
     let (_tmp, db) = gate_test_db();
     let user = gate_seed_user(&db, "alice");
     let token = gate_mint_user_token(&db, &user);
 
+    let (started, started_rx) = mpsc::channel();
+    let (responsive, responsive_rx) = mpsc::channel::<()>();
+    let db_worker = db.clone();
     let guard = db.conn_for_tests();
-    let db_task = db.clone();
-    let token = token.to_string();
-    let task =
-        tokio::spawn(async move { authenticate(config.clone(), Some(&db_task), &token).await });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        // Let the blocking task park on the writer mutex, then release it.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        drop(guard);
-    })
-    .await
-    .expect("runtime thread must stay responsive while auth waits for the store lock");
-    let result = tokio::time::timeout(Duration::from_secs(5), task)
-        .await
-        .expect("authenticate must complete once the store lock is released")
-        .unwrap()
-        .expect("valid token must authenticate");
-    let context = result.expect("valid token must yield a context");
+    let worker = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("auth probe runtime");
+        runtime.block_on(async move {
+            started.send(()).expect("probe start signal");
+            // Fires only if this runtime thread stays free while the auth
+            // chain waits for the writer lock.
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                let _ = responsive.send(());
+            });
+            tokio::time::timeout(Duration::from_secs(10), async {
+                authenticate(config, Some(&db_worker), &token).await
+            })
+            .await
+            .expect("auth chain must finish once the lock is released")
+        })
+    });
+
+    started_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("auth probe must start");
+    responsive_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("runtime thread must stay responsive while the writer lock is held; inline database work deadlocks it");
+    drop(guard);
+
+    let result = worker.join().expect("auth probe thread must not panic");
+    let context = result
+        .expect("valid token must authenticate")
+        .expect("valid token must yield a context");
     assert_eq!(context.username.as_deref(), Some("alice"));
 }

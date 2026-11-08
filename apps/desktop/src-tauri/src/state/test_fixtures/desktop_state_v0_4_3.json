@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "runtime_binary_source": {"kind": "bundled"},
+  "runtime_selection_revision": 0,
+  "update_cache": {"last_check_at_ms": null, "last_success_at_ms": null, "latest": null, "remind_after_ms": null},
+  "previous_runtime_source": null,
+  "saved_projects": [
+    {"project": {"path": "C:/fixture/projects/one", "allowed_root": "C:/fixture/projects", "is_git_repository": true, "runtime_project_id": "agent:fixture:runner:one"}, "runner_config": "C:/fixture/profile/runner.toml"},
+    {"project": {"path": "C:/fixture/projects/two", "allowed_root": "C:/fixture/projects", "is_git_repository": false, "runtime_project_id": "agent:fixture:runner:two"}, "runner_config": "C:/fixture/profile/runner.toml"}
+  ],
+  "topology": {"experience": "full", "server": {"kind": "local"}, "runner": {"kind": "local"}, "exposure": {"kind": "open_ai_tunnel"}, "enrollment": {"kind": "managed_pairing"}},
+  "project": {"path": "C:/fixture/projects/one", "allowed_root": "C:/fixture/projects", "is_git_repository": true, "runtime_project_id": "agent:fixture:runner:one"},
+  "runtime": {"server_url": "http://127.0.0.1:17890", "server_env_file": "C:/fixture/runtime/local/webcodex.env", "runner_config": "C:/fixture/profile/runner.toml", "user_token_file": "C:/fixture/profile/webcodex-user-token", "project_id": "one", "runtime_project_id": "agent:fixture:runner:one"},
+  "runtime_autostart": true,
+  "preferred_connection": "open_ai_tunnel",
+  "tunnel_proxy": {"mode": "auto"}
+}

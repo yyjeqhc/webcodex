@@ -20,6 +20,101 @@ pub(super) fn store() -> DesktopResult<EnvironmentStore> {
     EnvironmentStore::open(default_environment_dir().map_err(desktop_error)?).map_err(desktop_error)
 }
 
+// Reject reliance on retired discovery before startup or the migration's first
+// owner stop. Explicit saved paths remain authoritative, including agent.toml
+// and project_registry_dir pointing to projects.d; never guess a replacement.
+pub(super) fn validate_legacy_runner_layout(config: &StoredDesktopConfig) -> DesktopResult<()> {
+    if config.persistent_environment.is_some()
+        || !config
+            .topology
+            .as_ref()
+            .is_some_and(|t| t.experience == Experience::Full)
+    {
+        return Ok(());
+    }
+    let Some(path) = config
+        .runtime
+        .as_ref()
+        .and_then(|r| r.runner_config.as_deref())
+    else {
+        return Ok(());
+    };
+    let rejected = || {
+        DesktopError::new(
+        "legacy_runner_layout_unsupported",
+        "The saved Runner relies on retired agent.toml/projects.d discovery or the projects_dir setting",
+        "Keep a full backup and restore the previous working Runtime. Explicitly reconcile the saved Runner config path and project_registry_dir with its original client_id and project IDs, then reconnect that Runner before retrying migration. Desktop will not rename or convert these files.",
+    )
+    };
+    let unreadable = || {
+        DesktopError::new(
+        "legacy_runner_configuration",
+        "The saved Runner configuration or registry layout cannot be inspected",
+        "Restore a readable Runner configuration from the backup and verify its original identity before retrying. Desktop will not select a replacement profile.",
+    )
+    };
+    let inspect = |path: &Path| -> DesktopResult<bool> {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(_) => Err(unreadable()),
+        }
+    };
+    let parent = path.parent().ok_or_else(unreadable)?;
+    if !inspect(path)? {
+        if inspect(&parent.join("agent.toml"))? || inspect(&parent.join("projects.d"))? {
+            return Err(rejected());
+        }
+        // Preserve the existing missing-config error when no retired layout exists.
+        return Ok(());
+    }
+    if !std::fs::metadata(path).map_err(|_| unreadable())?.is_file() {
+        return Err(unreadable());
+    }
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| unreadable())?
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unreadable())?;
+    if bytes.len() > 1024 * 1024 {
+        return Err(unreadable());
+    }
+    let document = std::str::from_utf8(&bytes)
+        .map_err(|_| unreadable())?
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|_| unreadable())?;
+    if document.contains_key("projects_dir") {
+        return Err(rejected());
+    }
+    let legacy_only_registry = |base: &Path| -> DesktopResult<bool> {
+        Ok(inspect(&base.join("projects.d"))? && !inspect(&base.join("project-registry"))?)
+    };
+    if let Some(registry) = document.get("project_registry_dir") {
+        let registry = Path::new(registry.as_str().ok_or_else(unreadable)?);
+        if registry
+            .file_name()
+            .is_some_and(|name| name == "project-registry")
+            && !inspect(registry)?
+            && registry
+                .parent()
+                .map(legacy_only_registry)
+                .transpose()?
+                .unwrap_or(false)
+        {
+            return Err(rejected());
+        }
+    } else {
+        let default_base = webcodex_runner_config::paths::default_client_config_base_dir()
+            .map_err(|_| unreadable())?;
+        if legacy_only_registry(parent)? || legacy_only_registry(&default_base)? {
+            return Err(rejected());
+        }
+    }
+    Ok(())
+}
+
 /// Read the canonical saved scope, rather than offering account-password
 /// recovery for every Windows Runner (interactive user tasks have no password).
 /// Unknown/mismatched environment identity leaves this UI capability disabled.
@@ -351,6 +446,7 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        validate_legacy_runner_layout(&self.config)?;
         self.preflight_providers()?;
         let legacy = self
             .config

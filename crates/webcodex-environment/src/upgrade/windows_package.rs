@@ -1,6 +1,6 @@
 //! A Windows package transaction without an Environment has no service authority.
-//! v0.5 accepts only Environment-aware package identities; older pre-Environment
-//! installs must first cross the published v0.4.6 bridge.
+//! The official v0.4.3 pre-Environment package uses the same sealed file
+//! transaction as an unconfigured Environment-aware package.
 use super::*;
 
 const JOURNAL: &str = "windows-package-upgrade.json";
@@ -10,6 +10,7 @@ const RECEIPT: &str = "windows-package-prepared.json";
 #[serde(rename_all = "snake_case")]
 pub enum InstallationKind {
     Fresh,
+    Legacy,
     Unconfigured,
     Environment,
 }
@@ -163,6 +164,68 @@ async fn probe_installed(path: &Path, name: &str) -> SetupResultValue<MachineBui
         })
 }
 
+fn pre_environment(info: &MachineBuildInfo) -> bool {
+    // v0.4.3 release builds used git rev-parse --short=12. Accept only that
+    // published identity or its exact full SHA, never arbitrary prefixes.
+    info.version == "0.4.3"
+        && matches!(
+            info.git_commit.as_deref(),
+            Some("b96a59a712ca" | "b96a59a712ca5355ad8609cd861cd0c7acb9f99e")
+        )
+        && info.git_dirty == Some(false)
+        && info.environment_data_format.is_none()
+        && matches!(
+            (info.target.as_str(), info.architecture.as_str()),
+            ("x86_64-pc-windows-msvc", "x86_64") | ("aarch64-pc-windows-msvc", "aarch64")
+        )
+}
+
+// Pure classification of the components probed so far, independent of the host
+// OS. classify_inner checks all three, failing before it probes another component
+// when an earlier identity is unsupported or inconsistent.
+fn classify_builds(infos: &[MachineBuildInfo]) -> SetupResultValue<InstallationKind> {
+    let mut kind = None;
+    let first = infos.first().ok_or_else(|| {
+        error(
+            "package_identity",
+            "No installed build identity was provided",
+        )
+    })?;
+    for info in infos {
+        if info.version != first.version
+            || info.git_commit != first.git_commit
+            || info.git_dirty != first.git_dirty
+            || info.target != first.target
+            || info.architecture != first.architecture
+        {
+            return Err(error(
+                "package_identity",
+                "The installed runtime components have different build identities",
+            ));
+        }
+        let observed = if pre_environment(info) {
+            InstallationKind::Legacy
+        } else if info.environment_data_format == Some(DATA_FORMAT)
+            && info.target.ends_with("-pc-windows-msvc")
+        {
+            InstallationKind::Unconfigured
+        } else {
+            return Err(error(
+                "package_identity",
+                "This installed package has no supported upgrade identity",
+            ));
+        };
+        if kind.is_some_and(|k| k != observed) {
+            return Err(error(
+                "package_identity",
+                "The installed package contains mixed installation identities",
+            ));
+        }
+        kind = Some(observed);
+    }
+    Ok(kind.expect("at least one checked program"))
+}
+
 async fn classify_inner(
     store: &EnvironmentStore,
     runtime: &Path,
@@ -217,42 +280,19 @@ async fn classify_inner(
     for path in files.values() {
         owner_path(path, &owner)?;
     }
+    let mut infos = Vec::with_capacity(3);
     let mut kind = None;
-    let mut identity = None;
     for name in ["webcodex", "webcodex-server", "webcodex-runner"] {
         let before = digest(&files[name])?;
         let info = probe_installed(&files[name], name).await?;
-        let build = (
-            info.version.clone(),
-            info.git_commit.clone(),
-            info.git_dirty,
-            info.target.clone(),
-            info.architecture.clone(),
-        );
-        if identity.as_ref().is_some_and(|previous| previous != &build) {
-            return Err(error(
-                "package_identity",
-                "The installed runtime components have different build identities",
-            ));
-        }
-        identity = Some(build);
-        let observed = if info.environment_data_format == Some(DATA_FORMAT)
-            && info.target.ends_with("-pc-windows-msvc")
-        {
-            InstallationKind::Unconfigured
-        } else {
-            return Err(error(
-                "package_identity",
-                "This installed package predates the minimum direct upgrade source; upgrade through v0.4.6 first",
-            ));
-        };
-        if digest(&files[name])? != before || kind.is_some_and(|k| k != observed) {
+        infos.push(info);
+        kind = Some(classify_builds(&infos)?);
+        if digest(&files[name])? != before {
             return Err(error(
                 "package_identity",
                 "The installed package contains changing or mixed installation identities",
             ));
         }
-        kind = Some(observed);
     }
     Ok(kind.expect("three checked programs"))
 }
@@ -305,7 +345,10 @@ fn load_bound(store: &EnvironmentStore, runtime: &Path) -> SetupResultValue<Pack
         || !journal.candidate.provenance_verified
         || journal.owner_identity != owner
         || journal.runtime_dir != runtime
-        || journal.kind != InstallationKind::Unconfigured
+        || !matches!(
+            journal.kind,
+            InstallationKind::Legacy | InstallationKind::Unconfigured
+        )
         || receipt(&journal).targets != expected
         || journal.programs.len() != expected.len()
         || uuid::Uuid::parse_str(&journal.operation_id).is_err()
@@ -376,7 +419,10 @@ async fn preflight_verified(
             ));
         }
     }
-    if classify_inner(store, runtime).await? != InstallationKind::Unconfigured {
+    if !matches!(
+        classify_inner(store, runtime).await?,
+        InstallationKind::Legacy | InstallationKind::Unconfigured
+    ) {
         return Err(error(
             "installer_environment",
             "This is not an unconfigured Windows package upgrade",
@@ -492,7 +538,10 @@ pub async fn prepare(
         }
     }
     let kind = classify_inner(store, runtime).await?;
-    if kind != InstallationKind::Unconfigured {
+    if !matches!(
+        kind,
+        InstallationKind::Legacy | InstallationKind::Unconfigured
+    ) {
         return Err(error(
             "installer_environment",
             "Use the installed Environment owner's transaction",

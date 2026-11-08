@@ -110,3 +110,7 @@ include!("state/readiness.rs");
 include!("state/persistence.rs");
 include!("state/tunnel.rs");
 include!("state/tests.rs");
+
+#[cfg(test)]
+#[path = "state/legacy_upgrade_tests.rs"]
+mod legacy_upgrade_tests;

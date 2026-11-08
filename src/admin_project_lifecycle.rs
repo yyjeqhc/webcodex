@@ -1,4 +1,4 @@
-use crate::auth::AuthContext;
+use crate::auth::{AuthContext, AuthKind};
 use crate::db::AdminProjectAudit;
 use crate::json_digest::update_sha256_with_json;
 use crate::runner_http::{RunnerFeature, RunnerRegistry};
@@ -63,6 +63,30 @@ pub(crate) struct ProjectMutationRequest {
     pub expected_revision: String,
     pub idempotency_key: String,
     pub confirm: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateProjectAllowPatchRequest {
+    pub project: String,
+    pub expected_revision: String,
+    pub allow_patch: bool,
+    pub idempotency_key: String,
+    pub confirm: bool,
+}
+
+// Shared with the HTTP admin guard. Disallowed machine credential kinds
+// cannot gain access even if a malformed identity includes an admin scope.
+pub(crate) fn admin_project_mutation_authorized(auth: &AuthContext) -> bool {
+    auth.is_admin()
+        && !matches!(
+            auth.kind,
+            AuthKind::AgentToken
+                | AuthKind::ProjectCredential
+                | AuthKind::SharedKey
+                | AuthKind::OpenAnonymous
+                | AuthKind::AccountCredential
+        )
 }
 
 fn default_true() -> bool {
@@ -189,6 +213,42 @@ impl AdminProjectLifecycleService {
         .await
     }
 
+    /// Admin-only, revision-guarded single-field Project update.
+    pub(crate) async fn update_allow_patch(
+        &self,
+        auth: &AuthContext,
+        request: UpdateProjectAllowPatchRequest,
+    ) -> ServiceResponse {
+        if !admin_project_mutation_authorized(auth) {
+            return api_error(403, "forbidden");
+        }
+        let target = request.project.clone();
+        self.idempotent(
+            auth,
+            "update_allow_patch",
+            &target,
+            &request,
+            &request.idempotency_key,
+            || async {
+                if !request.confirm {
+                    return Err(api_error(400, "invalid_request"));
+                }
+                Self::mutate_authorized_core(
+                    self.runtime.as_ref(),
+                    Some(auth),
+                    "update_allow_patch",
+                    &request.project,
+                    &request.expected_revision,
+                    "admin_project_settings",
+                    false,
+                    Some(request.allow_patch),
+                )
+                .await
+            },
+        )
+        .await
+    }
+
     pub(crate) async fn mutate(
         &self,
         auth: &AuthContext,
@@ -214,6 +274,7 @@ impl AdminProjectLifecycleService {
                     &request.expected_revision,
                     "admin_project_lifecycle",
                     false,
+                    None,
                 )
                 .await
             },
@@ -229,6 +290,7 @@ impl AdminProjectLifecycleService {
         expected_revision: &str,
         requester: &'static str,
         require_owner_access: bool,
+        allow_patch: Option<bool>,
     ) -> Result<ServiceResponse, ServiceResponse> {
         validate_revision(expected_revision)?;
         let (client_id, project_id) = parse_runtime_project(target)?;
@@ -256,9 +318,26 @@ impl AdminProjectLifecycleService {
         if !client.supports(RunnerFeature::ProjectLifecycle) {
             return Err(api_error(409, "unsupported_runner_version"));
         }
+        if action == "update_allow_patch" && !client.supports(RunnerFeature::ProjectSettingsUpdate)
+        {
+            return Err(api_error(409, "unsupported_runner_version"));
+        }
         let project = client.view.projects.iter().find(|p| p.id == project_id);
         if action != "unregister" && project.is_none() {
             return Err(api_error(404, "project_not_found"));
+        }
+        if action == "update_allow_patch" {
+            let Some(project) = project else {
+                return Err(api_error(404, "project_not_found"));
+            };
+            if project.revision.as_deref() != Some(expected_revision) {
+                return Err(api_error(409, "revision_conflict"));
+            }
+            // Never change permissions on a Project whose current root
+            // identity was not proven by the Runner inventory.
+            if project.root_fingerprint.is_none() {
+                return Err(api_error(409, "project_root_unverified"));
+            }
         }
         let (active_jobs, _unregister_fence) = if action == "unregister" {
             let active = runtime
@@ -288,12 +367,24 @@ impl AdminProjectLifecycleService {
                 None,
             )
         };
-        let payload = serde_json::to_string(&json!({
+        let mut payload_value = json!({
             "project_id": project_id,
             "expected_revision": expected_revision,
-        }))
-        .map_err(|_| api_error(500, "operation_failed"))?;
-        let kind = format!("project_lifecycle_{action}");
+        });
+        if action == "update_allow_patch" {
+            payload_value["allow_patch"] =
+                json!(allow_patch.ok_or_else(|| api_error(400, "invalid_request"))?);
+            payload_value["expected_root_fingerprint"] = json!(project
+                .and_then(|project| project.root_fingerprint.as_deref())
+                .ok_or_else(|| api_error(409, "project_root_unverified"))?);
+        }
+        let payload = serde_json::to_string(&payload_value)
+            .map_err(|_| api_error(500, "operation_failed"))?;
+        let kind = if action == "update_allow_patch" {
+            "project_update_allow_patch".to_string()
+        } else {
+            format!("project_lifecycle_{action}")
+        };
         let (request_id, receiver) = runtime
             .runner_registry
             .enqueue_project_op(client_id.clone(), &kind, payload, requester.to_string())
@@ -317,6 +408,11 @@ impl AdminProjectLifecycleService {
         if response.exit_code != Some(0) {
             return Err(api_error(500, "operation_failed"));
         }
+        if action == "update_allow_patch"
+            && output.get("allow_patch").and_then(Value::as_bool) != allow_patch
+        {
+            return Err(api_error(502, "operation_failed"));
+        }
         let outcome = output
             .get("outcome")
             .and_then(Value::as_str)
@@ -326,6 +422,31 @@ impl AdminProjectLifecycleService {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let revision = output.get("revision").cloned().unwrap_or(Value::Null);
+        if action == "update_allow_patch" {
+            let expected_outcome = if changed {
+                "allow_patch_updated"
+            } else {
+                "already_updated"
+            };
+            let next_revision = revision
+                .as_str()
+                .ok_or_else(|| api_error(502, "operation_failed"))?;
+            validate_revision(next_revision).map_err(|_| api_error(502, "operation_failed"))?;
+            if outcome != expected_outcome
+                || output.get("changed").and_then(Value::as_bool) != Some(changed)
+                || (next_revision != expected_revision) != changed
+                || output.get("previous_revision").and_then(Value::as_str)
+                    != Some(expected_revision)
+                || output.get("agent_project_id").and_then(Value::as_str)
+                    != Some(project_id.as_str())
+                || output
+                    .get("registration_incarnation")
+                    .and_then(Value::as_str)
+                    != project.and_then(|p| p.registration_incarnation.as_deref())
+            {
+                return Err(api_error(502, "operation_failed"));
+            }
+        }
         if action == "unregister" && matches!(outcome, "unregistered" | "already_unregistered") {
             if runtime
                 .runner_registry
@@ -333,6 +454,48 @@ impl AdminProjectLifecycleService {
                     &client_id,
                     &client.view.runner_instance_id,
                     &project_id,
+                )
+                .await
+                .is_err()
+            {
+                return Err(project_projection_reconcile_response(
+                    target,
+                    outcome,
+                    changed,
+                    revision.clone(),
+                    "server_project_projection_failed",
+                ));
+            }
+        } else if action == "update_allow_patch" {
+            let Some(new_revision) = revision.as_str() else {
+                return Err(project_projection_reconcile_response(
+                    target,
+                    outcome,
+                    changed,
+                    revision.clone(),
+                    "authoritative_revision_missing",
+                ));
+            };
+            let Some(root_fingerprint) = output.get("root_fingerprint").and_then(Value::as_str)
+            else {
+                return Err(project_projection_reconcile_response(
+                    target,
+                    outcome,
+                    changed,
+                    revision.clone(),
+                    "authoritative_root_missing",
+                ));
+            };
+            if runtime
+                .runner_registry
+                .update_runner_project_allow_patch_for_instance(
+                    &client_id,
+                    &client.view.runner_instance_id,
+                    &project_id,
+                    expected_revision,
+                    new_revision,
+                    root_fingerprint,
+                    allow_patch.ok_or_else(|| api_error(400, "invalid_request"))?,
                 )
                 .await
                 .is_err()
@@ -379,17 +542,24 @@ impl AdminProjectLifecycleService {
         } else {
             json!([])
         };
+        let mut receipt = json!({
+            "operation": action,
+            "project": target,
+            "outcome": outcome,
+            "changed": changed,
+            "revision": revision,
+            "active_jobs": active_jobs,
+            "warnings": warnings
+        });
+        if action == "update_allow_patch" {
+            // Durable, non-sensitive before/after receipt, persisted under the
+            // existing idempotency key. Do not change other lifecycle receipts.
+            receipt["previous_revision"] = json!(expected_revision);
+            receipt["allow_patch"] = json!(allow_patch);
+        }
         Ok(ServiceResponse {
             status: 200,
-            body: json!({
-                "operation": action,
-                "project": target,
-                "outcome": outcome,
-                "changed": changed,
-                "revision": revision,
-                "active_jobs": active_jobs,
-                "warnings": warnings
-            }),
+            body: receipt,
         })
     }
 
@@ -541,6 +711,7 @@ pub(crate) async fn unregister_project_runtime(
         expected_revision,
         "project_unregister",
         true,
+        None,
     )
     .await
     {
@@ -584,6 +755,8 @@ fn is_persistable_terminal(response: &ServiceResponse) -> bool {
                 | "already_enabled"
                 | "already_disabled"
                 | "already_unregistered"
+                | "allow_patch_updated"
+                | "already_updated"
         )
     )
 }
@@ -826,6 +999,7 @@ fn api_error(status: u16, code: &str) -> ServiceResponse {
 fn map_agent_error(error: &str) -> ServiceResponse {
     match error {
         "revision_conflict" => api_error(409, "revision_conflict"),
+        "root_identity_conflict" => api_error(409, "root_identity_conflict"),
         "project_not_found" => api_error(404, "project_not_found"),
         "path_outside_allowed_roots" => api_error(400, "path_outside_allowed_roots"),
         "path_not_empty" => api_error(409, "path_not_empty"),
@@ -848,6 +1022,76 @@ mod tests {
     use webcodex_runner_registry::{JobStartContext, JobStartRequest};
 
     use crate::runner_protocol::{RunnerCapabilities, RunnerRegisterRequest};
+
+    #[test]
+    fn project_settings_permission_rejects_ordinary_and_machine_credentials() {
+        let mut principal = user_auth("ordinary");
+        assert!(!admin_project_mutation_authorized(&principal));
+        principal.scopes = vec![crate::auth::scopes::SCOPE_ADMIN.to_string()];
+        assert!(admin_project_mutation_authorized(&principal));
+        for kind in [
+            AuthKind::AgentToken,
+            AuthKind::ProjectCredential,
+            AuthKind::SharedKey,
+            AuthKind::OpenAnonymous,
+            AuthKind::AccountCredential,
+        ] {
+            principal.kind = kind;
+            assert!(!admin_project_mutation_authorized(&principal));
+        }
+        principal.kind = AuthKind::Bootstrap;
+        principal.is_bootstrap = true;
+        assert!(admin_project_mutation_authorized(&principal));
+    }
+
+    #[test]
+    fn older_lifecycle_runner_cannot_advertise_project_settings_updates() {
+        let caps = RunnerCapabilities {
+            project_lifecycle: true,
+            ..RunnerCapabilities::default()
+        };
+        assert!(!caps.project_settings_update);
+    }
+
+    #[test]
+    fn update_allow_patch_contract_rejects_extra_fields_and_invalid_types() {
+        let request = json!({
+            "project": "agent:runner:demo",
+            "expected_revision": format!("sha256:{}", "a".repeat(64)),
+            "allow_patch": false,
+            "idempotency_key": "one-operation",
+            "confirm": true
+        });
+        let parsed: UpdateProjectAllowPatchRequest =
+            serde_json::from_value(request.clone()).unwrap();
+        assert!(!parsed.allow_patch);
+        assert!(parsed.confirm);
+        validate_revision(&parsed.expected_revision).unwrap();
+        assert_eq!(
+            parse_runtime_project(&parsed.project).unwrap(),
+            ("runner".into(), "demo".into())
+        );
+        let mut malformed = request.clone();
+        malformed["allow_patch"] = json!("false");
+        assert!(serde_json::from_value::<UpdateProjectAllowPatchRequest>(malformed).is_err());
+        let mut unexpected = request.clone();
+        unexpected["name"] = json!("must not be overwritten");
+        assert!(serde_json::from_value::<UpdateProjectAllowPatchRequest>(unexpected).is_err());
+        let mut missing_revision = request.clone();
+        missing_revision
+            .as_object_mut()
+            .unwrap()
+            .remove("expected_revision");
+        assert!(
+            serde_json::from_value::<UpdateProjectAllowPatchRequest>(missing_revision).is_err()
+        );
+        for outcome in ["allow_patch_updated", "already_updated"] {
+            assert!(is_persistable_terminal(&ServiceResponse {
+                status: 200,
+                body: json!({"outcome":outcome})
+            }));
+        }
+    }
 
     #[test]
     fn idempotency_json_digest_matches_buffered_hash() {

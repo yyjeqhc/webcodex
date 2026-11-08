@@ -1,6 +1,6 @@
 use crate::admin_project_lifecycle::{
     AdminProjectLifecycleService, CreateProjectRequest, ProjectMutationRequest,
-    RegisterProjectRequest, ServiceResponse,
+    RegisterProjectRequest, ServiceResponse, UpdateProjectAllowPatchRequest,
 };
 use crate::auth::{AuthContext, AuthKind};
 use crate::tool_runtime::activity::ActivityVisibility;
@@ -24,6 +24,10 @@ pub(crate) fn routes() -> Router {
         .push(Router::with_path(api_path(RouteId::AdminProjectsCreate)).post(create_project))
         .push(Router::with_path(api_path(RouteId::AdminProjectsEnable)).post(enable_project))
         .push(Router::with_path(api_path(RouteId::AdminProjectsDisable)).post(disable_project))
+        .push(
+            Router::with_path(api_path(RouteId::AdminProjectsUpdateAllowPatch))
+                .post(update_allow_patch),
+        )
         .push(
             Router::with_path(api_path(RouteId::AdminProjectsUnregister)).post(unregister_project),
         )
@@ -192,16 +196,7 @@ fn require_admin(depot: &Depot) -> Result<AuthContext, (StatusCode, &'static str
         .obtain::<AuthContext>()
         .cloned()
         .map_err(|_| (StatusCode::UNAUTHORIZED, "authentication required"))?;
-    if !auth.is_admin()
-        || matches!(
-            auth.kind,
-            AuthKind::AgentToken
-                | AuthKind::ProjectCredential
-                | AuthKind::SharedKey
-                | AuthKind::OpenAnonymous
-                | AuthKind::AccountCredential
-        )
-    {
+    if !crate::admin_project_lifecycle::admin_project_mutation_authorized(&auth) {
         return Err((
             StatusCode::FORBIDDEN,
             "bootstrap or admin-scoped token required",
@@ -316,6 +311,19 @@ async fn disable_project(req: &mut Request, depot: &mut Depot, res: &mut Respons
 #[handler]
 async fn unregister_project(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     mutate_project("unregister", req, depot, res).await;
+}
+
+#[handler]
+async fn update_allow_patch(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (auth, service) = match lifecycle_context(req, depot).await {
+        Ok(value) => value,
+        Err(response) => return render_service_response(res, response),
+    };
+    let body = match parse_admin_json::<UpdateProjectAllowPatchRequest>(req).await {
+        Ok(value) => value,
+        Err(response) => return render_service_response(res, response),
+    };
+    render_service_response(res, service.update_allow_patch(&auth, body).await);
 }
 
 #[handler]

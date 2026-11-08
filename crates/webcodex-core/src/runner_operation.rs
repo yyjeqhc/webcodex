@@ -467,6 +467,7 @@ pub enum RunnerProjectOperationKind {
     LifecycleEnable,
     LifecycleDisable,
     LifecycleUnregister,
+    UpdateAllowPatch,
 }
 
 impl RunnerProjectOperationKind {
@@ -479,6 +480,7 @@ impl RunnerProjectOperationKind {
             Self::LifecycleEnable => "project_lifecycle_enable",
             Self::LifecycleDisable => "project_lifecycle_disable",
             Self::LifecycleUnregister => "project_lifecycle_unregister",
+            Self::UpdateAllowPatch => "project_update_allow_patch",
         }
     }
 
@@ -491,6 +493,7 @@ impl RunnerProjectOperationKind {
             "project_lifecycle_enable" => Self::LifecycleEnable,
             "project_lifecycle_disable" => Self::LifecycleDisable,
             "project_lifecycle_unregister" => Self::LifecycleUnregister,
+            "project_update_allow_patch" => Self::UpdateAllowPatch,
             _ => return None,
         })
     }
@@ -3451,6 +3454,7 @@ mod tests {
             RunnerProjectOperationKind::LifecycleEnable,
             RunnerProjectOperationKind::LifecycleDisable,
             RunnerProjectOperationKind::LifecycleUnregister,
+            RunnerProjectOperationKind::UpdateAllowPatch,
         ] {
             operations.push(RunnerOperation::Project(RunnerProjectOperation {
                 kind,
@@ -3530,6 +3534,7 @@ mod tests {
             "project_lifecycle_enable",
             "project_lifecycle_disable",
             "project_lifecycle_unregister",
+            "project_update_allow_patch",
             "computer_list_windows",
             "computer_list_applications",
             "computer_launch_application",

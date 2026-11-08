@@ -63,6 +63,15 @@ pub(super) const ADMIN_ROUTES: &[RouteSpec] = &[
         AuthMiddleware,
     ),
     route(
+        AdminProjectsUpdateAllowPatch,
+        Post,
+        "/api/admin/projects/update-allow-patch",
+        BootstrapOnly,
+        Admin,
+        Other,
+        AuthMiddleware,
+    ),
+    route(
         AdminProjectsUnregister,
         Post,
         "/api/admin/projects/unregister",

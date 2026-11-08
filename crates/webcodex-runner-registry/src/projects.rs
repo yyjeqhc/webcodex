@@ -38,6 +38,73 @@ fn upsert_project_summary(projects: &mut Vec<RunnerProjectSummary>, project: Run
     }
 }
 
+// A late Runner response must never overwrite a newer Server Project view.
+fn update_cached_allow_patch(
+    project: &mut RunnerProjectSummary,
+    expected_revision: &str,
+    revision: &str,
+    root_fingerprint: &str,
+    allow_patch: bool,
+) -> Result<(), String> {
+    if project.revision.as_deref() != Some(expected_revision)
+        || project.root_fingerprint.as_deref() != Some(root_fingerprint)
+    {
+        return Err("Project revision or root identity changed".into());
+    }
+    project.allow_patch = allow_patch;
+    project.revision = Some(revision.to_string());
+    project.updated_at = crate::registry::now_ts();
+    Ok(())
+}
+
+#[cfg(test)]
+mod allow_patch_projection_tests {
+    use super::*;
+
+    #[test]
+    fn update_only_one_projection_field_and_reject_stale_or_retargeted() {
+        let mut project: RunnerProjectSummary = serde_json::from_value(serde_json::json!({
+            "id": "demo", "name": "Keep", "path": "/source",
+            "allow_patch": true, "revision": "sha256:old",
+            "root_fingerprint": "sha256:root", "hooks": ["before_edit"],
+            "git_branch": "main", "updated_at": 1, "shell_profile": "private-profile"
+        }))
+        .unwrap();
+        update_cached_allow_patch(
+            &mut project,
+            "sha256:old",
+            "sha256:new",
+            "sha256:root",
+            false,
+        )
+        .unwrap();
+        assert!(!project.allow_patch);
+        assert_eq!(project.revision.as_deref(), Some("sha256:new"));
+        assert_eq!(project.name.as_deref(), Some("Keep"));
+        assert_eq!(project.hooks, vec!["before_edit".to_string()]);
+        assert_eq!(project.shell_profile.as_deref(), Some("private-profile"));
+        assert_eq!(project.git_branch.as_deref(), Some("main"));
+        let snapshot = serde_json::to_value(&project).unwrap();
+        assert!(update_cached_allow_patch(
+            &mut project,
+            "sha256:old",
+            "sha256:bad",
+            "sha256:root",
+            true
+        )
+        .is_err());
+        assert!(update_cached_allow_patch(
+            &mut project,
+            "sha256:new",
+            "sha256:bad",
+            "sha256:retarget",
+            true
+        )
+        .is_err());
+        assert_eq!(serde_json::to_value(&project).unwrap(), snapshot);
+    }
+}
+
 impl RunnerRegistry {
     /// Return an immutable clone of the canonical feature truth for one
     /// registered Runner. This is an internal semantic query, never a wire
@@ -143,6 +210,41 @@ impl RunnerRegistry {
             ));
         }
         upsert_project_summary(&mut runner.projects, project);
+        reconcile_dynamic_projection(runner, crate::registry::now_ts());
+        Ok(())
+    }
+
+    /// CAS only the requested permission on the live Server projection.
+    pub async fn update_runner_project_allow_patch_for_instance(
+        &self,
+        client_id: &str,
+        runner_instance_id: &str,
+        project_id: &str,
+        expected_revision: &str,
+        revision: &str,
+        root_fingerprint: &str,
+        allow_patch: bool,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        let runner = inner
+            .runners
+            .get_mut(client_id)
+            .ok_or_else(|| format!("unknown shell client: {client_id}"))?;
+        if runner.runner_instance_id != runner_instance_id {
+            return Err("runner instance changed during Project update".into());
+        }
+        let project = runner
+            .projects
+            .iter_mut()
+            .find(|p| p.id == project_id)
+            .ok_or_else(|| "Project removed during update".to_string())?;
+        update_cached_allow_patch(
+            project,
+            expected_revision,
+            revision,
+            root_fingerprint,
+            allow_patch,
+        )?;
         reconcile_dynamic_projection(runner, crate::registry::now_ts());
         Ok(())
     }

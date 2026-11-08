@@ -307,6 +307,7 @@ pub(crate) fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabili
         cfg!(any(target_os = "linux", target_os = "macos", windows)),
     );
     capabilities.set(RunnerCapabilityId::ProjectLifecycle, true);
+    capabilities.set(RunnerCapabilityId::ProjectSettingsUpdate, true);
     // This binary implements resolve_or_register_project; do not trust config to
     // advertise a capability that the binary does not implement.
     capabilities.set(RunnerCapabilityId::ProjectPathRegistration, true);

@@ -1507,6 +1507,13 @@ impl ToolRuntime {
                 Some(WakeReason::ItemError)
             } else if observed_terminal_satisfied(&initial, wake_on) {
                 Some(WakeReason::Terminal)
+            } else if initial
+                .iter()
+                .any(|item| item.result.output["log_delta_status"] == "reset")
+            {
+                // A reset invalidates the caller's baseline (e.g. a Server restart).
+                // Refresh it before coalescing ordinary updates for a terminal wait.
+                Some(WakeReason::Updated)
             } else if wake_on == ObserveJobsWakeOn::Change && observed_has_change(&initial) {
                 Some(WakeReason::Updated)
             } else if wake_on == ObserveJobsWakeOn::MeaningfulChange

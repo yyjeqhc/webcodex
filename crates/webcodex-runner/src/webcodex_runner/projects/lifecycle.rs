@@ -13,11 +13,10 @@ use super::catalog::{
 };
 use super::created_paths::{write_created_file, CreatedProjectPaths};
 use super::registration::{
-    build_project_toml, sync_dir, sync_parent_dir, sync_project_parent_after_rename,
-    unique_registry_temp, validate_model_network_project_ingress_authority,
-    validate_project_op_description, validate_project_op_id, validate_project_op_name,
-    validate_project_path_policy, validate_windows_project_root, write_project_toml_atomic,
-    ProjectTomlWriteError,
+    build_project_toml, sync_dir, sync_project_parent_after_rename, unique_registry_temp,
+    validate_model_network_project_ingress_authority, validate_project_op_description,
+    validate_project_op_id, validate_project_op_name, validate_project_path_policy,
+    validate_windows_project_root, write_project_toml_atomic, ProjectTomlWriteError,
 };
 use super::{
     project_error_cmd, project_registry_write_lock, structured_project_error_cmd, RunnerProjectFile,
@@ -65,7 +64,7 @@ pub(super) fn write_existing_project_atomic(path: &Path, content: &str) -> Resul
             .map_err(|e| format!("failed to sync lifecycle temp file: {e}"))?;
         std::fs::rename(&temp, path)
             .map_err(|e| format!("failed to atomically replace project config: {e}"))?;
-        sync_parent_dir(path)
+        sync_project_parent_after_rename(path)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
@@ -108,6 +107,109 @@ fn unregister_project_config(path: &Path) -> Result<(), ProjectUnregisterError> 
     sync_project_parent_after_rename(path).map_err(|_| ProjectUnregisterError::AfterRename)
 }
 
+fn update_allow_patch_locked(
+    policy: &RunnerPolicy,
+    config_path: &Path,
+    content: &str,
+    project: &RunnerProjectFile,
+    id: &str,
+    expected_revision: &str,
+    payload: &serde_json::Value,
+    start: Instant,
+) -> CommandResult {
+    let Some(fields) = payload.as_object() else {
+        return project_error_cmd(start, "invalid_request");
+    };
+    if fields.len() != 4
+        || !fields.contains_key("project_id")
+        || !fields.contains_key("expected_revision")
+        || !fields.contains_key("expected_root_fingerprint")
+    {
+        return project_error_cmd(start, "invalid_request");
+    }
+    let Some(allow_patch) = fields
+        .get("allow_patch")
+        .and_then(serde_json::Value::as_bool)
+    else {
+        return project_error_cmd(start, "invalid_request");
+    };
+    let Some(expected_root_fingerprint) = fields
+        .get("expected_root_fingerprint")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return project_error_cmd(start, "invalid_request");
+    };
+    if project.id != id {
+        return project_error_cmd(start, "project_not_found");
+    }
+    let previous_revision = project_revision(project);
+    // CAS must precede even a no-op: stale authority never succeeds.
+    if expected_revision != previous_revision {
+        return project_error_cmd(start, "revision_conflict");
+    }
+    let canonical = match canonicalize_existing(Path::new(&project.path)) {
+        Ok(path) if path.is_dir() => path,
+        _ => return project_error_cmd(start, "project_not_found"),
+    };
+    if let Err(reason) = validate_windows_project_root(&canonical) {
+        return project_error_cmd(start, reason);
+    }
+    if validate_project_path_policy(policy, &canonical).is_err() {
+        return project_error_cmd(start, "path_outside_allowed_roots");
+    }
+    if project_root_fingerprint(&canonical) != expected_root_fingerprint {
+        return project_error_cmd(start, "root_identity_conflict");
+    }
+    let changed = project.allow_patch != allow_patch;
+    let updated = if changed {
+        let Ok(mut document) = content.parse::<toml_edit::DocumentMut>() else {
+            return project_error_cmd(start, "operation_failed");
+        };
+        document["allow_patch"] = toml_edit::value(allow_patch);
+        // Revalidate the exact resulting project before any persistence.
+        let serialized = document.to_string();
+        let Ok(updated) = parse_runner_project_toml(&serialized) else {
+            return project_error_cmd(start, "operation_failed");
+        };
+        if updated.id != project.id || updated.path != project.path {
+            return project_error_cmd(start, "operation_failed");
+        }
+        if write_existing_project_atomic(config_path, &serialized).is_err() {
+            // Rename may have occurred; never imply it is safe to retry.
+            return structured_project_error_cmd(
+                start,
+                "operation_indeterminate",
+                true,
+                serde_json::json!({}),
+            );
+        }
+        updated
+    } else {
+        project.clone()
+    };
+    ok_cmd(
+        start,
+        serde_json::json!({
+            "operation": "update_allow_patch",
+            "agent_project_id": id,
+            "outcome": if changed { "allow_patch_updated" } else { "already_updated" },
+            "changed": changed,
+            "revision": project_revision(&updated),
+            "previous_revision": previous_revision,
+            "registration_incarnation": updated.registration_incarnation,
+            "disabled": updated.disabled,
+            "path": updated.path,
+            "name": updated.name,
+            "kind": updated.kind,
+            "registration_source": effective_registration_source(&updated).as_str(),
+            "description": updated.description,
+            "allow_patch": updated.allow_patch,
+            "root_fingerprint": Some(project_root_fingerprint(&canonical)),
+            "lineage": project_lineage(&updated)
+        }),
+    )
+}
+
 /// Structured, non-shell project lifecycle mutation. Unregister only removes
 /// the registry TOML and never touches the project path or Git data.
 pub(crate) fn handle_project_lifecycle_operation(
@@ -124,6 +226,7 @@ pub(crate) fn handle_project_lifecycle_operation(
         RunnerProjectOperationKind::LifecycleEnable => "enable",
         RunnerProjectOperationKind::LifecycleDisable => "disable",
         RunnerProjectOperationKind::LifecycleUnregister => "unregister",
+        RunnerProjectOperationKind::UpdateAllowPatch => "update_allow_patch",
         _ => return project_error_cmd(start, "unsupported_runner_version"),
     };
     let payload: serde_json::Value = match serde_json::from_str(&operation.payload).ok() {
@@ -158,6 +261,12 @@ pub(crate) fn handle_project_lifecycle_operation(
         }
         return project_error_cmd(start, "project_not_found");
     }
+    if action == "update_allow_patch" {
+        match std::fs::symlink_metadata(&config_path) {
+            Ok(meta) if meta.file_type().is_file() => {}
+            _ => return project_error_cmd(start, "project_not_found"),
+        }
+    }
     let content = match std::fs::read_to_string(&config_path) {
         Ok(v) => v,
         Err(_) => return project_error_cmd(start, "operation_failed"),
@@ -166,6 +275,18 @@ pub(crate) fn handle_project_lifecycle_operation(
         Ok(v) => v,
         Err(_) => return project_error_cmd(start, "operation_failed"),
     };
+    if action == "update_allow_patch" {
+        return update_allow_patch_locked(
+            policy,
+            &config_path,
+            &content,
+            &project,
+            id,
+            expected_revision,
+            &payload,
+            start,
+        );
+    }
     let current_revision = project_revision(&project);
     let desired_disabled = action == "disable";
     if action != "unregister" && project.disabled == desired_disabled {
@@ -252,6 +373,265 @@ pub(crate) fn handle_project_lifecycle_operation(
             "lineage": project_lineage(&project)
         }),
     )
+}
+
+#[cfg(test)]
+mod allow_patch_update_tests {
+    use super::*;
+
+    fn fixture() -> (tempfile::TempDir, PathBuf, RunnerPolicy, String, String) {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = temp.path().join("registry");
+        let source = temp.path().join("source");
+        std::fs::create_dir(&registry).unwrap();
+        std::fs::create_dir(&source).unwrap();
+        let content = format!(
+            "# retained comment\n{}future_field = \"untouched\"\n",
+            super::super::registration::build_project_toml(
+                "demo",
+                "Existing",
+                source.to_str().unwrap(),
+                &Some("Retained".into()),
+                true
+            )
+        );
+        std::fs::write(registry.join("demo.toml"), &content).unwrap();
+        let revision = project_revision(&parse_runner_project_toml(&content).unwrap());
+        let policy = RunnerPolicy {
+            allowed_roots: vec![temp.path().to_path_buf()],
+            ..RunnerPolicy::default()
+        };
+        (temp, registry, policy, content, revision)
+    }
+
+    fn request(revision: &str, allow_patch: bool, registry: &Path) -> RunnerProjectOperation {
+        let content = std::fs::read_to_string(registry.join("demo.toml")).unwrap();
+        let project = parse_runner_project_toml(&content).unwrap();
+        let canonical = canonicalize_existing(Path::new(&project.path)).unwrap();
+        RunnerProjectOperation {
+            kind: RunnerProjectOperationKind::UpdateAllowPatch,
+            payload: serde_json::json!({
+                "project_id": "demo",
+                "expected_revision": revision,
+                "expected_root_fingerprint": project_root_fingerprint(&canonical),
+                "allow_patch": allow_patch
+            })
+            .to_string(),
+        }
+    }
+
+    fn value(result: CommandResult) -> serde_json::Value {
+        serde_json::from_str(result.stdout.as_deref().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn update_is_single_field_and_revision_guarded_even_for_noop() {
+        let (_temp, registry, policy, original, revision) = fixture();
+        let untouched = registry.join("other.toml");
+        std::fs::write(&untouched, "id = \"other\"\nfuture = \"keep\"\n").unwrap();
+        let update = value(handle_project_lifecycle_operation(
+            &policy,
+            &registry,
+            &request(&revision, false, &registry),
+        ));
+        assert_eq!(update["outcome"], "allow_patch_updated");
+        assert_eq!(update["allow_patch"], false);
+        let next_revision = update["revision"].as_str().unwrap();
+        assert_ne!(next_revision, revision);
+        let updated = std::fs::read_to_string(registry.join("demo.toml")).unwrap();
+        assert_eq!(
+            updated.replace("allow_patch = false", "allow_patch = true"),
+            original
+        );
+        assert_eq!(
+            std::fs::read_to_string(&untouched).unwrap(),
+            "id = \"other\"\nfuture = \"keep\"\n"
+        );
+        assert_eq!(
+            value(handle_project_lifecycle_operation(
+                &policy,
+                &registry,
+                &request(&revision, false, &registry)
+            ))["error_code"],
+            "revision_conflict"
+        );
+        let noop = value(handle_project_lifecycle_operation(
+            &policy,
+            &registry,
+            &request(next_revision, false, &registry),
+        ));
+        assert_eq!(noop["outcome"], "already_updated");
+        assert_eq!(noop["changed"], false);
+        assert_eq!(
+            std::fs::read_to_string(registry.join("demo.toml")).unwrap(),
+            updated
+        );
+    }
+
+    #[test]
+    fn concurrent_matching_revisions_allow_exactly_one_update() {
+        let (_temp, registry, policy, _original, revision) = fixture();
+        let barrier = std::sync::Barrier::new(3);
+        let results = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..2)
+                .map(|_| {
+                    let barrier = &barrier;
+                    let registry = &registry;
+                    let policy = &policy;
+                    let revision = &revision;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        value(handle_project_lifecycle_operation(
+                            policy,
+                            registry,
+                            &request(revision, false, registry),
+                        ))
+                    })
+                })
+                .collect();
+            barrier.wait();
+            threads
+                .into_iter()
+                .map(|thread| thread.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            results
+                .iter()
+                .filter(|v| v["outcome"] == "allow_patch_updated")
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|v| v["error_code"] == "revision_conflict")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn unexpected_fields_types_and_unauthorized_root_do_not_mutate() {
+        let (temp, registry, policy, original, revision) = fixture();
+        let mut valid: serde_json::Value =
+            serde_json::from_str(&request(&revision, false, &registry).payload).unwrap();
+        let mut wrong_type = valid.clone();
+        wrong_type["allow_patch"] = serde_json::json!("false");
+        let mut extra_field = valid.clone();
+        extra_field["other_setting"] = serde_json::json!("must_not_change");
+        let mut missing_value = valid.clone();
+        missing_value.as_object_mut().unwrap().remove("allow_patch");
+        let mut missing_root = valid.clone();
+        missing_root
+            .as_object_mut()
+            .unwrap()
+            .remove("expected_root_fingerprint");
+        for payload in [wrong_type, extra_field, missing_value, missing_root] {
+            let result = value(handle_project_lifecycle_operation(
+                &policy,
+                &registry,
+                &RunnerProjectOperation {
+                    kind: RunnerProjectOperationKind::UpdateAllowPatch,
+                    payload: payload.to_string(),
+                },
+            ));
+            assert_eq!(result["error_code"], "invalid_request");
+        }
+        valid["expected_root_fingerprint"] = serde_json::json!("root:invalid");
+        let denied = value(handle_project_lifecycle_operation(
+            &policy,
+            &registry,
+            &RunnerProjectOperation {
+                kind: RunnerProjectOperationKind::UpdateAllowPatch,
+                payload: valid.to_string(),
+            },
+        ));
+        assert_eq!(denied["error_code"], "root_identity_conflict");
+        let other_root = temp.path().join("unrelated");
+        std::fs::create_dir(&other_root).unwrap();
+        let restricted = RunnerPolicy {
+            allowed_roots: vec![other_root],
+            ..RunnerPolicy::default()
+        };
+        assert_eq!(
+            value(handle_project_lifecycle_operation(
+                &restricted,
+                &registry,
+                &request(&revision, false, &registry)
+            ))["error_code"],
+            "path_outside_allowed_roots"
+        );
+        assert_eq!(
+            std::fs::read_to_string(registry.join("demo.toml")).unwrap(),
+            original
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_root_retarget_cannot_change_permission_even_when_registry_revision_matches() {
+        use std::os::unix::fs::symlink;
+        let (temp, registry, policy, original, _) = fixture();
+        let original_root = temp.path().join("source");
+        let replacement_root = temp.path().join("replacement");
+        std::fs::create_dir(&replacement_root).unwrap();
+        let link = temp.path().join("chosen");
+        symlink(&original_root, &link).unwrap();
+        let rewritten = original.replace(
+            &format!("path = \"{}\"", original_root.display()),
+            &format!("path = \"{}\"", link.display()),
+        );
+        assert_ne!(rewritten, original);
+        std::fs::write(registry.join("demo.toml"), &rewritten).unwrap();
+        let revision = project_revision(&parse_runner_project_toml(&rewritten).unwrap());
+        let request = request(&revision, false, &registry);
+        std::fs::remove_file(&link).unwrap();
+        symlink(&replacement_root, &link).unwrap();
+        let result = value(handle_project_lifecycle_operation(
+            &policy, &registry, &request,
+        ));
+        assert_eq!(result["error_code"], "root_identity_conflict");
+        assert_eq!(
+            std::fs::read_to_string(registry.join("demo.toml")).unwrap(),
+            rewritten
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_registry_config_cannot_be_mutated() {
+        use std::os::unix::fs::symlink;
+        let (temp, registry, policy, original, revision) = fixture();
+        let outside = temp.path().join("external.toml");
+        std::fs::write(&outside, &original).unwrap();
+        std::fs::remove_file(registry.join("demo.toml")).unwrap();
+        symlink(&outside, registry.join("demo.toml")).unwrap();
+        let result = value(handle_project_lifecycle_operation(
+            &policy,
+            &registry,
+            &request(&revision, false, &registry),
+        ));
+        assert_eq!(result["error_code"], "project_not_found");
+        assert_eq!(std::fs::read_to_string(outside).unwrap(), original);
+    }
+
+    #[test]
+    fn failure_after_atomic_rename_is_indeterminate_not_retryable() {
+        let (_temp, registry, policy, _original, revision) = fixture();
+        super::super::registration::fail_next_project_parent_sync_after_rename();
+        let response = value(handle_project_lifecycle_operation(
+            &policy,
+            &registry,
+            &request(&revision, false, &registry),
+        ));
+        assert_eq!(response["error_code"], "operation_indeterminate");
+        assert_eq!(response["state_changed"], true);
+        let content = std::fs::read_to_string(registry.join("demo.toml")).unwrap();
+        assert!(!parse_runner_project_toml(&content).unwrap().allow_patch);
+        assert!(content.contains("future_field = \"untouched\""));
+        assert_eq!(std::fs::read_dir(&registry).unwrap().count(), 1);
+    }
 }
 
 fn matching_existing_project(

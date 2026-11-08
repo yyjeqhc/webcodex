@@ -2448,6 +2448,7 @@ impl RunnerRegistry {
                 | "project_lifecycle_enable"
                 | "project_lifecycle_disable"
                 | "project_lifecycle_unregister"
+                | "project_update_allow_patch"
         ) {
             return Err(format!("unsupported project op kind: {}", kind));
         }
@@ -2460,6 +2461,7 @@ impl RunnerRegistry {
             "project_lifecycle_enable"
             | "project_lifecycle_disable"
             | "project_lifecycle_unregister" => Some(RunnerFeature::ProjectLifecycle),
+            "project_update_allow_patch" => Some(RunnerFeature::ProjectSettingsUpdate),
             "register_project" | "create_project" => None,
             _ => unreachable!("project op kind validated above"),
         };

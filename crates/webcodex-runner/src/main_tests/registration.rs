@@ -214,6 +214,7 @@ fn computer_register_request_announces_platform_capabilities_and_generation() {
     assert!(caps.lsp_read_only_navigation);
     assert!(caps.lsp_call_hierarchy);
     assert!(caps.project_lifecycle);
+    assert!(caps.project_settings_update);
     assert!(caps.project_path_registration);
     assert_eq!(
         caps.project_format_v1,

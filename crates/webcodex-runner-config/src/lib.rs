@@ -338,6 +338,9 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             lsp_read_only_navigation: true,
             lsp_call_hierarchy: true,
             project_lifecycle: false,
+            // Only an implementing Runner binary may advertise the new
+            // revision-guarded project-settings operation.
+            project_settings_update: false,
             project_path_registration: false,
             managed_worktree: false,
             // Runner-local Skill runtime and management are implemented by the

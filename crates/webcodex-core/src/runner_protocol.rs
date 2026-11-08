@@ -843,6 +843,13 @@ runner_capabilities! {
         #[serde(default)]
         pub project_lifecycle: bool = false;
     }
+    /// Additive, revision-guarded Project allow_patch updates. An older Runner
+    /// can advertise project_lifecycle without understanding this wire kind.
+    ProjectSettingsUpdate => RUNNER_CAPABILITY_PROJECT_SETTINGS_UPDATE("project_settings_update"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub project_settings_update: bool = false;
+    }
     /// Resolve an absolute canonical project path to an existing registration or
     /// atomically persist a new project registration record. Missing on older runners and
     /// therefore fails closed.
@@ -3005,6 +3012,7 @@ mod envelope_tests {
                 lsp_read_only_navigation: false,
                 lsp_call_hierarchy: false,
                 project_lifecycle: false,
+                project_settings_update: false,
                 project_path_registration: false,
                 managed_worktree: false,
                 skill_runtime: false,

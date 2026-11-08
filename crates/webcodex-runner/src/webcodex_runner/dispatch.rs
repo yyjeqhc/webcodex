@@ -708,7 +708,8 @@ pub(crate) fn dispatch_request_with_outcome(
                 }
                 RunnerProjectOperationKind::LifecycleEnable
                 | RunnerProjectOperationKind::LifecycleDisable
-                | RunnerProjectOperationKind::LifecycleUnregister => {
+                | RunnerProjectOperationKind::LifecycleUnregister
+                | RunnerProjectOperationKind::UpdateAllowPatch => {
                     handle_project_lifecycle_operation(policy, project_registry_dir, &operation)
                 }
             };

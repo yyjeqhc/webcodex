@@ -72,8 +72,10 @@ fn desktop_builder() -> tauri::Builder<tauri::Wry> {
             app.manage(desktop_locale::DesktopLocaleState::load(
                 &data_dir.effective,
             ));
+            let effective_data_dir = data_dir.effective.clone();
             app.manage(AppState::new_resolved(data_dir, resource_dir)?);
             app.manage(desktop_shell::DesktopShellState::default());
+            app.manage(desktop_shell::DockIconState::load(&effective_data_dir));
             app.manage(tray::TrayPresentationCache::default());
             app.manage(computer_control::presentation::Presentation::default());
             platform::install_session_shutdown(app.handle())?;
@@ -88,6 +90,8 @@ fn desktop_builder() -> tauri::Builder<tauri::Wry> {
             tray::refresh_from_snapshot(app.handle(), &snapshot);
             if !desktop_shell::is_background_launch(std::env::args()) {
                 desktop_shell::show_main_window(app.handle())?;
+            } else {
+                desktop_shell::sync_dock_icon(app.handle());
             }
             Ok(())
         })

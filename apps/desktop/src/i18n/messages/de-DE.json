@@ -269,6 +269,7 @@
   "tray.stopQuickShare": "Quick Share stoppen",
   "tray.cancelOperation": "Aktuellen Vorgang abbrechen",
   "tray.launchAtLogin": "Bei Anmeldung starten",
+  "tray.hideDockIcon": "Dock-Symbol bei geschlossenem Fenster ausblenden",
   "tray.quit": "WebCodex beenden",
   "first.advanced": "Erweitert",
   "first.serverOnlyTitle": "Nur Server",

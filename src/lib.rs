@@ -832,10 +832,17 @@ explicitly allow remote shared-key auth."
         interval.tick().await;
         loop {
             interval.tick().await;
-            match purge_db.purge_stale_auth_rows_batch(
-                chrono::Utc::now().timestamp(),
-                AUTH_PURGE_SWEEP_BATCH_PER_TABLE,
-            ) {
+            let purge_db = purge_db.clone();
+            // Bounded synchronous SQLite work stays off the async worker.
+            let purged = tokio::task::spawn_blocking(move || {
+                purge_db.purge_stale_auth_rows_batch(
+                    chrono::Utc::now().timestamp(),
+                    AUTH_PURGE_SWEEP_BATCH_PER_TABLE,
+                )
+            })
+            .await;
+            match purged.unwrap_or_else(|error| Err(anyhow::anyhow!("purge task failed: {error}")))
+            {
                 Ok(0) => {}
                 Ok(count) => tracing::debug!("stale-auth sweep deleted {count} rows"),
                 Err(error) => tracing::warn!("stale-auth sweep failed: {error}"),

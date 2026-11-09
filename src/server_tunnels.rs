@@ -20,6 +20,12 @@ use webcodex_environment::{
 };
 use webcodex_openai_tunnel::ControlPlaneProxy;
 
+const PERSIST_STATUS_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_millis(25),
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+];
+
 /// Only safe observations; no Tunnel IDs, proxy URLs, tokens, payloads or headers.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ProfileStatus {
@@ -259,8 +265,9 @@ async fn run_profile(
                     state.state = if reached_ready { TunnelState::Running } else { TunnelState::Starting };
                     state.tunnel_ready = ready; state.local_mcp_ready = local;
                 });
-                if persist_status(&profile, &status, index)
-                .is_err()
+                if persist_status_with_retry(&profile, &status, index)
+                    .await
+                    .is_err()
                 {
                     break Some("tunnel_health_unavailable".into());
                 }
@@ -302,4 +309,63 @@ fn persist_status(
         state.local_mcp_ready,
         state.diagnostic.as_deref(),
     )
+}
+
+async fn persist_status_with_retry(
+    profile: &EmbeddedTunnelProfile,
+    status: &TunnelStatus,
+    index: usize,
+) -> webcodex_environment::SetupResultValue<()> {
+    retry_persist_status(|| persist_status(profile, status, index)).await
+}
+
+async fn retry_persist_status<E>(mut persist: impl FnMut() -> Result<(), E>) -> Result<(), E> {
+    let mut retries = PERSIST_STATUS_RETRY_DELAYS.into_iter();
+    loop {
+        match persist() {
+            Ok(()) => return Ok(()),
+            Err(error) => match retries.next() {
+                Some(delay) => tokio::time::sleep(delay).await,
+                None => return Err(error),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn persist_status_retry_recovers_after_transient_failure() {
+        let attempts = AtomicUsize::new(0);
+
+        let result = retry_persist_status(|| {
+            let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+            if attempt == 0 {
+                Err("transient")
+            } else {
+                Ok(())
+            }
+        })
+        .await;
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn persist_status_retry_returns_persistent_failure_after_bounded_attempts() {
+        let attempts = AtomicUsize::new(0);
+
+        let result = retry_persist_status(|| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Err("persistent")
+        })
+        .await;
+
+        assert_eq!(result, Err("persistent"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 4);
+    }
 }

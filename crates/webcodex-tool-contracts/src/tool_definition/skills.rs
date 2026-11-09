@@ -1,8 +1,8 @@
 use super::RunnerCapabilityRequirement::{FileRead, SkillManagement};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, def, model_spec, require_all_scopes, runner_project_read_def,
-    ToolDefinition, ToolOperatorExtensionFamily, TOOL_CATEGORY_SKILL,
+    adaptive_runtime_direct, model_spec, require_all_scopes, runner_project_read_def,
+    ToolDeclaration, ToolDefinition, ToolOperatorExtensionFamily, TOOL_CATEGORY_SKILL,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -66,9 +66,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     require_all_scopes(
             model_spec(
-                def(
-                    "run_skill_resource",
-                    super::ToolAuditPolicy::typed_fields(&[
+                ToolDeclaration {
+                    name: "run_skill_resource",
+                    audit: super::ToolAuditPolicy::typed_fields(&[
                         super::ToolAuditResultField::value("skill_id"),
                         super::ToolAuditResultField::value("skill_path"),
                         super::ToolAuditResultField::value("skill_sha256"),
@@ -84,23 +84,23 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         "args",
                         "process_summary",
                     ])),
-                    ModelVisible,
-                    TOOL_CATEGORY_SKILL,
-                    Some(super::RunnerCapabilityRequirement::SkillResourceExecution),
-                    TOOL_PROVIDER_RUNNER,
-                    super::ToolSemanticContract {
+                    visibility: ModelVisible,
+                    category: TOOL_CATEGORY_SKILL,
+                    runner_capability: Some(super::RunnerCapabilityRequirement::SkillResourceExecution),
+                    provider_id: TOOL_PROVIDER_RUNNER,
+                    semantic: super::ToolSemanticContract {
                         effect: super::ToolEffect::Execute,
                         risk: JobRun,
                         approval: super::ToolApprovalPolicy::Standard,
                         idempotency: super::ToolIdempotency::NonIdempotent,
                     },
-                    Some(JOB_RUN),
-                    true,
-                    NoPath,
-                    true,
-                    true,
-                    super::ToolSessionEvidencePolicy::NONE,
-                ),
+                    required_scope: Some(JOB_RUN),
+                    requires_project: true,
+                    path_hint: NoPath,
+                    destructive: true,
+                    shell_like: true,
+                    session_evidence: super::ToolSessionEvidencePolicy::NONE,
+                }.define(),
                 "Execute one supported scripts/*.py or scripts/*.sh resource from a trusted Runner-configured or managed Skill without retransmitting source. Configured Skills are live resources: expected_definition_revision fences selection; resource bytes are read at execution and package-relative helpers remain live; skill_sha256 identifies the executed main script. Managed Skills additionally require expected_package_revision and use an immutable package. Runner preserves Skill identity for __file__, sibling imports, and $0-relative helpers while keeping the requested Project cwd; project-content Skills are rejected. If execution_state=pending, keep the exact continuation and continue independent work; later same-scope results may surface terminal attention. Observe only for details/recovery.",
             )
             .with_execution(super::ToolExecutionContract::new(
@@ -111,9 +111,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             )),
             &[PROJECT_READ, JOB_RUN],
         ),
-    def(
-        "list_skills",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "list_skills",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("catalog_revision"),
             super::ToolAuditResultField::value("total_count"),
@@ -136,27 +136,27 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolAuditResultField::value("error_kind"),
             super::ToolAuditResultField::value("state_changed"),
         ])),
-        ModelHidden,
-        TOOL_CATEGORY_SKILL,
-        Some(FileRead),
-        TOOL_PROVIDER_RUNNER,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_SKILL,
+        runner_capability: Some(FileRead),
+        provider_id: TOOL_PROVIDER_RUNNER,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::PureRead,
         },
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(PROJECT_READ),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillRuntime),
-    def(
-        "read_skill_file",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "read_skill_file",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),
             super::ToolAuditResultField::value("source_scope"),
@@ -189,27 +189,27 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolAuditResultField::value("error_kind"),
             super::ToolAuditResultField::value("state_changed"),
         ])),
-        ModelHidden,
-        TOOL_CATEGORY_SKILL,
-        Some(FileRead),
-        TOOL_PROVIDER_RUNNER,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_SKILL,
+        runner_capability: Some(FileRead),
+        provider_id: TOOL_PROVIDER_RUNNER,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::PureRead,
         },
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(PROJECT_READ),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillRuntime),
-    def(
-        "list_skill_versions",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "list_skill_versions",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),
             super::ToolAuditResultField::value("skill_key"),
@@ -221,27 +221,27 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolAuditResultField::value("error_kind"),
             super::ToolAuditResultField::value("state_changed"),
         ]),
-        ModelHidden,
-        TOOL_CATEGORY_SKILL,
-        Some(SkillManagement),
-        TOOL_PROVIDER_RUNNER,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_SKILL,
+        runner_capability: Some(SkillManagement),
+        provider_id: TOOL_PROVIDER_RUNNER,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::PureRead,
         },
-        Some(ADMIN),
-        true,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(ADMIN),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
-    def(
-        "install_skill",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "install_skill",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),
             super::ToolAuditResultField::value("skill_key"),
@@ -259,27 +259,27 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolAuditResultField::value("error_kind"),
             super::ToolAuditResultField::value("state_changed"),
         ]),
-        ModelHidden,
-        TOOL_CATEGORY_SKILL,
-        Some(SkillManagement),
-        TOOL_PROVIDER_RUNNER,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_SKILL,
+        runner_capability: Some(SkillManagement),
+        provider_id: TOOL_PROVIDER_RUNNER,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: SkillManage,
             approval: super::ToolApprovalPolicy::Standard,
             idempotency: super::ToolIdempotency::NonIdempotent,
         },
-        Some(ADMIN),
-        true,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(ADMIN),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
-    def(
-        "activate_skill",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "activate_skill",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),
             super::ToolAuditResultField::value("skill_key"),
@@ -292,27 +292,27 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolAuditResultField::value("error_kind"),
             super::ToolAuditResultField::value("state_changed"),
         ]),
-        ModelHidden,
-        TOOL_CATEGORY_SKILL,
-        Some(SkillManagement),
-        TOOL_PROVIDER_RUNNER,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_SKILL,
+        runner_capability: Some(SkillManagement),
+        provider_id: TOOL_PROVIDER_RUNNER,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: SkillManage,
             approval: super::ToolApprovalPolicy::Standard,
             idempotency: super::ToolIdempotency::NonIdempotent,
         },
-        Some(ADMIN),
-        true,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(ADMIN),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
-    def(
-        "remove_skill_revision",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "remove_skill_revision",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),
             super::ToolAuditResultField::value("skill_key"),
@@ -324,22 +324,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolAuditResultField::value("error_kind"),
             super::ToolAuditResultField::value("state_changed"),
         ]),
-        ModelHidden,
-        TOOL_CATEGORY_SKILL,
-        Some(SkillManagement),
-        TOOL_PROVIDER_RUNNER,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_SKILL,
+        runner_capability: Some(SkillManagement),
+        provider_id: TOOL_PROVIDER_RUNNER,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: SkillManage,
             approval: super::ToolApprovalPolicy::Standard,
             idempotency: super::ToolIdempotency::NonIdempotent,
         },
-        Some(ADMIN),
-        true,
-        NoPath,
-        true,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(ADMIN),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: true,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
 ];

@@ -1,6 +1,6 @@
 use super::RunnerCapabilityRequirement::{GitOrShell, Shell, StructuredProcess};
 use super::ToolVisibility::ModelVisible;
-use super::{def, git_like, model_spec, ToolDefinition, TOOL_CATEGORY_CLEANUP};
+use super::{git_like, model_spec, ToolDeclaration, ToolDefinition, TOOL_CATEGORY_CLEANUP};
 use crate::metadata::{
     ToolPathHint::{None as NoPath, PathList},
     ToolRisk::{ProjectWrite, Read},
@@ -8,97 +8,100 @@ use crate::metadata::{
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[model_spec(
-        def(
-            "check_workspace_hygiene",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_CLEANUP,
-            Some(GitOrShell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
+        ToolDeclaration {
+            name: "check_workspace_hygiene",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_CLEANUP,
+            runner_capability: Some(GitOrShell),
+            provider_id: TOOL_PROVIDER_RUNNER,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(PROJECT_READ),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::HygieneReview),
-        ),
+            required_scope: Some(PROJECT_READ),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::HygieneReview),
+        }.define(),
         "Default pre-final workspace hygiene review; read-only. Detects dirty worktree, untracked temp/smoke files, cache dirs, secret-like names, and large untracked files before validation or handoff. Never reads file contents.",
 )];
 
 pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
-        def(
-            "delete_project_files",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_CLEANUP,
-            Some(Shell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
+        ToolDeclaration {
+            name: "delete_project_files",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_CLEANUP,
+            runner_capability: Some(Shell),
+            provider_id: TOOL_PROVIDER_RUNNER,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
                 approval: super::ToolApprovalPolicy::Standard,
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
-            Some(PROJECT_WRITE),
-            true,
-            PathList,
-            true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+            required_scope: Some(PROJECT_WRITE),
+            requires_project: true,
+            path_hint: PathList,
+            destructive: true,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }
+        .define(),
         "Delete selected project-relative files only; safer than arbitrary rm for cleanup.",
     ),
     git_like(model_spec(
-        def(
-            "restore_git_paths",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_CLEANUP,
-            Some(StructuredProcess),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
+        ToolDeclaration {
+            name: "restore_git_paths",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_CLEANUP,
+            runner_capability: Some(StructuredProcess),
+            provider_id: TOOL_PROVIDER_RUNNER,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
                 approval: super::ToolApprovalPolicy::Standard,
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
-            Some(PROJECT_WRITE),
-            true,
-            PathList,
-            true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+            required_scope: Some(PROJECT_WRITE),
+            requires_project: true,
+            path_hint: PathList,
+            destructive: true,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }
+        .define(),
         "Restore selected tracked paths with git restore; does not remove untracked files.",
     )),
     git_like(model_spec(
-        def(
-            "discard_untracked",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_CLEANUP,
-            Some(StructuredProcess),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
+        ToolDeclaration {
+            name: "discard_untracked",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_CLEANUP,
+            runner_capability: Some(StructuredProcess),
+            provider_id: TOOL_PROVIDER_RUNNER,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
                 approval: super::ToolApprovalPolicy::Standard,
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
-            Some(PROJECT_WRITE),
-            true,
-            PathList,
-            true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+            required_scope: Some(PROJECT_WRITE),
+            requires_project: true,
+            path_hint: PathList,
+            destructive: true,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }
+        .define(),
         "Discard selected untracked files with git clean -f -- <paths>.",
     )),
 ];

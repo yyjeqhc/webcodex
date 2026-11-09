@@ -1,8 +1,8 @@
 use super::RunnerCapabilityRequirement::{GitOrShell, InternalPosixScript, OwnerOnly};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, control_def, def, model_spec, permission_risk, require_all_scopes,
-    requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_WRITE,
+    adaptive_runtime_direct, control_def, model_spec, permission_risk, require_all_scopes,
+    requires_explicit_business_session, ToolDeclaration, ToolDefinition, PERMISSION_RISK_WRITE,
     TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
 };
 use crate::metadata::{
@@ -12,30 +12,30 @@ use crate::metadata::{
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(
-        def(
-            "record_external_observation",
-            super::ToolAuditPolicy::typed_fields(&[
+        ToolDeclaration {
+            name: "record_external_observation",
+            audit: super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("session_id"),
                 super::ToolAuditResultField::value("error_kind"),
             ]),
-            ModelHidden,
-            TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelHidden,
+            category: TOOL_CATEGORY_SESSION,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: super::ToolRisk::SessionCollaborate,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::FencedReplay,
             },
-            Some(SESSION_COLLABORATE),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE
+            required_scope: Some(SESSION_COLLABORATE),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE
                 .lifecycle(super::ToolSessionLifecycleEffect::Mutation),
-        )
+        }.define()
         .with_activity(
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::NonMeaningful,
@@ -43,44 +43,58 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
 
     require_all_scopes(model_spec(
-        def(
-            "list_sessions",
-            super::ToolAuditPolicy::typed_fields(&[
+        ToolDeclaration {
+            name: "list_sessions",
+            audit: super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("project"),
                 super::ToolAuditResultField::value("total"),
                 super::ToolAuditResultField::array_len("returned", "sessions"),
                 super::ToolAuditResultField::value("error_kind"),
             ]),
-            ModelVisible, TOOL_CATEGORY_SESSION, None, TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_SESSION,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(RUNTIME_READ), true, NoPath, false, false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ).with_activity(super::ToolActivityPresentation::Support, super::ToolActivityInteraction::NonMeaningful),
+            required_scope: Some(RUNTIME_READ),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }.define().with_activity(super::ToolActivityPresentation::Support, super::ToolActivityInteraction::NonMeaningful),
         "Read-only recovery discovery when the exact Session id is missing, including a new Host window or account using the same WebCodex authority. Requires an authorized exact Project and lists only that caller's creation-time Session authority group, including retained Closed history. Lifecycle filter is optional; offset defaults to 0, limit to 10 and is normalized to 1..20. Titles are redacted/bounded and output is capped at 32 KiB. Counts exclude foreign authority groups. Inventory pagination is not a frozen snapshot. Explicitly choose a returned session_id/session_ref, then read read_session_handoff. Active work needs explicit bootstrap with the selected Session; Closed is historical only. Discovery never infers current/recent work, resumes a Session, grants authority, or restores hidden chat context.",
     ), &[RUNTIME_READ, PROJECT_READ]),
 
     requires_explicit_business_session(model_spec(
-        def(
-            "list_external_observations",
-            super::ToolAuditPolicy::typed_fields(&[
+        ToolDeclaration {
+            name: "list_external_observations",
+            audit: super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("session_id"),
                 super::ToolAuditResultField::value("error_kind"),
             ]),
-            ModelVisible, TOOL_CATEGORY_SESSION, None, TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_SESSION,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(RUNTIME_READ), true, NoPath, false, false,
-            super::ToolSessionEvidencePolicy::NONE,
-        )
+            required_scope: Some(RUNTIME_READ),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }.define()
         .with_activity(
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::NonMeaningful,
@@ -104,26 +118,26 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     adaptive_runtime_direct(
         model_spec(
-            def(
-                "work_on_project",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
-                "workflow",
-                Some(GitOrShell),
-                TOOL_PROVIDER_CONTROL,
-                super::ToolSemanticContract {
+            ToolDeclaration {
+                name: "work_on_project",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelVisible,
+                category: "workflow",
+                runner_capability: Some(GitOrShell),
+                provider_id: TOOL_PROVIDER_CONTROL,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: super::ToolRisk::WorkflowManage,
                     approval: super::ToolApprovalPolicy::None,
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
-                Some(RUNTIME_READ),
-                true,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            )
+                required_scope: Some(RUNTIME_READ),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define()
             .with_activity(
                 super::ToolActivityPresentation::Support,
                 super::ToolActivityInteraction::Meaningful,
@@ -134,58 +148,58 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         super::ToolDirectReason::CoreWorkflow,
     ),
     requires_explicit_business_session(model_spec(
-        def(
-            "finish_coding_task",
-            super::ToolAuditPolicy::TYPED_CANONICAL
+        ToolDeclaration {
+            name: "finish_coding_task",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL
                 .context(super::ToolAuditContextPolicy::TaskOutputs),
-            ModelVisible,
-            "workflow",
-            Some(GitOrShell),
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelVisible,
+            category: "workflow",
+            runner_capability: Some(GitOrShell),
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(RUNTIME_READ),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        )
+            required_scope: Some(RUNTIME_READ),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }.define()
         .with_activity_kind(super::ToolActivityKind::Review),
         "Review task closeout evidence for code or ordinary file work. Optional outputs name up to 16 project-relative files; the Runner independently observes size/SHA/MIME, and missing or unavailable files block closeout. Presence does not prove content, counts or format: verify these for the task. Git and tests remain relevant to code work. This advisory snapshot supports model judgment; it does not decide task completion or generate the user-facing final report.",
     )),
     adaptive_runtime_direct(
         model_spec(
-            def(
-                "present_work_result",
-                super::ToolAuditPolicy::typed_fields(&[
+            ToolDeclaration {
+                name: "present_work_result",
+                audit: super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::pointer("project", "/work_result/project"),
                     super::ToolAuditResultField::pointer("session_id", "/work_result/session_id"),
                     super::ToolAuditResultField::pointer("state_version", "/work_result/state_version"),
                     super::ToolAuditResultField::pointer("snapshot_id", "/work_result/final_changes/snapshot_id"),
                     super::ToolAuditResultField::value("error_kind"),
                 ]),
-                ModelVisible,
-                "workflow",
-                Some(InternalPosixScript),
-                TOOL_PROVIDER_CONTROL,
-                super::ToolSemanticContract {
+                visibility: ModelVisible,
+                category: "workflow",
+                runner_capability: Some(InternalPosixScript),
+                provider_id: TOOL_PROVIDER_CONTROL,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
                     approval: super::ToolApprovalPolicy::None,
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
-                Some(PROJECT_READ),
-                true,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            )
+                required_scope: Some(PROJECT_READ),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define()
             .with_activity(
                 super::ToolActivityPresentation::Transport,
                 super::ToolActivityInteraction::NonMeaningful,
@@ -195,68 +209,68 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         155,
         super::ToolDirectReason::Presentation,
     ),
-    def(
-        "get_work_result_state",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "get_work_result_state",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("project", "/work_result/project"),
             super::ToolAuditResultField::pointer("session_id", "/work_result/session_id"),
             super::ToolAuditResultField::pointer("state_version", "/work_result/state_version"),
             super::ToolAuditResultField::value("error_kind"),
         ]),
-        ModelHidden,
-        "workflow",
-        Some(GitOrShell),
-        TOOL_PROVIDER_CONTROL,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: "workflow",
+        runner_capability: Some(GitOrShell),
+        provider_id: TOOL_PROVIDER_CONTROL,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::PureRead,
         },
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(PROJECT_READ),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_activity(
         super::ToolActivityPresentation::Transport,
         super::ToolActivityInteraction::NonMeaningful,
     ),
-    def(
-        "read_work_result_activity_detail",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "read_work_result_activity_detail",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer(
                 "server_trace_id",
                 "/activity_detail/server_trace_id",
             ),
             super::ToolAuditResultField::value("error_kind"),
         ]),
-        ModelHidden,
-        "workflow",
-        None,
-        TOOL_PROVIDER_CONTROL,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: "workflow",
+        runner_capability: None,
+        provider_id: TOOL_PROVIDER_CONTROL,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::PureRead,
         },
-        Some(RUNTIME_READ),
-        true,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(RUNTIME_READ),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_activity(
         super::ToolActivityPresentation::Transport,
         super::ToolActivityInteraction::NonMeaningful,
     ),
-    def(
-        "send_work_result_message",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "send_work_result_message",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("success"),
             super::ToolAuditResultField::value("session_id"),
             super::ToolAuditResultField::value("message_id"),
@@ -264,53 +278,53 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolAuditResultField::value("state_changed"),
             super::ToolAuditResultField::value("error_kind"),
         ]),
-        ModelHidden,
-        "workflow",
-        None,
-        TOOL_PROVIDER_CONTROL,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: "workflow",
+        runner_capability: None,
+        provider_id: TOOL_PROVIDER_CONTROL,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: super::ToolRisk::SessionCollaborate,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::Keyed,
         },
-        Some(SESSION_COLLABORATE),
-        true,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(SESSION_COLLABORATE),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_activity(
         super::ToolActivityPresentation::Transport,
         super::ToolActivityInteraction::NonMeaningful,
     ),
-    def(
-        "read_changed_file_diff",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "read_changed_file_diff",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("project", "/changes_file_diff/project"),
             super::ToolAuditResultField::pointer("session_id", "/changes_file_diff/session_id"),
             super::ToolAuditResultField::pointer("snapshot_id", "/changes_file_diff/snapshot_id"),
             super::ToolAuditResultField::pointer("path", "/changes_file_diff/path"),
             super::ToolAuditResultField::value("error_kind"),
         ]),
-        ModelHidden,
-        "workflow",
-        Some(InternalPosixScript),
-        TOOL_PROVIDER_CONTROL,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: "workflow",
+        runner_capability: Some(InternalPosixScript),
+        provider_id: TOOL_PROVIDER_CONTROL,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::PureRead,
         },
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(PROJECT_READ),
+        requires_project: true,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_activity(
         super::ToolActivityPresentation::Transport,
         super::ToolActivityInteraction::NonMeaningful,
@@ -334,77 +348,77 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )),
     requires_explicit_business_session(permission_risk(
         model_spec(
-            def(
-            "update_session_context",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_SESSION,
-            Some(OwnerOnly),
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Mutate,
-                risk: super::ToolRisk::SessionCollaborate,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(PROJECT_WRITE),
-            true,
-            NoPath,
-            true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
-            ),
+            ToolDeclaration {
+                name: "update_session_context",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_SESSION,
+                runner_capability: Some(OwnerOnly),
+                provider_id: TOOL_PROVIDER_CONTROL,
+                semantic: super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: super::ToolRisk::SessionCollaborate,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                required_scope: Some(PROJECT_WRITE),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
+            }.define(),
             "Update Session defaults. Binding execution_context.resource selects an already active Runner-local named SSH resource; for a new explicit target use manage_ssh_resource list/register and restart the Runner first, then list and bind the active name. open_session_shell uses that Session binding. Requires an authorized project matching the exact Session project; cross-project escape is not supported. Context and event commit under the store lock; the background writer persists, so success does not mean disk flush. Never falls back and never creates unknown Sessions.",
         ),
         PERMISSION_RISK_WRITE,
     )),
     requires_explicit_business_session(permission_risk(
         model_spec(
-            def(
-            "close_session",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Mutate,
-                risk: super::ToolRisk::SessionCollaborate,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::DesiredState,
-            },
-            Some(SESSION_COLLABORATE),
-            false,
-            NoPath,
-            true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Close).lifecycle(super::ToolSessionLifecycleEffect::IdempotentClose),
-            ),
+            ToolDeclaration {
+                name: "close_session",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_SESSION,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_CONTROL,
+                semantic: super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: super::ToolRisk::SessionCollaborate,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::DesiredState,
+                },
+                required_scope: Some(SESSION_COLLABORATE),
+                requires_project: false,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Close).lifecycle(super::ToolSessionLifecycleEffect::IdempotentClose),
+            }.define(),
             "Explicitly close a workflow session (Active to Closed) for a required session_id. Query remains available; write/shell/mutation tools are denied. Idempotent when already closed; unknown ids fail without create. finish_coding_task does not close.",
         ),
         PERMISSION_RISK_WRITE,
     )),
     requires_explicit_business_session(model_spec(
-        def(
-            "read_validation_summary",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_VALIDATION,
-            Some(OwnerOnly),
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+        ToolDeclaration {
+            name: "read_validation_summary",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_VALIDATION,
+            runner_capability: Some(OwnerOnly),
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(PROJECT_READ),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        )
+            required_scope: Some(PROJECT_READ),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }.define()
         .with_activity(
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::Meaningful,
@@ -412,9 +426,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Read bounded structured validation evidence already recorded in an explicit project-scoped session ledger. Does not run Cargo or shell commands, enqueue a Runner request, read project files, mutate the workspace, or replace finish_coding_task.",
     )),
     requires_explicit_business_session(model_spec(
-        def(
-            "post_session_message",
-            super::ToolAuditPolicy::typed_fields(&[
+        ToolDeclaration {
+            name: "post_session_message",
+            audit: super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("success"),
                 super::ToolAuditResultField::value("session_id"),
                 super::ToolAuditResultField::value("message_id"),
@@ -423,23 +437,23 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::pointer("requires_ack", "/message/requires_ack"),
                 super::ToolAuditResultField::pointer("author_session_id", "/message/author_session_id"),
             ]),
-            ModelVisible,
-            TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_SESSION,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: super::ToolRisk::SessionCollaborate,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
-            Some(SESSION_COLLABORATE),
-            false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
-        ),
+            required_scope: Some(SESSION_COLLABORATE),
+            requires_project: false,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
+        }.define(),
         "Post a bounded collaboration message (todo, question, progress, guidance, risk, or decision). Optional delivery_key provides bounded restart-safe sender-scoped replay while the keyed message metadata remains retained; exact retries return the original message and conflicting retained key reuse fails closed. Any message may request request-scoped ACK; ACK proves only current model-context retention and neither resolves nor gates work. Use complete_session_message to atomically answer and resolve a finished todo.",
     )),
 
@@ -515,66 +529,66 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )),
     requires_explicit_business_session(permission_risk(
         model_spec(
-            def(
-            "resolve_session_message",
-            super::ToolAuditPolicy::typed_fields(&[
-                super::ToolAuditResultField::value("success"),
-                super::ToolAuditResultField::value("session_id"),
-                super::ToolAuditResultField::value("message_id"),
-                super::ToolAuditResultField::pointer("status", "/message/status"),
-                super::ToolAuditResultField::pointer("resolved_by_message_id", "/message/resolved_by_message_id"),
-            ]),
-            ModelVisible,
-            TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Mutate,
-                risk: super::ToolRisk::SessionCollaborate,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(SESSION_COLLABORATE),
-            false,
-            NoPath,
-            true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
-            ),
+            ToolDeclaration {
+                name: "resolve_session_message",
+                audit: super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("success"),
+                    super::ToolAuditResultField::value("session_id"),
+                    super::ToolAuditResultField::value("message_id"),
+                    super::ToolAuditResultField::pointer("status", "/message/status"),
+                    super::ToolAuditResultField::pointer("resolved_by_message_id", "/message/resolved_by_message_id"),
+                ]),
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_SESSION,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_CONTROL,
+                semantic: super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: super::ToolRisk::SessionCollaborate,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                required_scope: Some(SESSION_COLLABORATE),
+                requires_project: false,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
+            }.define(),
             "Mark a session-local ledger message resolved. Idempotent when the message is already resolved; metadata-only and never modifies project files.",
         ),
         PERMISSION_RISK_WRITE,
     )),
     requires_explicit_business_session(permission_risk(
         model_spec(
-            def(
-            "complete_session_message",
-            super::ToolAuditPolicy::typed_fields(&[
-                super::ToolAuditResultField::value("success"),
-                super::ToolAuditResultField::value("session_id"),
-                super::ToolAuditResultField::value("message_id"),
-                super::ToolAuditResultField::value("answer_message_id"),
-                super::ToolAuditResultField::value("completion_id"),
-                super::ToolAuditResultField::value("replayed"),
-                super::ToolAuditResultField::pointer("author_session_id", "/answer/author_session_id"),
-            ]),
-            ModelVisible,
-            TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Mutate,
-                risk: super::ToolRisk::SessionCollaborate,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::FencedReplay,
-            },
-            Some(SESSION_COLLABORATE),
-            false,
-            NoPath,
-            true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
-            ),
+            ToolDeclaration {
+                name: "complete_session_message",
+                audit: super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("success"),
+                    super::ToolAuditResultField::value("session_id"),
+                    super::ToolAuditResultField::value("message_id"),
+                    super::ToolAuditResultField::value("answer_message_id"),
+                    super::ToolAuditResultField::value("completion_id"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::pointer("author_session_id", "/answer/author_session_id"),
+                ]),
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_SESSION,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_CONTROL,
+                semantic: super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: super::ToolRisk::SessionCollaborate,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::FencedReplay,
+                },
+                required_scope: Some(SESSION_COLLABORATE),
+                requires_project: false,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
+            }.define(),
             "Atomically answer and resolve one exact open todo. expected_assignment_fence is required and must be the exact opaque fence from get_session_assignment; completion_key separately keeps uncertain-result retries idempotent.",
         ),
         PERMISSION_RISK_WRITE,
@@ -639,30 +653,30 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Explicit read-only recovery for missing task context or an explicit handoff; requires exact session_id/session_ref and is not routine status polling. Returns deterministic 8 KiB handoff_brief with task, workspace, progress, validation, Jobs, collaboration/external-report evidence, next actions and basis completeness. If the same owner has active Goals explicitly correlated to the Session, optional bounded goal_context is returned separately: zero omit it and multiple remain selection_required. Goal context is read-only: no inference, Goal mutation, liveness refresh, scheduling or authority grant. External reports retain unknown outcomes/incomplete coverage and are not native execution/validation. Omitted project uses the authorized Session Project; diagnostic=true adds ledger/closeout evidence. Concurrent Session change makes basis incomplete; re-observe before dependent work.",
         )),
     requires_explicit_business_session(
-        def(
-            "get_session_handoff_state",
-            super::ToolAuditPolicy::typed_fields(&[
+        ToolDeclaration {
+            name: "get_session_handoff_state",
+            audit: super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("session_id"),
                 super::ToolAuditResultField::value("project"),
                 super::ToolAuditResultField::value("error_kind"),
             ]),
-            ModelHidden,
-            TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelHidden,
+            category: TOOL_CATEGORY_SESSION,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(RUNTIME_READ),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        )
+            required_scope: Some(RUNTIME_READ),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }.define()
         .with_activity(
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::NonMeaningful,

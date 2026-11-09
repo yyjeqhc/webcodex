@@ -20,26 +20,27 @@ const fn document_read_definition(
     visibility: ToolVisibility,
     idempotency: ToolIdempotency,
 ) -> ToolDefinition {
-    def(
+    ToolDeclaration {
         name,
-        ToolAuditPolicy::typed_fields(DOCUMENT_AUDIT_FIELDS),
+        audit: ToolAuditPolicy::typed_fields(DOCUMENT_AUDIT_FIELDS),
         visibility,
-        TOOL_CATEGORY_ARTIFACT,
-        Some(RunnerCapabilityRequirement::FileRead),
-        TOOL_PROVIDER_CONTROL,
-        ToolSemanticContract {
+        category: TOOL_CATEGORY_ARTIFACT,
+        runner_capability: Some(RunnerCapabilityRequirement::FileRead),
+        provider_id: TOOL_PROVIDER_CONTROL,
+        semantic: ToolSemanticContract {
             effect: ToolEffect::Observe,
             risk: Read,
             approval: ToolApprovalPolicy::None,
             idempotency,
         },
-        Some(PROJECT_READ),
-        true,
-        Artifact,
-        false,
-        false,
-        ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(PROJECT_READ),
+        requires_project: true,
+        path_hint: Artifact,
+        destructive: false,
+        shell_like: false,
+        session_evidence: ToolSessionEvidencePolicy::NONE,
+    }
+    .define()
     .with_activity(
         ToolActivityPresentation::Transport,
         ToolActivityInteraction::NonMeaningful,

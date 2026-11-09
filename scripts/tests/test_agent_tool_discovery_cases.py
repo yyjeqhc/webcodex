@@ -40,30 +40,57 @@ def canonical_definitions():
     if read_constructor is None:
         raise ValueError("runner_project_read_def constructor is missing")
     definitions = {}
+    # Parse the source-level contract declarations, not an inferred runtime
+    # manifest. The canonical constructor now uses named ToolDeclaration fields;
+    # the two narrow helper constructors still take positional parameters.
+    pattern = re.compile(
+        r'\b(?P<constructor>control_def|runner_project_read_def)\(\s*"(?P<legacy_name>[a-z_]+)"'
+        r'|\bToolDeclaration\s*\{\s*name:\s*"(?P<named_name>[a-z_]+)"'
+    )
     for path in sorted((CONTRACTS / "tool_definition").glob("*.rs")):
         source = path.read_text(encoding="utf-8")
-        matches = list(re.finditer(
-            r'\b(?P<constructor>def|control_def|runner_project_read_def)\(\s*"(?P<name>[a-z_]+)"',
-            source,
-        ))
+        matches = list(pattern.finditer(source))
         for index, match in enumerate(matches):
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
-            body = source[match.end():end]
-            category = re.search(r'\bTOOL_CATEGORY_([A-Z_]+)\b', body)
-            policy_body = (
-                read_constructor.group(0)
-                if match.group("constructor") == "runner_project_read_def"
-                else body
-            )
-            scope = re.search(
-                r'ToolIdempotency::\w+\s*,?\s*},\s*Some\((?:crate::metadata::)?([A-Z_]+)\)',
-                policy_body,
-            )
+            next_start = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+            constructor = match.group("constructor")
+            if constructor is None:
+                # Limit extraction to this declaration, not later definitions.
+                define_end = source.find(".define()", match.end(), next_start)
+                if define_end < 0:
+                    raise ValueError(f"ToolDeclaration lacks .define(): {path}:{match.start()}")
+                body = source[match.end():define_end]
+                category = re.search(r'\bcategory:\s*TOOL_CATEGORY_([A-Z_]+)\b', body)
+                scope = re.search(
+                    r'\brequired_scope:\s*Some\((?:crate::metadata::)?([A-Z_]+)\)',
+                    body,
+                )
+                visible = bool(re.search(r'\bvisibility:\s*(?:ToolVisibility::)?ModelVisible\b', body))
+                name = match.group("named_name")
+            else:
+                body = source[match.end():next_start]
+                category = re.search(r'\bTOOL_CATEGORY_([A-Z_]+)\b', body)
+                policy_body = (
+                    read_constructor.group(0)
+                    if constructor == "runner_project_read_def"
+                    else body
+                )
+                scope = re.search(
+                    r'\brequired_scope:\s*Some\((?:crate::metadata::)?([A-Z_]+)\)',
+                    policy_body,
+                ) or re.search(
+                    r'ToolIdempotency::\w+\s*,?\s*},\s*Some\((?:crate::metadata::)?([A-Z_]+)\)',
+                    policy_body,
+                )
+                visible = (
+                    True if constructor == "runner_project_read_def"
+                    else bool(re.search(r'\bModelVisible\s*,', policy_body))
+                )
+                name = match.group("legacy_name")
             if category and scope:
-                definitions[match.group("name")] = {
+                definitions[name] = {
                     "category": category.group(1).lower(),
                     "scope_constant": scope.group(1),
-                    "model_visible": bool(re.search(r'\bModelVisible\s*,', policy_body)),
+                    "model_visible": visible,
                 }
     authority = (ROOT / "crates/webcodex-core/src/authority.rs").read_text(encoding="utf-8")
     scopes = dict(re.findall(r'pub const SCOPE_([A-Z_]+): &str = "([a-z_:]+)";', authority))

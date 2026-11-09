@@ -104,7 +104,15 @@ def _catalog():
         sources[path] = raw.decode("utf-8")
     names = set()
     for path in paths:
-        names.update(re.findall(r'\b(?:def|control_def|runner_project_read_def|resource_tool|docx_read_definition|document_read_definition)\(\s*"([a-z_]+)"', sources[path]))
+        source = sources[path]
+        names.update(re.findall(
+            r'\b(?:control_def|runner_project_read_def|resource_tool|docx_read_definition|document_read_definition)\(\s*"([a-z_]+)"',
+            source,
+        ))
+        names.update(re.findall(
+            r'\bToolDeclaration\s*\{\s*name:\s*"([a-z_]+)"',
+            source,
+        ))
     scopes = set(re.findall(r'pub const SCOPE_[A-Z_]+: &str = "([a-z_:]+)";', sources[authority_path]))
     categories = set(re.findall(r'pub const TOOL_CATEGORY_[A-Z_]+: &str = "([a-z_]+)";', sources[paths[0]]))
     return names, scopes, categories

@@ -1,8 +1,8 @@
 use super::RunnerCapabilityRequirement::GitOrShell;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    adaptive_runtime_direct, change_summary_like, def, git_like, model_spec, require_all_scopes,
-    runner_project_read_def, ToolDefinition, TOOL_CATEGORY_GIT,
+    adaptive_runtime_direct, change_summary_like, git_like, model_spec, require_all_scopes,
+    runner_project_read_def, ToolDeclaration, ToolDefinition, TOOL_CATEGORY_GIT,
 };
 use crate::metadata::{
     ToolPathHint::{None as NoPath, PathList},
@@ -96,26 +96,26 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
 ];
 pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(git_like(model_spec(
-        def(
-            "commit_git_paths",
-            super::ToolAuditPolicy::TYPED_CANONICAL.drop_null_request_values(),
-            ModelVisible,
-            TOOL_CATEGORY_GIT,
-            Some(GitOrShell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
+        ToolDeclaration {
+            name: "commit_git_paths",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL.drop_null_request_values(),
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_GIT,
+            runner_capability: Some(GitOrShell),
+            provider_id: TOOL_PROVIDER_RUNNER,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
                 approval: super::ToolApprovalPolicy::Standard,
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
-            Some(PROJECT_WRITE),
-            true,
-            PathList,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+            required_scope: Some(PROJECT_WRITE),
+            requires_project: true,
+            path_hint: PathList,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }.define(),
         "Commit exactly requested changed file paths with an atomic expected_head fence and isolated temporary index; normal Git clean filters may run under job:run authority, ordinary commit hooks are bypassed so they cannot add unrelated paths, and the tool never pushes.",
     )), &[PROJECT_WRITE, JOB_RUN]),
     git_like(model_spec(

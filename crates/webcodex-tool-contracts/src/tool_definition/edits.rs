@@ -1,7 +1,7 @@
 use super::RunnerCapabilityRequirement::FileWrite;
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, def, model_spec, permission_risk, ToolDefinition,
+    adaptive_runtime_direct, model_spec, permission_risk, ToolDeclaration, ToolDefinition,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_EDIT,
 };
 use crate::metadata::{
@@ -13,26 +13,26 @@ use crate::metadata::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     permission_risk(
         model_spec(
-            def(
-            "write_project_file",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelHidden,
-            TOOL_CATEGORY_EDIT,
-            Some(FileWrite),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Mutate,
-                risk: ProjectWrite,
-                approval: super::ToolApprovalPolicy::Standard,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(PROJECT_WRITE),
-            true,
-            SinglePath,
-            true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-            ),
+            ToolDeclaration {
+                name: "write_project_file",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelHidden,
+                category: TOOL_CATEGORY_EDIT,
+                runner_capability: Some(FileWrite),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: ProjectWrite,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                required_scope: Some(PROJECT_WRITE),
+                requires_project: true,
+                path_hint: SinglePath,
+                destructive: true,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Create a new file or perform an intentional whole-file replacement. Existing-file replacement requires expected_read_revision from read_files; ToolRuntime resolves that model-facing snapshot handle to the Runner guard, so the model does not copy a digest. Failures expose minimal error facts and at most one parser-ready read_files recovery call when a fresh read is required. Choose this path when whole-file replacement is genuinely the clearest reliable mutation, then inspect the resulting diff and validate the final source.",
         ).with_discovery_keywords(&["create", "write", "overwrite", "file", "contents", "创建", "写入", "覆盖", "文件", "内容"]),
         PERMISSION_RISK_WRITE,
@@ -40,26 +40,26 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         permission_risk(
             model_spec(
-                def(
-                "edit_project_files",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
-                TOOL_CATEGORY_EDIT,
-                Some(FileWrite),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Mutate,
-                    risk: ProjectWrite,
-                    approval: super::ToolApprovalPolicy::Standard,
-                    idempotency: super::ToolIdempotency::NonIdempotent,
-                },
-                Some(PROJECT_WRITE),
-                true,
-                PathList,
-                true,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-                )
+                ToolDeclaration {
+                    name: "edit_project_files",
+                    audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                    visibility: ModelVisible,
+                    category: TOOL_CATEGORY_EDIT,
+                    runner_capability: Some(FileWrite),
+                    provider_id: TOOL_PROVIDER_RUNNER,
+                    semantic: super::ToolSemanticContract {
+                        effect: super::ToolEffect::Mutate,
+                        risk: ProjectWrite,
+                        approval: super::ToolApprovalPolicy::Standard,
+                        idempotency: super::ToolIdempotency::NonIdempotent,
+                    },
+                    required_scope: Some(PROJECT_WRITE),
+                    requires_project: true,
+                    path_hint: PathList,
+                    destructive: true,
+                    shell_like: false,
+                    session_evidence: super::ToolSessionEvidencePolicy::NONE,
+                }.define()
                 .with_composition_policy(super::ToolCompositionPolicy::Sequential)
                 .with_host_orchestration_hint(
                     super::ToolHostOrchestrationHint::sequential()

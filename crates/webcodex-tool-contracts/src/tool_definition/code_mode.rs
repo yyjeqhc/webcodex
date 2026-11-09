@@ -1,7 +1,7 @@
 use super::ToolVisibility::ModelVisible;
 use super::{
-    adaptive_runtime_direct, def, model_spec, permission_risk, requires_explicit_business_session,
-    ToolDefinition, PERMISSION_RISK_WRITE, TOOL_CATEGORY_RUNTIME,
+    adaptive_runtime_direct, model_spec, permission_risk, requires_explicit_business_session,
+    ToolDeclaration, ToolDefinition, PERMISSION_RISK_WRITE, TOOL_CATEGORY_RUNTIME,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -31,27 +31,27 @@ const EFFECTFUL_RESULT_AUDIT_FIELDS: &[super::ToolAuditResultField] = &[
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         requires_explicit_business_session(model_spec(
-            def(
-                "execute_code_mode",
-                super::ToolAuditPolicy::typed_fields(RESULT_AUDIT_FIELDS),
-                ModelVisible,
-                TOOL_CATEGORY_RUNTIME,
-                None,
-                TOOL_PROVIDER_CONTROL,
-                super::ToolSemanticContract {
+            ToolDeclaration {
+                name: "execute_code_mode",
+                audit: super::ToolAuditPolicy::typed_fields(RESULT_AUDIT_FIELDS),
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_RUNTIME,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_CONTROL,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
                     approval: super::ToolApprovalPolicy::None,
                     idempotency: super::ToolIdempotency::PureRead,
                 },
-                Some(PROJECT_READ),
-                true,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE
+                required_scope: Some(PROJECT_READ),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE
                     .review(super::ToolReviewEvidence::ReadOnlyInspection),
-            ),
+            }.define(),
             "Read-only Code Mode for related inspections. Prefer a direct tool for one simple observation. Use Promise.all only for independent calls; keep dependent follow-ups sequential inside one cell. Filter child results before text(value); never a raw-result dump. Project before the outer-output limit. Children keep canonical authority; no shell/fs/network/mutation/validation/Jobs.",
         )),
         45,
@@ -59,26 +59,26 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     adaptive_runtime_direct(
         requires_explicit_business_session(model_spec(
-            def(
-                "execute_effectful_code_mode",
-                super::ToolAuditPolicy::typed_fields(EFFECTFUL_RESULT_AUDIT_FIELDS),
-                ModelVisible,
-                TOOL_CATEGORY_RUNTIME,
-                None,
-                TOOL_PROVIDER_CONTROL,
-                super::ToolSemanticContract {
+            ToolDeclaration {
+                name: "execute_effectful_code_mode",
+                audit: super::ToolAuditPolicy::typed_fields(EFFECTFUL_RESULT_AUDIT_FIELDS),
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_RUNTIME,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_CONTROL,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Validation Code Mode for E1 reads plus project_validate, cargo_check and cargo_test. Prefer project_validate for portable validation; use Cargo validator specialists when their advanced contract matters. Distill results before text(value). Children retain canonical Project/Session, permission, validation and Job semantics. Plugin/MCP gateways, shell/process tools, nested Job observation and recursive Code Mode remain unavailable.",
         )),
         105,
@@ -87,26 +87,26 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         permission_risk(
             requires_explicit_business_session(model_spec(
-                super::require_all_scopes(def(
-                    "execute_mutating_code_mode",
-                    super::ToolAuditPolicy::typed_fields(EFFECTFUL_RESULT_AUDIT_FIELDS),
-                    ModelVisible,
-                    TOOL_CATEGORY_RUNTIME,
-                    None,
-                    TOOL_PROVIDER_CONTROL,
-                    super::ToolSemanticContract {
+                super::require_all_scopes(ToolDeclaration {
+                    name: "execute_mutating_code_mode",
+                    audit: super::ToolAuditPolicy::typed_fields(EFFECTFUL_RESULT_AUDIT_FIELDS),
+                    visibility: ModelVisible,
+                    category: TOOL_CATEGORY_RUNTIME,
+                    runner_capability: None,
+                    provider_id: TOOL_PROVIDER_CONTROL,
+                    semantic: super::ToolSemanticContract {
                         effect: super::ToolEffect::Mutate,
                         risk: ProjectWrite,
                         approval: super::ToolApprovalPolicy::Standard,
                         idempotency: super::ToolIdempotency::NonIdempotent,
                     },
-                    Some(PROJECT_WRITE),
-                    true,
-                    NoPath,
-                    true,
-                    true,
-                    super::ToolSessionEvidencePolicy::NONE,
-                ), &[PROJECT_WRITE, JOB_RUN]),
+                    required_scope: Some(PROJECT_WRITE),
+                    requires_project: true,
+                    path_hint: NoPath,
+                    destructive: true,
+                    shell_like: true,
+                    session_evidence: super::ToolSessionEvidencePolicy::NONE,
+                }.define(), &[PROJECT_WRITE, JOB_RUN]),
                 "Bounded coding Code Mode: adaptive E1 reads, at most one canonical edit_project_files attempt, then project_validate, cargo_check or cargo_test only after a successful known edit; a successful no-op may validate. Requires project:write and job:run; child authority remains canonical. Execution pass is not current-source proof: inspect source_state. Continue Jobs outside the cell using exact effect_receipt children. Plugin/MCP gateways, shell/process tools, nested Job observation, alternate writes, recursion and whole-program retry remain unavailable.",
             )),
             PERMISSION_RISK_WRITE,

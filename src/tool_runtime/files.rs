@@ -64,7 +64,7 @@ pub(crate) use inspection::{
     page_file_list_entries, parse_file_list_entries, LIST_TRACKED_SOURCE_MAX_BYTES,
 };
 #[cfg(test)]
-pub(crate) use mutations::{apply_text_edits_to_string, validate_edit_file_path};
+pub(crate) use mutations::validate_edit_file_path;
 use search::search_head_resolution_shell;
 #[cfg(all(test, unix))]
 pub(crate) use search::search_project_text_command_with_head_fallbacks;
@@ -80,11 +80,6 @@ pub(crate) use search::{
 };
 
 // Edit limits and the sensitive-path guard are shared with the Runner binary.
-#[cfg(test)]
-pub(crate) use crate::apply_edits_shared::{
-    canonicalize_apply_text_line_endings, detect_apply_text_line_ending,
-    restore_apply_text_line_endings,
-};
 pub(crate) use crate::apply_edits_shared::{
     is_lowercase_hex_sha256 as is_hex_sha256, is_sensitive_edit_path, MAX_APPLY_FILE_CHANGES,
     MAX_APPLY_TEXT_EDITS, MAX_APPLY_TEXT_EDIT_FIELD_BYTES,

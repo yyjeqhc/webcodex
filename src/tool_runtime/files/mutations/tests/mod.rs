@@ -128,8 +128,6 @@ fn matching_rejection_payload(
         "error": "RUNNER_MUST_NOT_CHOOSE_ERROR",
     })
 }
-mod fixture;
-pub(crate) use fixture::apply_text_edits_to_string;
 mod patch_recovery;
 mod patch_result;
 mod text_edits;

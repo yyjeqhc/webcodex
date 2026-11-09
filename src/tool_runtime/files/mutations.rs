@@ -21,5 +21,3 @@ mod write;
 mod tests;
 #[cfg(test)]
 pub(crate) use preflight::validate_edit_file_path;
-#[cfg(test)]
-pub(crate) use tests::apply_text_edits_to_string;

@@ -817,7 +817,7 @@ async fn coding_workflow_untracked_only_is_nonblocking_warning() {
 }
 
 #[tokio::test]
-async fn coding_workflow_tracked_modified_is_nonblocking_and_allows_continued_edit() {
+async fn coding_workflow_tracked_modified_is_nonblocking_and_preserves_worktree() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     fs::create_dir_all(tmp.path().join("src")).unwrap();
@@ -847,63 +847,8 @@ async fn coding_workflow_tracked_modified_is_nonblocking_and_allows_continued_ed
     assert!(worktree.contains("user-wip"));
     assert!(!worktree.contains("head"));
 
-    let (updated, out) = crate::tool_runtime::files::apply_text_edits_to_string(
-        &worktree,
-        "src/example.rs",
-        &[crate::tool_runtime::tool_inputs::ApplyTextEditInput {
-            kind: crate::tool_runtime::tool_inputs::ApplyTextEditKind::ReplaceExact,
-            old_text: Some("    println!(\"user-wip\");".to_string()),
-            new_text: Some("    println!(\"user-wip-plus-agent\");".to_string()),
-            anchor_text: None,
-            occurrence: None,
-            expected_match_count: None,
-            line_scope: None,
-        }],
-        None,
-        false,
-    )
-    .expect("continued edit on already-modified worktree content must succeed");
-    assert_eq!(out["changed"], true);
-    assert!(updated.contains("user-wip-plus-agent"));
-    assert!(
-        updated.contains("fn main()"),
-        "must preserve surrounding worktree content: {updated}"
-    );
-    assert!(
-        !updated.contains("head"),
-        "must not revert to HEAD content: {updated}"
-    );
-
-    // Applying against HEAD-only content with the same worktree old_text fails,
-    // proving the tool is not using HEAD as the silent baseline.
-    let head_content = "fn main() {\n    println!(\"head\");\n}\n";
-    let head_err = crate::tool_runtime::files::apply_text_edits_to_string(
-        head_content,
-        "src/example.rs",
-        &[crate::tool_runtime::tool_inputs::ApplyTextEditInput {
-            kind: crate::tool_runtime::tool_inputs::ApplyTextEditKind::ReplaceExact,
-            old_text: Some("    println!(\"user-wip\");".to_string()),
-            new_text: Some("    println!(\"user-wip-plus-agent\");".to_string()),
-            anchor_text: None,
-            occurrence: None,
-            expected_match_count: None,
-            line_scope: None,
-        }],
-        None,
-        false,
-    )
-    .unwrap_err();
-    assert!(
-        head_err.contains("match text was not found") || head_err.contains("Rejected before write"),
-        "HEAD baseline should not satisfy worktree old_text: {head_err}"
-    );
-
-    // Persist continued edit and confirm disk still differs from a clean checkout.
-    fs::write(tmp.path().join("src/example.rs"), &updated).unwrap();
-    assert_eq!(
-        fs::read_to_string(tmp.path().join("src/example.rs")).unwrap(),
-        updated
-    );
+    // Continued edits are covered through the production Runner file handler by
+    // file_apply_text_edits_uses_dirty_worktree_instead_of_git_head.
 }
 
 #[tokio::test]

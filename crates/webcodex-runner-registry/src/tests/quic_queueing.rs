@@ -216,23 +216,13 @@ async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "quic-stop".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: async_job_capabilities(),
-            policy: None,
+            ..runner_registration_request(
+                "quic-stop".to_string(),
+                "inst".to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                async_job_capabilities(),
+            )
         }))
         .await
         .unwrap();

@@ -62,27 +62,12 @@ impl RunnerRegistryTelemetry for TimingTelemetry {
 
 async fn registered_metric_runner(registry: &RunnerRegistry, client_id: &str) {
     registry
-        .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: "metric-inst".to_string(),
-            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                RunnerCapabilities::default(),
-            ),
-            policy: None,
-        }))
+        .register(current_runner_registration(runner_registration_request(
+            client_id.to_string(),
+            "metric-inst".to_string(),
+            RUNNER_PROTOCOL_GENERATION_V2,
+            crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
+        )))
         .await
         .unwrap();
 }

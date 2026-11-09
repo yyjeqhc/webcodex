@@ -315,30 +315,20 @@ async fn register_browser_runner(
 ) {
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: "browser-inst".to_string(),
-            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: RunnerCapabilities {
-                browser_observe: observe,
-                browser_control: control,
-                browser_element_action_admission: element_action_admission,
-                browser_batch: batch,
-                browser_launch: launch,
-                ..v2_baseline_capabilities()
-            },
-            policy: None,
+            ..runner_registration_request(
+                client_id.to_string(),
+                "browser-inst".to_string(),
+                RUNNER_PROTOCOL_GENERATION_V2,
+                RunnerCapabilities {
+                    browser_observe: observe,
+                    browser_control: control,
+                    browser_element_action_admission: element_action_admission,
+                    browser_batch: batch,
+                    browser_launch: launch,
+                    ..v2_baseline_capabilities()
+                },
+            )
         }))
         .await
         .unwrap();

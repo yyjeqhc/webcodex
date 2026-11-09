@@ -30,23 +30,13 @@ async fn lease_different_online_instance_takes_over_immediately_and_retires_old_
     // passive last_seen grace: it takes over immediately even while A is fresh.
     let view = registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst-b".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: async_job_capabilities(),
-            policy: None,
+            ..runner_registration_request(
+                "oe".to_string(),
+                "inst-b".to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                async_job_capabilities(),
+            )
         }))
         .await
         .unwrap();
@@ -489,27 +479,12 @@ async fn lease_register_notifier_rejects_stale_instance() {
 async fn lease_register_rejects_empty_instance_id() {
     let registry = RunnerRegistry::default();
     let err = registry
-        .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                RunnerCapabilities::default(),
-            ),
-            policy: None,
-        }))
+        .register(current_runner_registration(runner_registration_request(
+            "oe".to_string(),
+            "".to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
+        )))
         .await
         .unwrap_err();
     assert!(err.contains("agent_instance_id"), "error was: {err}");
@@ -531,26 +506,17 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
     };
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
             job_inventory: Some(crate::runner_protocol::ShellJobInventory {
                 active_complete: true,
                 jobs: Vec::new(),
             }),
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst-a".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: capabilities(),
-            policy: None,
+            ..runner_registration_request(
+                "oe".to_string(),
+                "inst-a".to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                capabilities(),
+            )
         }))
         .await
         .unwrap();
@@ -664,26 +630,17 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         .await;
     let view = registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
             job_inventory: Some(crate::runner_protocol::ShellJobInventory {
                 active_complete: true,
                 jobs: vec![snapshot.clone()],
             }),
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst-b".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: capabilities(),
-            policy: None,
+            ..runner_registration_request(
+                "oe".to_string(),
+                "inst-b".to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                capabilities(),
+            )
         }))
         .await
         .expect("exact detached recovery inventory must transfer to replacement instance");

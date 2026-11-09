@@ -1,6 +1,7 @@
 use crate::projects::RunnerLookupError;
 use crate::protocol::AcceptedRunnerProtocol;
 use crate::registry::{MAX_SHARED_KEY_RUNNERS_PER_GROUP, SHARED_KEY_OFFLINE_TTL_SECS};
+use crate::test_support::runner_registration_request;
 use crate::validation::{validate_file_request, validate_run_request, MAX_RUN_STDIN_BYTES};
 use crate::*;
 use std::sync::Arc;
@@ -68,25 +69,12 @@ fn runner_registration(
     runner_instance_id: &str,
     _projects: Vec<RunnerProjectSummary>,
 ) -> RunnerRegisterRequest {
-    RunnerRegisterRequest {
-        computer_session_availability: None,
-        computer_control_epoch: None,
-        process_started_at: None,
-        build: None,
-        job_concurrency_limit: None,
-        job_inventory: None,
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
-        client_id: client_id.to_string(),
-        runner_instance_id: runner_instance_id.to_string(),
-        runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
-        display_name: None,
-        owner: None,
-        hostname: None,
-        host_context: None,
-        capabilities: async_job_capabilities(),
-        policy: None,
-    }
+    runner_registration_request(
+        client_id.to_string(),
+        runner_instance_id.to_string(),
+        RUNNER_PROTOCOL_GENERATION_V2,
+        async_job_capabilities(),
+    )
 }
 
 fn shell_job_start_request(

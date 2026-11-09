@@ -4,27 +4,12 @@ use super::*;
 async fn registry_allows_session_scoped_run_without_ssh_resource() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "xrh".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                RunnerCapabilities::default(),
-            ),
-            policy: None,
-        }))
+        .register(current_runner_registration(runner_registration_request(
+            "xrh".to_string(),
+            "inst".to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
+        )))
         .await
         .unwrap();
 
@@ -77,25 +62,12 @@ async fn script_language_extensions_require_independent_additive_capabilities() 
             crate::test_support::current_runner_capabilities(RunnerCapabilities::default());
         capabilities.structured_script_javascript = javascript;
         capabilities.structured_script_typescript = typescript;
-        current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "script-cap".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
+        current_runner_registration(runner_registration_request(
+            "script-cap".to_string(),
+            "inst".to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             capabilities,
-            policy: None,
-        })
+        ))
     };
 
     // Model a mixed-version Runner that already understands JavaScript typed
@@ -168,28 +140,17 @@ async fn script_language_extensions_require_independent_additive_capabilities() 
 #[tokio::test]
 async fn python_direct_script_requires_additive_capability_before_enqueue() {
     let registry = RunnerRegistry::default();
-    let registration = |python: bool| RunnerRegisterRequest {
-        computer_session_availability: None,
-        computer_control_epoch: None,
-        process_started_at: None,
-        build: None,
-        job_concurrency_limit: None,
-        job_inventory: None,
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
-        client_id: "python-cap".to_string(),
-        runner_instance_id: "inst".to_string(),
-        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-        display_name: None,
-        owner: None,
-        hostname: None,
-        host_context: None,
-        capabilities: {
-            let mut capabilities = v2_baseline_capabilities();
-            capabilities.structured_script_python = python;
-            capabilities
-        },
-        policy: None,
+    let registration = |python: bool| {
+        runner_registration_request(
+            "python-cap".to_string(),
+            "inst".to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            {
+                let mut capabilities = v2_baseline_capabilities();
+                capabilities.structured_script_python = python;
+                capabilities
+            },
+        )
     };
     registry.register(registration(false)).await.unwrap();
     let payload = ShellScriptPayload {
@@ -249,30 +210,19 @@ async fn python_direct_script_requires_additive_capability_before_enqueue() {
 async fn bash_login_requires_additive_capability_before_enqueue() {
     use webcodex_core::workflow_session_contract::ExecutionShell;
     let registry = RunnerRegistry::default();
-    let registration = |login: bool| RunnerRegisterRequest {
-        computer_session_availability: None,
-        computer_control_epoch: None,
-        process_started_at: None,
-        build: None,
-        job_concurrency_limit: None,
-        job_inventory: None,
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
-        client_id: "bash-login-cap".to_string(),
-        runner_instance_id: "inst".to_string(),
-        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-        display_name: None,
-        owner: None,
-        hostname: None,
-        host_context: None,
-        capabilities: {
-            let mut capabilities = v2_baseline_capabilities();
-            capabilities.shell = true;
-            capabilities.explicit_shell_selection = true;
-            capabilities.bash_login_shell = login;
-            capabilities
-        },
-        policy: None,
+    let registration = |login: bool| {
+        runner_registration_request(
+            "bash-login-cap".to_string(),
+            "inst".to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            {
+                let mut capabilities = v2_baseline_capabilities();
+                capabilities.shell = true;
+                capabilities.explicit_shell_selection = true;
+                capabilities.bash_login_shell = login;
+                capabilities
+            },
+        )
     };
     let request = ShellRunRequest {
         client_id: "bash-login-cap".to_string(),

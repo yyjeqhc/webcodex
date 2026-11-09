@@ -4,25 +4,12 @@ use super::*;
 async fn touch_runner_refreshes_stale_client_back_to_online() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: async_job_capabilities(),
-            policy: None,
-        }))
+        .register(current_runner_registration(runner_registration_request(
+            "oe".to_string(),
+            "inst".to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            async_job_capabilities(),
+        )))
         .await
         .unwrap();
 

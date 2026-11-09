@@ -4,27 +4,12 @@ use super::*;
 async fn registry_enqueues_polls_and_completes_shell_request() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "xrh".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                RunnerCapabilities::default(),
-            ),
-            policy: None,
-        }))
+        .register(current_runner_registration(runner_registration_request(
+            "xrh".to_string(),
+            "inst".to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
+        )))
         .await
         .unwrap();
     let (request_id, rx) = registry
@@ -78,27 +63,12 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
     let registry = RunnerRegistry::default();
     for (client_id, instance) in [("owner", "inst-owner"), ("other", "inst-other")] {
         registry
-            .register(current_runner_registration(RunnerRegisterRequest {
-                computer_session_availability: None,
-                computer_control_epoch: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: instance.to_string(),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-                display_name: None,
-                owner: None,
-                hostname: None,
-                host_context: None,
-                capabilities: crate::test_support::current_runner_capabilities(
-                    RunnerCapabilities::default(),
-                ),
-                policy: None,
-            }))
+            .register(current_runner_registration(runner_registration_request(
+                client_id.to_string(),
+                instance.to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
+            )))
             .await
             .unwrap();
     }
@@ -166,27 +136,12 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
 async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "ordered".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                RunnerCapabilities::default(),
-            ),
-            policy: None,
-        }))
+        .register(current_runner_registration(runner_registration_request(
+            "ordered".to_string(),
+            "inst".to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
+        )))
         .await
         .unwrap();
     let (request_a, waiter_a) = registry

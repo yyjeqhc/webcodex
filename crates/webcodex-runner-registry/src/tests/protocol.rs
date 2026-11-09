@@ -198,25 +198,12 @@ async fn runner_supports_reflects_registered_capabilities() {
         ..Default::default()
     });
     registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: caps,
-            policy: None,
-        })
+        .register(runner_registration_request(
+            "oe".to_string(),
+            "inst".to_string(),
+            RUNNER_PROTOCOL_GENERATION_V2,
+            caps,
+        ))
         .await
         .unwrap();
     assert!(registry
@@ -293,12 +280,6 @@ async fn coding_agent_run_lookup_is_exact_when_bound_and_ambiguous_when_unbound(
         let provider_instance_id = format!("provider_{client_id}");
         registry
             .register(RunnerRegisterRequest {
-                computer_session_availability: None,
-                computer_control_epoch: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
                 coding_agent_providers: Some(vec![
                     webcodex_core::coding_agent::CodingAgentProvider {
                         provider_id: "codex".to_string(),
@@ -325,19 +306,16 @@ async fn coding_agent_run_lookup_is_exact_when_bound_and_ambiguous_when_unbound(
                         }],
                     },
                 ),
-                client_id: client_id.to_string(),
-                runner_instance_id: format!("inst_{client_id}"),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-                display_name: None,
-                owner: None,
-                hostname: None,
-                host_context: None,
-                capabilities: {
-                    let mut capabilities = v2_baseline_capabilities();
-                    capabilities.coding_agent_runs = true;
-                    capabilities
-                },
-                policy: None,
+                ..runner_registration_request(
+                    client_id.to_string(),
+                    format!("inst_{client_id}"),
+                    crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                    {
+                        let mut capabilities = v2_baseline_capabilities();
+                        capabilities.coding_agent_runs = true;
+                        capabilities
+                    },
+                )
             })
             .await
             .unwrap();
@@ -360,12 +338,6 @@ async fn coding_agent_registration_rejects_semantically_contradictory_snapshot()
     let registry = RunnerRegistry::default();
     let register =
         |run: webcodex_core::coding_agent::CodingAgentRunSnapshot| RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
             coding_agent_providers: Some(vec![webcodex_core::coding_agent::CodingAgentProvider {
                 provider_id: "codex".to_string(),
                 provider_instance_id: "provider_test".to_string(),
@@ -374,19 +346,16 @@ async fn coding_agent_registration_rejects_semantically_contradictory_snapshot()
             coding_agent_inventory: Some(webcodex_core::coding_agent::CodingAgentRunInventory {
                 runs: vec![run],
             }),
-            client_id: "test".to_string(),
-            runner_instance_id: "inst_test".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: {
-                let mut capabilities = v2_baseline_capabilities();
-                capabilities.coding_agent_runs = true;
-                capabilities
-            },
-            policy: None,
+            ..runner_registration_request(
+                "test".to_string(),
+                "inst_test".to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                {
+                    let mut capabilities = v2_baseline_capabilities();
+                    capabilities.coding_agent_runs = true;
+                    capabilities
+                },
+            )
         };
     let base = webcodex_core::coding_agent::CodingAgentRunSnapshot {
         run_id: "wc_agent_run_registration_semantic".to_string(),
@@ -447,11 +416,6 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
     let registry = RunnerRegistry::default();
     registry
         .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
             job_inventory: Some(crate::runner_protocol::ShellJobInventory {
                 active_complete: true,
                 jobs: Vec::new(),
@@ -464,17 +428,15 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
             coding_agent_inventory: Some(
                 webcodex_core::coding_agent::CodingAgentRunInventory::default(),
             ),
-            client_id: "all".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: all_enabled_capabilities(),
             policy: Some(crate::runner_protocol::RunnerPolicySummary {
                 ..Default::default()
             }),
+            ..runner_registration_request(
+                "all".to_string(),
+                "inst".to_string(),
+                RUNNER_PROTOCOL_GENERATION_V2,
+                all_enabled_capabilities(),
+            )
         })
         .await
         .unwrap();

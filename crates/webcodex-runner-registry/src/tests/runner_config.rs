@@ -8,26 +8,16 @@ use webcodex_core::ssh_resource::SshResourceRequest;
 
 fn registration(instance: &str, runner_config_control: bool) -> RunnerRegisterRequest {
     current_runner_registration(RunnerRegisterRequest {
-        computer_session_availability: None,
-        computer_control_epoch: None,
-        client_id: "runner-config-control".to_string(),
-        runner_instance_id: instance.to_string(),
-        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-        display_name: None,
         owner: Some("alice".to_string()),
-        hostname: None,
-        capabilities: RunnerCapabilities {
-            runner_config_control,
-            ..Default::default()
-        },
-        host_context: None,
-        policy: None,
-        process_started_at: None,
-        build: None,
-        job_concurrency_limit: None,
-        job_inventory: None,
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
+        ..runner_registration_request(
+            "runner-config-control".to_string(),
+            instance.to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            RunnerCapabilities {
+                runner_config_control,
+                ..Default::default()
+            },
+        )
     })
 }
 

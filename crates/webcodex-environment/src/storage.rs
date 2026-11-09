@@ -391,6 +391,11 @@ pub(crate) fn secure_windows_path(path: &Path) -> SetupResultValue<()> {
     let sid = crate::service::current_account()
         .map_err(crate::native::service_error)?
         .identity;
+    // Current-user installations may live below an administrator-owned folder
+    // with an inherited Modify ACL but no WRITE_OWNER grant. Resetting an
+    // already-correct owner along with the DACL fails with ACCESS_DENIED (5),
+    // whereas setting only the protected DACL succeeds. Never skip the DACL.
+    let owner_is_current = windows_path_owner(path)? == sid;
     let sddl: Vec<u16> = format!("O:{sid}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{sid})\0")
         .encode_utf16()
         .collect();
@@ -421,9 +426,17 @@ pub(crate) fn secure_windows_path(path: &Path) -> SetupResultValue<()> {
                 name.as_mut_ptr(),
                 1,
                 DACL_SECURITY_INFORMATION
-                    | OWNER_SECURITY_INFORMATION
-                    | PROTECTED_DACL_SECURITY_INFORMATION,
-                owner,
+                    | PROTECTED_DACL_SECURITY_INFORMATION
+                    | if owner_is_current {
+                        0
+                    } else {
+                        OWNER_SECURITY_INFORMATION
+                    },
+                if owner_is_current {
+                    std::ptr::null_mut()
+                } else {
+                    owner
+                },
                 std::ptr::null_mut(),
                 dacl,
                 std::ptr::null_mut(),

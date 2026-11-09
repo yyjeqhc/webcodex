@@ -8,7 +8,8 @@ upgrade or use it without an independent recovery backup.
 ## Build on MSI (no CI required)
 
 Requirements: Windows x64, Rust/Cargo, Node.js 22, Python 3.12 (py -3.12),
-NSIS 3.13 (makensis.exe), and a **clean committed** WebCodex checkout.
+NSIS 3.13 (makensis.exe), 7-Zip (7z.exe, including Chocolatey's bundled
+copy), and a **clean committed** WebCodex checkout.
 From E:\git\webcodex on fix/1394-windows-v043-upgrade:
 
     .\scripts\build_windows_unified_preview.ps1
@@ -16,7 +17,11 @@ From E:\git\webcodex on fix/1394-windows-v043-upgrade:
 The script recompiles all four native components with one exact committed Git
 SHA, enables local-preview-installer **only for the candidate CLI**, collects
 four verified build-info records and SHA-256 digests, stages the Tauri payload,
-then constructs the outer NSIS Bootstrap. It **does not run** any installer or
+then **extracts and hashes the exact installed files from the completed inner
+Tauri NSIS package** before creating the final Source Manifest and outer NSIS
+Bootstrap. Tauri changes Desktop PE resource bytes during bundling; the
+pre-bundle executable hash must not be used as the installed Desktop hash.
+It **does not run** any installer or
 stop processes. If rerunning for the same commit, explicitly inspect and remove
 target\unified-preview\<12-char-commit> before rebuilding.
 
@@ -25,8 +30,8 @@ Output files (inside target\unified-preview\<12-char-commit>):
     webcodex-unified-LOCAL-PREVIEW-<sha12>-v0.5.0-win32-x64.exe
     webcodex-unified-LOCAL-PREVIEW-<sha12>-v0.5.0-win32-x64.exe.sha256
     webcodex-unified-LOCAL-PREVIEW-<sha12>-v0.5.0-win32-x64.exe.provenance.json
-    candidate\source-manifest.json
-    candidate\SHA256SUMS
+    candidate-final\source-manifest.json
+    candidate-final\SHA256SUMS
 
 The manifest declares local_preview=true, workflow reference
 webcodex/local-preview, workflow run ID 0, and local-preview-host for each

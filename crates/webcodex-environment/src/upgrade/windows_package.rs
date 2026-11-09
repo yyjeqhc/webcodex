@@ -104,6 +104,31 @@ fn owner_path(path: &Path, owner: &str) -> SetupResultValue<()> {
     Ok(())
 }
 
+// A per-user Desktop installed into an existing administrator-owned directory
+// can have user-owned executable files beneath an administrator-owned parent.
+// The rollback authority remains bound to the exact journal, exact file owners,
+// the same user-owned backups and non-reparse targets; do not reject the parent
+// solely because its Windows owner is BUILTIN\\Administrators.
+#[cfg(any(windows, test))]
+fn rollback_parent_owner_allowed(actual: &str, owner: &str, component: &str) -> bool {
+    actual == owner || (component == "webcodex-desktop" && actual == "S-1-5-32-544")
+}
+
+fn rollback_parent_path(path: &Path, owner: &str, component: &str) -> SetupResultValue<()> {
+    verify_installed_target_path(path)?;
+    #[cfg(windows)]
+    if !rollback_parent_owner_allowed(&crate::storage::windows_path_owner(path)?, owner, component)
+    {
+        return Err(error(
+            "installer_owner",
+            "The installed program parent directory belongs to an unrecognized Windows account",
+        ));
+    }
+    #[cfg(not(windows))]
+    let _ = (owner, component);
+    Ok(())
+}
+
 fn no_environment(store: &EnvironmentStore) -> SetupResultValue<()> {
     if store.load_environment()?.is_some() || store.load_journal()?.is_some() {
         return Err(error(
@@ -737,17 +762,44 @@ fn rollback_inner(store: &EnvironmentStore, runtime: &Path) -> SetupResultValue<
     journal.phase = Phase::Restoring;
     store.write_json(JOURNAL, &journal)?;
     for p in &journal.programs {
-        owner_path(
+        rollback_parent_path(
             p.target.parent().ok_or_else(SetupDiagnostic::io)?,
             &journal.owner_identity,
-        )?;
+            &p.name,
+        )
+        .map_err(|_| {
+            error(
+                "upgrade_restore_parent",
+                "Rollback parent-directory ownership or path check failed",
+            )
+        })?;
         if p.target.try_exists().map_err(|_| SetupDiagnostic::io())? {
-            owner_path(&p.target, &journal.owner_identity)?;
-            stopped(&p.target)?;
+            owner_path(&p.target, &journal.owner_identity).map_err(|_| {
+                error(
+                    "upgrade_restore_target_owner",
+                    "Rollback target file ownership check failed",
+                )
+            })?;
+            stopped(&p.target).map_err(|_| {
+                error(
+                    "upgrade_restore_target_busy",
+                    "Rollback target program is still busy",
+                )
+            })?;
         }
-        restore_program(p)?;
+        restore_program(p).map_err(|_| {
+            error(
+                "upgrade_restore_file",
+                "Rollback file restoration operation failed",
+            )
+        })?;
         #[cfg(windows)]
-        crate::storage::secure_windows_path(&p.target)?;
+        crate::storage::secure_windows_path(&p.target).map_err(|_| {
+            error(
+                "upgrade_restore_acl",
+                "Rollback failed to secure restored program ownership and ACL",
+            )
+        })?;
         if digest(&p.target)? != p.sha256 {
             return Err(error(
                 "upgrade_restore_failed",

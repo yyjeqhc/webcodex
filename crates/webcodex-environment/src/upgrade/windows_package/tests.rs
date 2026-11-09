@@ -23,6 +23,66 @@ fn v043_builds(json: &str) -> [MachineBuildInfo; 3] {
     })
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_restored_program_acl_does_not_require_reassigning_existing_owner() {
+    use std::process::Command;
+    let path = std::env::temp_dir().join(format!(
+        "webcodex-restore-acl-{}.bin",
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::write(&path, b"existing-owner-with-modify-only-acl").unwrap();
+    let result = (|| {
+        let account = crate::service::current_account().unwrap();
+        assert_eq!(
+            crate::storage::windows_path_owner(&path).unwrap(),
+            account.identity
+        );
+        // This user-owned file now has only Authenticated Users:Modify. The
+        // original OWNER|DACL API call fails with ACCESS_DENIED (5); updating
+        // its DACL alone is allowed because the owner may always edit the DACL.
+        let status = Command::new("icacls.exe")
+            .arg(&path)
+            .args(["/inheritance:r", "/grant:r", "*S-1-5-11:(M)"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        crate::storage::secure_windows_path(&path).unwrap();
+        assert_eq!(
+            crate::storage::windows_path_owner(&path).unwrap(),
+            account.identity
+        );
+    })();
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[test]
+fn rollback_accepts_administrator_owned_desktop_parent_only() {
+    let user = "S-1-5-21-11-22-33-1001";
+    assert!(rollback_parent_owner_allowed(user, user, "webcodex"));
+    assert!(rollback_parent_owner_allowed(
+        user,
+        user,
+        "webcodex-desktop"
+    ));
+    assert!(rollback_parent_owner_allowed(
+        "S-1-5-32-544",
+        user,
+        "webcodex-desktop"
+    ));
+    for name in ["webcodex", "webcodex-server", "webcodex-runner"] {
+        assert!(!rollback_parent_owner_allowed("S-1-5-32-544", user, name));
+    }
+    for actual in ["S-1-5-32-545", "S-1-5-21-11-22-33-1002", "S-1-1-0"] {
+        assert!(!rollback_parent_owner_allowed(
+            actual,
+            user,
+            "webcodex-desktop"
+        ));
+    }
+}
+
 #[test]
 fn v043_published_windows_identities_classify_as_legacy() {
     for fixture in V043_BUILD_INFO {

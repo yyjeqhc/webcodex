@@ -129,6 +129,10 @@ fn managed_worktree_namespace_candidate(
     policy: &RunnerPolicy,
     source: &Path,
 ) -> Result<PathBuf, &'static str> {
+    if policy.managed_worktree_root.is_some() {
+        let root = validate_configured_managed_worktree_root(policy, Some(source))?;
+        return Ok(root);
+    }
     let mut roots =
         webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
     roots.sort_by_key(|root| std::cmp::Reverse(root.components().count()));
@@ -136,6 +140,7 @@ fn managed_worktree_namespace_candidate(
         if !webcodex_runner_config::paths::path_is_within(source, &root) {
             continue;
         }
+
         let candidate = root.join(MANAGED_WORKTREE_NAMESPACE);
         if webcodex_runner_config::paths::path_is_within(&candidate, source) {
             continue;
@@ -153,6 +158,29 @@ fn managed_worktree_namespace_candidate(
     Err("managed_worktree_root_unavailable")
 }
 
+fn validate_configured_managed_worktree_root(
+    policy: &RunnerPolicy,
+    source: Option<&Path>,
+) -> Result<PathBuf, &'static str> {
+    let Some(configured) = policy.managed_worktree_root.as_ref() else {
+        return Err("managed_worktree_root_unavailable");
+    };
+    let metadata =
+        std::fs::symlink_metadata(configured).map_err(|_| "managed_worktree_root_unavailable")?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("managed_worktree_root_unsafe");
+    }
+    let root =
+        canonicalize_existing(configured).map_err(|_| "managed_worktree_root_unavailable")?;
+    if !paths_equal(&root, configured)
+        || source.is_some_and(|source| webcodex_runner_config::paths::path_is_within(&root, source))
+        || validate_project_path_policy(policy, &root).is_err()
+    {
+        return Err("managed_worktree_root_unsafe");
+    }
+    Ok(root)
+}
+
 /// Materialize the Runner-owned managed-worktree namespace inside the current
 /// Runner filesystem policy. The caller never selects this destination, but the
 /// resulting Project must remain usable by the ordinary file/shell/process paths,
@@ -161,6 +189,9 @@ fn ensure_managed_worktree_root(
     policy: &RunnerPolicy,
     source: &Path,
 ) -> Result<PathBuf, &'static str> {
+    if policy.managed_worktree_root.is_some() {
+        return managed_worktree_namespace_candidate(policy, source);
+    }
     let candidate = managed_worktree_namespace_candidate(policy, source)?;
     match std::fs::symlink_metadata(&candidate) {
         Ok(metadata) => {
@@ -335,6 +366,18 @@ fn resume_managed_worktree(
     requested_base_ref: Option<&str>,
     resume_project_id: &str,
 ) -> CommandResult {
+    if policy.managed_worktree_root.is_some()
+        && validate_configured_managed_worktree_root(policy, Some(source_root)).is_err()
+    {
+        return managed_worktree_error(
+            start,
+            "managed_worktree_root_unsafe",
+            false,
+            requested_base_ref,
+            None,
+            Some(source_dirty),
+        );
+    }
     if validate_project_op_id(resume_project_id).is_err() {
         return managed_worktree_error(
             start,

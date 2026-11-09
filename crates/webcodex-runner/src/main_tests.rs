@@ -2009,6 +2009,89 @@ fn concurrent_managed_worktree_bootstraps_choose_distinct_runner_paths() {
 }
 
 #[test]
+fn managed_worktree_uses_configured_central_root_without_changing_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let other_root = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("source");
+    let central = tmp.path().join("central");
+    let registry = tmp.path().join("project-registry");
+    seed_managed_worktree_repo(&source);
+    std::fs::create_dir(&central).unwrap();
+    let central = central.canonicalize().unwrap();
+    register_managed_source_project(&registry, &source);
+    let mut policy = project_policy(tmp.path());
+    policy.allowed_roots = vec![
+        other_root.path().canonicalize().unwrap(),
+        tmp.path().canonicalize().unwrap(),
+    ];
+    policy.managed_worktree_root = Some(central.clone());
+    let request = managed_worktree_request(
+        &source,
+        serde_json::Value::Null,
+        "77777777-7777-4777-8777-777777777777",
+        None,
+    );
+
+    let result = project_ok(handle_prepare_managed_worktree(
+        &policy, &registry, &request,
+    ));
+    let path = PathBuf::from(result["path"].as_str().unwrap());
+    assert_eq!(path.parent(), Some(central.as_path()));
+    assert_eq!(result["outcome"], "managed_worktree_created");
+    assert_eq!(result["managed"], true);
+}
+
+#[test]
+fn managed_worktree_resume_revalidates_current_root_without_retargeting_old_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("source");
+    let central = tmp.path().join("central");
+    let replacement = tmp.path().join("replacement");
+    let registry = tmp.path().join("project-registry");
+    seed_managed_worktree_repo(&source);
+    std::fs::create_dir(&central).unwrap();
+    std::fs::create_dir(&replacement).unwrap();
+    register_managed_source_project(&registry, &source);
+
+    let mut initial_policy = project_policy(tmp.path());
+    initial_policy.managed_worktree_root = Some(central.canonicalize().unwrap());
+    let request = managed_worktree_request(
+        &source,
+        serde_json::Value::Null,
+        "88888888-8888-4888-8888-888888888888",
+        None,
+    );
+    let created = project_ok(handle_prepare_managed_worktree(
+        &initial_policy,
+        &registry,
+        &request,
+    ));
+    let old_path = created["path"].clone();
+
+    let mut reloaded_policy = project_policy(tmp.path());
+    reloaded_policy.managed_worktree_root = Some(replacement.canonicalize().unwrap());
+    let resume = managed_worktree_request(
+        &source,
+        serde_json::Value::Null,
+        "99999999-9999-4999-8999-999999999999",
+        created["agent_project_id"].as_str(),
+    );
+    let resumed = project_ok(handle_prepare_managed_worktree(
+        &reloaded_policy,
+        &registry,
+        &resume,
+    ));
+    assert_eq!(resumed["outcome"], "managed_worktree_recovered");
+    assert_eq!(resumed["path"], old_path);
+    assert_eq!(
+        Path::new(resumed["path"].as_str().unwrap())
+            .parent()
+            .unwrap(),
+        central.canonicalize().unwrap()
+    );
+}
+
+#[test]
 fn managed_worktree_git_source_without_registered_project_does_not_infer_lineage() {
     let tmp = tempfile::tempdir().unwrap();
     let source = tmp.path().join("source");

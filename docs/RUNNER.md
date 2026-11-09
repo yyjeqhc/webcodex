@@ -118,13 +118,21 @@ or created:
 [policy]
 allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
+# Optional central namespace for newly created managed worktrees.
+managed_worktree_root = "/srv/webcodex-worktrees"
 ```
 
 Managed-worktree bootstrap uses the same boundary. The Runner may derive a
 private managed namespace so the model never supplies a destination path, but
 that namespace and the resulting Project still have to fit the effective
-`allowed_roots` policy (unless `allow_cwd_anywhere=true`). A Project selector or
-Project ref does not widen this filesystem authority.
+`allowed_roots` policy (unless `allow_cwd_anywhere=true`). To centralize new
+worktrees across multiple allowed roots, set `managed_worktree_root` to an
+absolute, existing, non-symbolic-link directory inside the effective
+`allowed_roots` and outside each source checkout. Invalid values reject config
+check/reload and never fall back to the derived namespace. The value is
+hot-reloadable; it affects only future creation and revalidates on creation and
+resume. Existing managed worktrees are never moved or retargeted. A Project
+selector or Project ref does not widen this filesystem authority.
 
 ### Registering projects at runtime
 

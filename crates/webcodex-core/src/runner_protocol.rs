@@ -1278,6 +1278,8 @@ pub enum RunnerConfigErrorField {
     SkillsRoots,
     #[serde(rename = "instructions.files")]
     InstructionsFiles,
+    #[serde(rename = "policy.managed_worktree_root")]
+    ManagedWorktreeRoot,
     #[serde(rename = "shell.max_persistent_shells")]
     ShellMaxPersistentShells,
     #[serde(rename = "shell.persistent_shell_idle_timeout_secs")]

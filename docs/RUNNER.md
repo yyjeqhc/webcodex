@@ -132,6 +132,18 @@ The runtime tools `register_project` and `create_project` let a client register
 an existing directory or create a new one on an online Runner, subject to the
 Runner's `allowed_roots` policy.
 
+The admin `POST /api/admin/projects/register` and
+`POST /api/admin/projects/create` routes use the same cross-platform path
+validation as these tools. Supply an absolute path on the selected Runner,
+regardless of the Server's OS: for example `/srv/projects/demo`,
+`D:\projects\demo` or `D:/projects/demo`. In JSON, escape backslashes:
+`"path": "D:\\projects\\demo"`. Windows verbatim paths are not required.
+Empty, relative, drive-relative (`D:demo`), NUL-containing and over-4096-byte
+paths are rejected by the admin API. The Runner still owns native path
+validation, canonicalization and `allowed_roots` enforcement. On Windows,
+existing UNC/verbatim-UNC directories can be registered only under already
+authorized roots; creating Projects on network shares remains unsupported.
+
 ## Skill sources
 
 `list_skills` presents one catalog while preserving three distinct ownership and

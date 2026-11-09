@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::Mutex;
+use webcodex_core::runtime_contract::validate_project_op_path;
 
 const WAIT_SECS: u64 = 30;
 pub(crate) const IDEMPOTENCY_KEY_MAX: usize = 128;
@@ -904,9 +905,8 @@ fn validate_common(
     }
     if name.trim().is_empty()
         || name.len() > 120
-        || path.is_empty()
         || path.len() > 4096
-        || !path.starts_with('/')
+        || validate_project_op_path(path).is_err()
         || description.is_some_and(|v| v.len() > 500)
     {
         return Err(api_error(400, "invalid_request"));

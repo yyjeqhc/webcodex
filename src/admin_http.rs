@@ -395,18 +395,21 @@ async fn dashboard(req: &mut Request, depot: &mut Depot, res: &mut Response) {
 
 #[cfg(test)]
 mod tests {
+    mod project_paths;
+
     use super::*;
     use crate::auth::scopes::SCOPE_ADMIN;
     use salvo::test::{ResponseExt, TestClient};
     use salvo::Service;
 
     fn service(auth: Option<AuthContext>) -> Service {
-        let (_tmp, db) = crate::test_support::test_db();
+        let (tmp, db) = crate::test_support::test_db();
         let runtime = Arc::new(ToolRuntime::new(
             Arc::new(crate::RunnerRegistry::default()),
             Arc::new(crate::tool_runtime::RuntimeInfo::default()),
         ));
         let mut router = Router::new()
+            .hoop(affix_state::inject(Arc::new(tmp)))
             .hoop(affix_state::inject(db))
             .hoop(affix_state::inject(runtime));
         if let Some(auth) = auth {

@@ -106,6 +106,15 @@ allowed_roots = ["/root/git"]
 runtime 工具 `register_project` 与 `create_project` 让客户端在在线 Runner 上
 注册已有目录或创建新目录，受 Runner 的 `allowed_roots` policy 约束。
 
+管理员接口 `POST /api/admin/projects/register` 与
+`POST /api/admin/projects/create` 使用与这些工具相同的跨平台路径校验。
+无论 Server 运行在哪个操作系统，都应传入所选 Runner 上的绝对路径，例如
+`/srv/projects/demo`、`D:\projects\demo` 或 `D:/projects/demo`。
+JSON 中的反斜杠需要转义：`"path": "D:\\projects\\demo"`；不必改用 Windows verbatim 路径。
+管理员 API 会拒绝空路径、相对路径、盘符相对路径（`D:demo`）、含 NUL 的路径和
+超过 4096 字节的路径。原生路径校验、规范化及 `allowed_roots` 检查仍由 Runner 执行。
+Windows 上的已有 UNC/verbatim-UNC 目录只能在已授权根目录内注册；仍不支持在网络共享上创建 Project。
+
 ## Skill 来源
 
 `list_skills` 继续只暴露一个 catalog，但其中保留三种彼此独立的 ownership / lifecycle：

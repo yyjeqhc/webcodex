@@ -6,6 +6,34 @@ use crate::webcodex_cli::ops::{
 use crate::webcodex_cli::run_ops_command;
 use std::time::Duration;
 
+const OPS_COMMAND_ARGS: &[(&str, &[&str])] = &[
+    ("status", &[]),
+    ("runners", &[]),
+    ("projects", &[]),
+    ("runner", &["--client-id", "fixture-runner"]),
+    ("windows", &["--project", "fixture-project"]),
+    ("smoke-preflight", &["--project", "fixture-project"]),
+    (
+        "diagnose-provider",
+        &["--project", "fixture-project", "--provider", "codex"],
+    ),
+];
+
+fn parsed_ops_common(action: CliAction) -> OpsCommonOptions {
+    match action {
+        CliAction::Ops(command) => match command {
+            OpsCommand::Status(opts) | OpsCommand::Runners(opts) | OpsCommand::Projects(opts) => {
+                opts
+            }
+            OpsCommand::Runner(opts) => opts.common,
+            OpsCommand::Windows(opts) => opts.common,
+            OpsCommand::SmokePreflight(opts) => opts.common,
+            OpsCommand::DiagnoseProvider(opts) => opts.common,
+        },
+        other => panic!("expected ops action, got {other:?}"),
+    }
+}
+
 // A stateful HTTP fixture proves that an operator inventory follows the actual
 // continuation and does not silently treat the first model page as complete.
 #[tokio::test]
@@ -236,33 +264,83 @@ fn ops_unknown_subcommand_is_clear() {
 }
 
 #[test]
-fn ops_common_flags_parse_without_printing_token() {
-    match cli_action([
-        "ops",
-        "status",
+fn ops_commands_share_common_defaults_and_last_value_wins() {
+    let defaults = OpsCommonOptions {
+        server_url: "http://127.0.0.1:8080".into(),
+        server_http: ServerHttpOptions::default(),
+        env_file: None,
+        token_file: None,
+        token: None,
+        json: false,
+        strict: false,
+    };
+    let flags = [
+        "--server-url",
+        "",
         "--server-url",
         "http://runtime.example",
+        "--proxy",
+        "invalid",
+        "--proxy",
+        "http://proxy.example:8080",
         "--env-file",
-        "/tmp/webcodex.env",
+        "old.env",
+        "--env-file",
+        "fixture.env",
         "--token-file",
-        "/tmp/token",
+        "old.token",
+        "--token-file",
+        "fixture.token",
         "--token",
-        "secret-token-value",
+        "",
+        "--token",
+        "fixture-token",
+        "--json",
         "--json",
         "--strict",
-    ]) {
-        CliAction::Ops(OpsCommand::Status(opts)) => {
-            assert_eq!(opts.server_url, "http://runtime.example");
-            assert_eq!(
-                opts.env_file.as_deref(),
-                Some(Path::new("/tmp/webcodex.env"))
-            );
-            assert_eq!(opts.token_file.as_deref(), Some(Path::new("/tmp/token")));
-            assert_eq!(opts.token.as_deref(), Some("secret-token-value"));
-            assert!(opts.json);
-            assert!(opts.strict);
+        "--strict",
+    ];
+    let expected = OpsCommonOptions {
+        server_url: "http://runtime.example".into(),
+        server_http: ServerHttpOptions {
+            proxy: Some("http://proxy.example:8080".into()),
+            no_system_proxy: false,
+        },
+        env_file: Some(PathBuf::from("fixture.env")),
+        token_file: Some(PathBuf::from("fixture.token")),
+        token: Some("fixture-token".into()),
+        json: true,
+        strict: true,
+    };
+    for &(command, required) in OPS_COMMAND_ARGS {
+        let prefix = ["ops", command];
+        assert_eq!(
+            parsed_ops_common(cli_action([prefix.as_slice(), required].concat())),
+            defaults,
+            "{command}"
+        );
+        // Common options can precede or follow command-specific options.
+        for args in [
+            [prefix.as_slice(), &flags[..], required].concat(),
+            [prefix.as_slice(), required, &flags[..]].concat(),
+        ] {
+            assert_eq!(parsed_ops_common(cli_action(args)), expected, "{command}");
         }
-        other => panic!("expected ops status action, got {other:?}"),
+        let args = [
+            prefix.as_slice(),
+            required,
+            &["--no-system-proxy", "--server-url", "--json"],
+        ]
+        .concat();
+        assert_eq!(
+            parsed_ops_common(cli_action(args)),
+            OpsCommonOptions {
+                server_url: "--json".into(), // A value that looks like a flag is still consumed.
+                server_http: direct_server_http(),
+                ..defaults.clone()
+            },
+            "{command}"
+        );
     }
 }
 
@@ -369,14 +447,84 @@ fn ops_runner_requires_exact_client_id() {
 
 #[test]
 fn ops_parser_errors_do_not_leak_token_value() {
-    let secret = "secret-token-value";
-    match cli_action(["ops", "status", "--token", secret, "--bad-flag"]) {
-        CliAction::Exit { code, stderr, .. } => {
-            assert_eq!(code, 2);
-            assert!(stderr.contains("unknown ops status flag: --bad-flag"));
-            assert!(!stderr.contains(secret));
+    let cases: &[(&[&str], &str)] = &[
+        (&["--server-url"], "--server-url requires a value"),
+        (&["--proxy"], "--proxy requires a value"),
+        (&["--env-file"], "--env-file requires a value"),
+        (&["--token-file"], "--token-file requires a value"),
+        (&["--token"], "--token requires a value"),
+        (&["--bad-flag"], "unknown ops {command} flag: --bad-flag"),
+        (&["positional"], "unknown ops {command} flag: positional"),
+        (&["--json", "--help"], "unknown ops {command} flag: --help"),
+        (&["--json", "-h"], "unknown ops {command} flag: -h"),
+        (&["--token", " "], "--token cannot be empty"),
+        (
+            &["--server-url", " ", "--token", ""],
+            "--server-url cannot be empty",
+        ),
+        (
+            &["--proxy", "", "--server-url", ""],
+            "--proxy cannot be empty",
+        ),
+        (
+            &["--proxy", "", "--no-system-proxy"],
+            "--proxy and --no-system-proxy are mutually exclusive",
+        ),
+    ];
+    let secret = "fixture-token-do-not-print";
+    for &(command, required) in OPS_COMMAND_ARGS {
+        for &(flags, error) in cases {
+            // Also check validation precedence when the command's required options are absent.
+            for required in [required, &[][..]] {
+                let args = [&["ops", command, "--token", secret][..], required, flags].concat();
+                match cli_action(args) {
+                    CliAction::Exit {
+                        code,
+                        stdout,
+                        stderr,
+                    } => {
+                        assert_eq!(code, 2, "{command} {flags:?}");
+                        assert!(stdout.is_empty());
+                        assert_eq!(stderr, format!("{}\n", error.replace("{command}", command)));
+                        assert!(!stderr.contains(secret));
+                    }
+                    other => panic!("expected parser error for {command} {flags:?}, got {other:?}"),
+                }
+            }
         }
-        other => panic!("expected parser error, got {other:?}"),
+    }
+}
+
+#[test]
+fn ops_help_only_short_circuits_at_the_start_of_known_commands() {
+    for &(command, _) in OPS_COMMAND_ARGS {
+        let expected = cli_exit(["ops", command, "--help"]).unwrap();
+        for help in ["--help", "-h"] {
+            assert_eq!(
+                cli_exit(["ops", command, help, "--bad-flag"]).unwrap(),
+                expected
+            );
+        }
+    }
+    for (args, error) in [
+        (vec!["ops"], format!("{}\n", ops_usage())),
+        (
+            vec!["ops", "unknown", "--help"],
+            "unknown ops subcommand: unknown\n".into(),
+        ),
+    ] {
+        match cli_action(args) {
+            CliAction::Exit {
+                code,
+                stdout,
+                stderr,
+            } => {
+                assert_eq!(code, 2);
+                assert!(stdout.is_empty());
+                assert_eq!(stderr, error);
+            }
+            other => panic!("expected ops usage error, got {other:?}"),
+        }
     }
 }
 

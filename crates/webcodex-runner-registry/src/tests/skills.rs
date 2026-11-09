@@ -6,27 +6,17 @@ use webcodex_core::runner_skill::RunnerSkillRequest;
 
 fn skill_registration(instance: &str, runtime: bool, management: bool) -> RunnerRegisterRequest {
     current_runner_registration(RunnerRegisterRequest {
-        computer_session_availability: None,
-        computer_control_epoch: None,
-        client_id: "skill-runner".to_string(),
-        runner_instance_id: instance.to_string(),
-        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-        display_name: None,
         owner: Some("alice".to_string()),
-        hostname: None,
-        capabilities: RunnerCapabilities {
-            skill_runtime: runtime,
-            skill_management: management,
-            ..Default::default()
-        },
-        host_context: None,
-        policy: None,
-        process_started_at: None,
-        build: None,
-        job_concurrency_limit: None,
-        job_inventory: None,
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
+        ..runner_registration_request(
+            "skill-runner".to_string(),
+            instance.to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            RunnerCapabilities {
+                skill_runtime: runtime,
+                skill_management: management,
+                ..Default::default()
+            },
+        )
     })
 }
 

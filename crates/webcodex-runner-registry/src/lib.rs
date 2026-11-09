@@ -56,10 +56,40 @@ pub(crate) mod test_support {
     use crate::RunnerRegistry;
     use std::sync::atomic::{AtomicU64, Ordering};
     use webcodex_core::runner_protocol::{
-        RunnerCapabilities, RunnerCapabilityId, RunnerProjectSummary, RunnerRegisterRequest,
-        ShellProjectInventoryPage, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
-        RUNNER_PROTOCOL_GENERATION_V2,
+        RunnerCapabilities, RunnerCapabilityId, RunnerProjectSummary,
+        RunnerProtocolGenerationNumber, RunnerRegisterRequest, ShellProjectInventoryPage,
+        PROJECT_INVENTORY_PAGE_MAX_SUMMARIES, RUNNER_PROTOCOL_GENERATION_V2,
     };
+
+    // Keep identity and capabilities exactly as supplied, including invalid protocol
+    // generations and missing capabilities used by rejection tests. Normalization is
+    // a separate, explicit call to `current_runner_registration`.
+    pub(crate) fn runner_registration_request(
+        client_id: String,
+        runner_instance_id: String,
+        runner_protocol_generation: RunnerProtocolGenerationNumber,
+        capabilities: RunnerCapabilities,
+    ) -> RunnerRegisterRequest {
+        RunnerRegisterRequest {
+            client_id,
+            runner_instance_id,
+            runner_protocol_generation,
+            capabilities,
+            display_name: None,
+            owner: None,
+            hostname: None,
+            computer_session_availability: None,
+            computer_control_epoch: None,
+            host_context: None,
+            policy: None,
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+        }
+    }
 
     pub(crate) fn current_runner_capabilities(
         mut capabilities: RunnerCapabilities,

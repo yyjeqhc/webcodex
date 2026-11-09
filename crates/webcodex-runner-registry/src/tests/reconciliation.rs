@@ -1,3 +1,4 @@
+use crate::test_support::runner_registration_request;
 use super::job_updates::{JobShellTarget, JobStartContext, JobStartExecution, JobStartRequest, JobValidationCorrelation, JobValidationPlan};
 use super::reconciliation::{
     reconcile_inventory_locked, recovery_timeout_sweep, validate_job_inventory,
@@ -84,23 +85,16 @@ fn empty_inventory() -> ShellJobInventory {
 
 fn register_request(instance: &str, inventory: ShellJobInventory) -> RunnerRegisterRequest {
     crate::test_support::current_runner_registration(RunnerRegisterRequest {
-        computer_session_availability: None,
-        computer_control_epoch: None,
-        client_id: CLIENT_ID.to_string(),
-        runner_instance_id: instance.to_string(),
-        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
         display_name: Some("reconciliation test runner".to_string()),
         owner: Some("tester".to_string()),
-        hostname: None,
-        host_context: None,
-        capabilities: reconciliation_capabilities(),
-        policy: None,
         process_started_at: Some(1_700_000_000),
-        build: None,
-        job_concurrency_limit: None,
         job_inventory: Some(inventory),
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
+        ..runner_registration_request(
+            CLIENT_ID.to_string(),
+            instance.to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            reconciliation_capabilities(),
+        )
     })
 }
 

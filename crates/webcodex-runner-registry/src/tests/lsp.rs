@@ -19,29 +19,16 @@ async fn register_lsp_test_runner_capabilities(
     call_hierarchy_capable: bool,
 ) {
     registry
-        .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: RunnerCapabilities {
+        .register(current_runner_registration(runner_registration_request(
+            client_id.to_string(),
+            "inst".to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            RunnerCapabilities {
                 lsp_read_only_navigation: lsp_capable,
                 lsp_call_hierarchy: call_hierarchy_capable,
                 ..Default::default()
             },
-            policy: None,
-        }))
+        )))
         .await
         .unwrap();
 }

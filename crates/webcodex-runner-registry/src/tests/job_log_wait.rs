@@ -55,26 +55,17 @@ fn wait_job_update(
 async fn register_sequenced(registry: &RunnerRegistry, instance: &str) {
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
             job_inventory: Some(crate::runner_protocol::ShellJobInventory {
                 active_complete: true,
                 jobs: Vec::new(),
             }),
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: instance.to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: sequenced_job_capabilities(),
-            policy: None,
+            ..runner_registration_request(
+                "oe".to_string(),
+                instance.to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                sequenced_job_capabilities(),
+            )
         }))
         .await
         .unwrap();
@@ -628,23 +619,13 @@ async fn job_log_wait_unsequenced_update_between_calls_and_noop_update() {
     };
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "legacy".to_string(),
-            runner_instance_id: "legacy-inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities,
-            policy: None,
+            ..runner_registration_request(
+                "legacy".to_string(),
+                "legacy-inst".to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                capabilities,
+            )
         }))
         .await
         .unwrap();
@@ -723,23 +704,13 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
     };
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "activity-legacy".to_string(),
-            runner_instance_id: "activity-legacy-inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities,
-            policy: None,
+            ..runner_registration_request(
+                "activity-legacy".to_string(),
+                "activity-legacy-inst".to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                capabilities,
+            )
         }))
         .await
         .unwrap();

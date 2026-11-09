@@ -22,28 +22,17 @@ fn bridge_provider(provider_instance_id: &str) -> McpGatewayProvider {
 async fn register_bridge_runner(registry: &RunnerRegistry) {
     registry
         .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            client_id: "bridge-runner".to_string(),
-            runner_instance_id: "bridge-instance".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                RunnerCapabilities::default(),
-            ),
-            host_context: None,
             policy: Some(RunnerPolicySummary {
                 mcp_gateway_providers: Some(vec![bridge_provider("provider-instance")]),
                 ..Default::default()
             }),
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
+            ..runner_registration_request(
+                "bridge-runner".to_string(),
+                "bridge-instance".to_string(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
+            )
         })
         .await
         .unwrap();
@@ -62,26 +51,17 @@ fn bridge_registration(
     providers: Option<Vec<McpGatewayProvider>>,
 ) -> RunnerRegisterRequest {
     current_runner_registration(RunnerRegisterRequest {
-        computer_session_availability: None,
-        computer_control_epoch: None,
-        client_id: client_id.to_string(),
-        runner_instance_id: runner_instance_id.to_string(),
-        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-        display_name: None,
         owner: Some("alice".to_string()),
-        hostname: None,
-        capabilities: RunnerCapabilities::default(),
-        host_context: None,
         policy: providers.map(|providers| RunnerPolicySummary {
             mcp_gateway_providers: Some(providers),
             ..Default::default()
         }),
-        process_started_at: None,
-        build: None,
-        job_concurrency_limit: None,
-        job_inventory: None,
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
+        ..runner_registration_request(
+            client_id.to_string(),
+            runner_instance_id.to_string(),
+            crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            RunnerCapabilities::default(),
+        )
     })
 }
 

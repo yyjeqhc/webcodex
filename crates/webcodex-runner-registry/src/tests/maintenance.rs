@@ -73,25 +73,13 @@ async fn runner_maintenance_blocks_enqueue_and_requires_exact_owner() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            computer_control_epoch: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "target".into(),
-            runner_instance_id: "first".into(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".into()),
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                RunnerCapabilities::default(),
-            ),
-            policy: None,
+            ..runner_registration_request(
+                "target".into(),
+                "first".into(),
+                crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
+            )
         }))
         .await
         .unwrap();

@@ -1,5 +1,6 @@
 use crate::error::{DesktopError, DesktopResult};
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 mod lifecycle;
@@ -79,6 +80,110 @@ impl DesktopShellState {
     }
 }
 
+/// Whether the Dock icon stays while the main window is closed. A separate file like
+/// `desktop-locale.json`: this is a native shell preference, not runtime configuration.
+pub struct DockIconState {
+    path: PathBuf,
+    hide_when_closed: Mutex<bool>,
+}
+
+impl DockIconState {
+    pub fn load(data_dir: &Path) -> Self {
+        let path = data_dir.join("desktop-dock-icon.json");
+        let hide_when_closed = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or(false);
+        Self {
+            path,
+            hide_when_closed: Mutex::new(hide_when_closed),
+        }
+    }
+
+    pub fn hide_when_closed(&self) -> bool {
+        *self
+            .hide_when_closed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn set_hide_when_closed(&self, hide: bool) -> std::io::Result<()> {
+        let mut current = self
+            .hide_when_closed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Apply even if disk persistence fails; the menu already reflects the choice.
+        *current = hide;
+        crate::state::write_atomic_file(&self.path, &serde_json::to_vec(&hide)?)
+    }
+}
+
+fn dock_icon_visible(hide_when_closed: bool, window_visible: bool, reopening: bool) -> bool {
+    // A window being recreated needs foreground app status to take focus,
+    // even before its new WebView becomes visible.
+    !hide_when_closed || window_visible || reopening
+}
+
+#[cfg(target_os = "macos")]
+fn apply_dock_icon(app: &AppHandle, visible: bool) {
+    if let Err(error) = app.set_dock_visibility(visible) {
+        report_window_error(&window_error(error));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_dock_icon(_app: &AppHandle, _visible: bool) {}
+
+fn dock_icon_should_be_visible(app: &AppHandle) -> bool {
+    let window_visible = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .is_some_and(|window| window.is_visible().unwrap_or(false));
+    let reopening = app.state::<DesktopShellState>().with(|state| {
+        matches!(
+            state.phase,
+            lifecycle::Phase::Recreating { .. } | lifecycle::Phase::Destroying { reopen: true }
+        )
+    });
+    dock_icon_visible(
+        app.state::<DockIconState>().hide_when_closed(),
+        window_visible,
+        reopening,
+    )
+}
+
+pub fn sync_dock_icon(app: &AppHandle) {
+    let visible = dock_icon_should_be_visible(app);
+    apply_dock_icon(app, visible);
+
+    #[cfg(target_os = "macos")]
+    if !visible {
+        // tao ignores DockHide for one second after DockShow to avoid duplicate
+        // macOS Dock icons. A rapid show -> close (or preference toggle) can
+        // therefore leave the icon visible although the native call succeeded.
+        // Retry once after that grace period, checking current window intent
+        // so a later reopen cannot be hidden by a stale callback.
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+            let retry = handle.clone();
+            if let Err(error) = handle.run_on_main_thread(move || {
+                if !dock_icon_should_be_visible(&retry) {
+                    apply_dock_icon(&retry, false);
+                }
+            }) {
+                report_window_error(&window_error(error));
+            }
+        });
+    }
+}
+
+pub fn set_hide_dock_icon(app: &AppHandle, hide: bool) {
+    if let Err(error) = app.state::<DockIconState>().set_hide_when_closed(hide) {
+        eprintln!("WebCodex Dock preference was not saved: {:?}", error.kind());
+    }
+    sync_dock_icon(app);
+}
+
 fn show_plan(visible: bool, minimized: bool) -> ShowPlan {
     ShowPlan {
         show: !visible,
@@ -135,7 +240,9 @@ pub fn hide_main_window(app: &AppHandle) -> DesktopResult<()> {
             "Quit WebCodex and start it again.",
         )
     })?;
-    window.hide().map_err(window_error)
+    window.hide().map_err(window_error)?;
+    sync_dock_icon(app);
+    Ok(())
 }
 
 pub fn navigate(app: &AppHandle, target: NavigationTarget) -> DesktopResult<()> {
@@ -154,11 +261,16 @@ fn schedule_open(app: &AppHandle, target: Option<NavigationTarget>) -> DesktopRe
 }
 
 fn perform_open(app: &AppHandle, action: OpenAction) {
+    // Restore the Dock icon first so the window can take focus as a regular app.
+    if !matches!(action, OpenAction::None) {
+        apply_dock_icon(app, true);
+    }
     match action {
         OpenAction::Show => {
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                 if let Err(error) = show_existing(&window) {
                     report_window_error(&error);
+                    sync_dock_icon(app);
                 }
                 notify_navigation(app);
             } else {
@@ -213,6 +325,7 @@ fn recreate_main_window(app: &AppHandle, generation: u32) {
                         {
                             if let Err(error) = show_existing(&window) {
                                 report_window_error(&error);
+                                sync_dock_icon(&complete);
                             }
                             notify_navigation(&complete);
                         } else {
@@ -224,6 +337,7 @@ fn recreate_main_window(app: &AppHandle, generation: u32) {
                         complete
                             .state::<DesktopShellState>()
                             .with(|state| state.recreate_failed(generation));
+                        sync_dock_icon(&complete);
                         report_window_error(&error);
                     }
                 }
@@ -238,6 +352,7 @@ fn recreate_main_window(app: &AppHandle, generation: u32) {
     if spawned.is_err() {
         app.state::<DesktopShellState>()
             .with(|state| state.recreate_failed(generation));
+        sync_dock_icon(app);
         eprintln!("WebCodex window action failed: desktop_recreation_worker_unavailable");
     }
 }
@@ -277,7 +392,11 @@ pub fn enter_lightweight_mode(app: &AppHandle) -> DesktopResult<()> {
 pub fn main_window_destroyed(app: &AppHandle) {
     // Tauri has removed the old label from its manager before this event.
     let action = app.state::<DesktopShellState>().with(Lifecycle::destroyed);
+    let keeps_window_closed = matches!(action, OpenAction::None);
     perform_open(app, action);
+    if keeps_window_closed {
+        sync_dock_icon(app);
+    }
 }
 
 fn notify_navigation(app: &AppHandle) {
@@ -339,6 +458,35 @@ fn autostart_error(error: impl std::fmt::Display) -> DesktopError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dock_icon_hides_only_for_a_closed_window_with_the_preference_on() {
+        assert!(!dock_icon_visible(true, false, false));
+        assert!(dock_icon_visible(true, true, false));
+        assert!(dock_icon_visible(false, false, false));
+        assert!(dock_icon_visible(false, true, false));
+        // A delayed hide retry must not steal focus from an in-flight reopen.
+        assert!(dock_icon_visible(true, false, true));
+    }
+
+    #[test]
+    fn dock_preference_defaults_off_and_survives_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = DockIconState::load(directory.path());
+        assert!(!state.hide_when_closed());
+
+        state.set_hide_when_closed(true).unwrap();
+
+        assert!(DockIconState::load(directory.path()).hide_when_closed());
+    }
+
+    #[test]
+    fn corrupted_dock_preference_keeps_the_icon() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("desktop-dock-icon.json"), b"not json").unwrap();
+
+        assert!(!DockIconState::load(directory.path()).hide_when_closed());
+    }
 
     #[test]
     fn close_requested_background_decision_is_not_quit() {

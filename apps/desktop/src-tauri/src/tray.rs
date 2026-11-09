@@ -25,6 +25,7 @@ const CANCEL_OPERATION_PREFIX: &str = "tray.cancel_operation:";
 const PAUSE_COMPUTER_PREFIX: &str = "tray.pause_computer:";
 const RESUME_COMPUTER_PREFIX: &str = "tray.resume_computer:";
 const LAUNCH_AT_LOGIN_ID: &str = "tray.launch_at_login";
+const HIDE_DOCK_ICON_ID: &str = "tray.hide_dock_icon";
 const QUIT_ID: &str = "tray.quit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +70,7 @@ struct TrayProjection {
     cancel_operation_enabled: bool,
     operation_busy: bool,
     launch_at_login: Option<bool>,
+    hide_dock_icon: bool,
 }
 
 #[derive(Default)]
@@ -82,6 +84,11 @@ pub struct TrayPresentationCache {
 impl TrayProjection {
     fn with_lightweight_available(mut self, available: bool) -> Self {
         self.lightweight_available = available;
+        self
+    }
+
+    fn with_hide_dock_icon(mut self, hide: bool) -> Self {
+        self.hide_dock_icon = hide;
         self
     }
 }
@@ -161,6 +168,7 @@ impl TrayProjection {
             cancel_operation_enabled,
             operation_busy: snapshot.current_operation.is_some(),
             launch_at_login,
+            hide_dock_icon: false,
         }
     }
 }
@@ -181,6 +189,10 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     .with_lightweight_available(
         app.state::<desktop_shell::DesktopShellState>()
             .can_enter_lightweight(),
+    )
+    .with_hide_dock_icon(
+        app.state::<desktop_shell::DockIconState>()
+            .hide_when_closed(),
     );
     let menu = build_menu(app, &projection)?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
@@ -319,6 +331,10 @@ pub fn refresh_from_snapshot(app: &AppHandle, snapshot: &DesktopStateSnapshot) {
     .with_lightweight_available(
         app.state::<desktop_shell::DesktopShellState>()
             .can_enter_lightweight(),
+    )
+    .with_hide_dock_icon(
+        app.state::<desktop_shell::DockIconState>()
+            .hide_when_closed(),
     );
     projection.computer = cache
         .computer
@@ -512,12 +528,18 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
     )?;
     let quit_separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, QUIT_ID, locale.text("tray.quit"), true, None::<&str>)?;
-    menu.append_items(&[
-        &preferences_separator,
-        &launch_at_login,
-        &quit_separator,
-        &quit,
-    ])?;
+    menu.append_items(&[&preferences_separator, &launch_at_login])?;
+    if cfg!(target_os = "macos") {
+        menu.append(&CheckMenuItem::with_id(
+            app,
+            HIDE_DOCK_ICON_ID,
+            locale.text("tray.hideDockIcon"),
+            true,
+            projection.hide_dock_icon,
+            None::<&str>,
+        )?)?;
+    }
+    menu.append_items(&[&quit_separator, &quit])?;
     Ok(menu)
 }
 
@@ -574,6 +596,14 @@ pub(crate) fn handle_menu_event(app: &AppHandle, id: &str) {
                 let _ = desktop_shell::navigate(app, NavigationTarget::Settings);
             }
         },
+        HIDE_DOCK_ICON_ID => {
+            let hide = !app
+                .state::<desktop_shell::DockIconState>()
+                .hide_when_closed();
+            desktop_shell::set_hide_dock_icon(app, hide);
+            let snapshot = app.state::<AppState>().get_state();
+            refresh_from_snapshot(app, &snapshot);
+        }
         QUIT_ID => desktop_shell::request_application_exit(app),
         _ => {
             if let Some(action) = cancel_action_from_menu_id(id) {
@@ -732,6 +762,15 @@ mod tests {
         assert_eq!(chinese.connection_status, english.connection_status);
         assert_eq!(chinese.locale.text("tray.open"), "打开 WebCodex");
         assert_eq!(english.locale.text("tray.open"), "Open WebCodex");
+    }
+
+    #[test]
+    fn dock_preference_change_invalidates_the_tray_cache() {
+        let snapshot = local_snapshot();
+        let shown = TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::EnUs);
+        let hidden = shown.clone().with_hide_dock_icon(true);
+        assert_ne!(shown, hidden);
+        assert_eq!(hidden.with_hide_dock_icon(false), shown);
     }
 
     #[test]

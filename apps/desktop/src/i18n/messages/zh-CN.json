@@ -269,6 +269,7 @@
   "tray.stopQuickShare": "停止 Quick Share",
   "tray.cancelOperation": "取消当前操作",
   "tray.launchAtLogin": "登录时启动",
+  "tray.hideDockIcon": "关闭窗口后隐藏 Dock 图标",
   "tray.quit": "退出 WebCodex",
   "first.advanced": "高级",
   "first.serverOnlyTitle": "仅 Server",

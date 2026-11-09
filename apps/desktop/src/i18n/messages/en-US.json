@@ -269,6 +269,7 @@
   "tray.stopQuickShare": "Stop Quick Share",
   "tray.cancelOperation": "Cancel current operation",
   "tray.launchAtLogin": "Launch at login",
+  "tray.hideDockIcon": "Hide Dock icon when window is closed",
   "tray.quit": "Quit WebCodex",
   "first.advanced": "Advanced",
   "first.serverOnlyTitle": "Server only",

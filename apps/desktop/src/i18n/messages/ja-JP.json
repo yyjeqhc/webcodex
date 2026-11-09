@@ -269,6 +269,7 @@
   "tray.stopQuickShare": "Quick Share を停止",
   "tray.cancelOperation": "現在の操作をキャンセル",
   "tray.launchAtLogin": "ログイン時に起動",
+  "tray.hideDockIcon": "ウィンドウを閉じたら Dock アイコンを隠す",
   "tray.quit": "WebCodex を終了",
   "first.advanced": "詳細設定",
   "first.serverOnlyTitle": "Server のみ",

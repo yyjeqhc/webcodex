@@ -269,6 +269,7 @@
   "tray.stopQuickShare": "Quick Share 중지",
   "tray.cancelOperation": "현재 작업 취소",
   "tray.launchAtLogin": "로그인 시 실행",
+  "tray.hideDockIcon": "창을 닫으면 Dock 아이콘 숨기기",
   "tray.quit": "WebCodex 종료",
   "first.advanced": "고급",
   "first.serverOnlyTitle": "Server만 사용",

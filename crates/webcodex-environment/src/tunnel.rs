@@ -1893,7 +1893,7 @@ pub(crate) fn read_tunnel_health(
     })
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod health_tests;
 
 #[cfg(test)]

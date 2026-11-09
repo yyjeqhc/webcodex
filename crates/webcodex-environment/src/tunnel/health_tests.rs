@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg(unix)]
 fn health_locks_release_without_waiting_for_inherited_handles() {
     for exclusive in [false, true] {
         for fail_after_lock in [false, true] {
@@ -52,4 +53,46 @@ fn health_locks_release_without_waiting_for_inherited_handles() {
             drop(inherited);
         }
     }
+}
+
+#[test]
+fn missed_heartbeats_expire_during_contention_and_recover_after_unlock() {
+    let temp = crate::test_tempdir().unwrap();
+    let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+    let path = store.root().join("readiness.json");
+    let stale = serde_json::json!({
+        "schema_version": 1,
+        "observed_at_ms": 0,
+        "service_pid": std::process::id(),
+        "profile_revision": 7,
+        "state": "running",
+        "tunnel_ready": true,
+        "local_mcp_ready": true,
+    });
+    atomic_private_write(&path, stale.to_string().as_bytes()).unwrap();
+    let file = std::fs::File::open(&path).unwrap();
+    fs2::FileExt::try_lock_shared(&file).unwrap();
+    let reader = TunnelHealthFileLock { file };
+    for _ in 0..4 {
+        assert!(write_embedded_tunnel_observation(
+            &path,
+            7,
+            TunnelState::Running,
+            true,
+            true,
+            None,
+        )
+        .is_err());
+        let health = read_tunnel_health(&path).unwrap();
+        assert!(!health.fresh);
+        assert!(!health.tunnel_ready && !health.local_mcp_ready);
+        assert_eq!(health.state, Some(TunnelState::Running));
+        assert_eq!(health.profile_revision, Some(7));
+    }
+    drop(reader);
+    write_embedded_tunnel_observation(&path, 7, TunnelState::Running, true, true, None).unwrap();
+    let health = read_tunnel_health(&path).unwrap();
+    assert!(health.fresh && health.tunnel_ready && health.local_mcp_ready);
+    assert_eq!(health.service_pid, Some(std::process::id()));
+    assert_eq!(health.profile_revision, Some(7));
 }

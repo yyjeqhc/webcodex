@@ -259,11 +259,7 @@ async fn run_profile(
                     state.state = if reached_ready { TunnelState::Running } else { TunnelState::Starting };
                     state.tunnel_ready = ready; state.local_mcp_ready = local;
                 });
-                if persist_status(&profile, &status, index)
-                .is_err()
-                {
-                    break Some("tunnel_health_unavailable".into());
-                }
+                persist_heartbeat(&profile, &status, index);
             }
         }
     };
@@ -294,6 +290,33 @@ fn persist_status(
     index: usize,
 ) -> webcodex_environment::SetupResultValue<()> {
     let state = &status.snapshot()[index];
+    write_status(profile, state)
+}
+
+/// A saved heartbeat is an observation, not the owned task's execution state.
+/// Retry publication at the next normal tick without restarting or replaying work.
+/// Readers still reject stale observations using the existing freshness bound.
+fn persist_heartbeat(profile: &EmbeddedTunnelProfile, status: &TunnelStatus, index: usize) {
+    let mut state = status.snapshot()[index].clone();
+    let was_unavailable = state.diagnostic.as_deref() == Some("tunnel_health_unavailable");
+    state.diagnostic = None;
+    let unavailable = write_status(profile, &state).is_err();
+    status.update(index, |state| {
+        state.diagnostic = unavailable.then(|| "tunnel_health_unavailable".into());
+    });
+    // Log transitions, not every failed tick. Never include filesystem errors or
+    // private profile bindings in diagnostics.
+    if unavailable && !was_unavailable {
+        tracing::warn!(profile = %profile.profile_id, "Tunnel heartbeat unavailable; retrying at the next health tick");
+    } else if !unavailable && was_unavailable {
+        tracing::info!(profile = %profile.profile_id, "Tunnel heartbeat publication recovered");
+    }
+}
+
+fn write_status(
+    profile: &EmbeddedTunnelProfile,
+    state: &ProfileStatus,
+) -> webcodex_environment::SetupResultValue<()> {
     write_embedded_tunnel_observation(
         &profile.readiness_path,
         profile.runtime_revision,
@@ -303,3 +326,6 @@ fn persist_status(
         state.diagnostic.as_deref(),
     )
 }
+
+#[cfg(test)]
+mod tests;

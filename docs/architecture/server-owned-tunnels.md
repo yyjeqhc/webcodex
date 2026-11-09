@@ -106,6 +106,16 @@ existing per-profile service for standalone. Readiness files keep the existing
 freshness contract. Transport readiness is not evidence of a successful client
 operation, and process liveness is not either readiness bit.
 
+The initial status write must succeed before a profile launches. Once its Tunnel
+task is owned, a heartbeat publication error (including a concurrent reader's
+shared file lock) does not end or restart that task. Runtime status keeps the live
+readiness bits and reports `tunnel_health_unavailable` until publication succeeds
+at a later normal two-second health tick. Only failure/recovery transitions are
+logged. A missed write does not refresh the saved observation: readers still
+reject it after seven seconds. The writer retains the precreated file, its private
+ACL and its nonblocking lock; it never replaces the file or bypasses validation.
+Task failure, startup deadlines, shutdown and restart-fence semantics are unchanged.
+
 Server termination runs these phases in order:
 
 1. Stop new Tunnel polling/admission.

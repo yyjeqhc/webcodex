@@ -516,7 +516,7 @@ pub enum ToolAuditSemanticResultPolicy {
 
 impl ToolAuditPolicy {
     /// Existing audit-safe behavior for tools without a narrower result
-    /// projection. Every ToolDefinition must opt in explicitly through `def(...)`;
+    /// projection. Every ToolDefinition must declare its audit policy explicitly;
     /// there is intentionally no implicit/missing-policy default.
     pub const TYPED_CANONICAL: Self = Self {
         request: ToolAuditRequestPolicy::Typed,
@@ -1179,7 +1179,10 @@ pub struct ToolManifestIntent {
     pub tools: &'static [&'static str],
 }
 
-const fn def(
+// Required inputs to the canonical definition. Keep these named and without a
+// Default: visibility, audit, authority, capability and effect flags must be
+// deliberate at each declaration (or supplied by a narrow shared constructor).
+struct ToolDeclaration {
     name: &'static str,
     audit: ToolAuditPolicy,
     visibility: ToolVisibility,
@@ -1193,39 +1196,42 @@ const fn def(
     destructive: bool,
     shell_like: bool,
     session_evidence: ToolSessionEvidencePolicy,
-) -> ToolDefinition {
-    ToolDefinition {
-        name,
-        audit,
-        model_spec: None,
-        adaptive_runtime_direct: None,
+}
 
-        operator_extension_family: None,
-        execution: None,
-        composition: ToolCompositionPolicy::Denied,
-        host_orchestration: ToolHostOrchestrationHint::UNSPECIFIED,
-        visibility,
-        category,
-        metadata: make_tool_metadata(
-            name,
-            provider_id,
-            semantic,
-            required_scope,
-            requires_project,
-            path_hint,
-            destructive,
-            shell_like,
-        ),
-        policy: ToolDefinitionPolicy::DEFAULT,
-        activity: ToolActivityPolicy::DEFAULT,
-        session_evidence,
-        runner_capability,
+impl ToolDeclaration {
+    const fn define(self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name,
+            audit: self.audit,
+            model_spec: None,
+            adaptive_runtime_direct: None,
+            operator_extension_family: None,
+            execution: None,
+            composition: ToolCompositionPolicy::Denied,
+            host_orchestration: ToolHostOrchestrationHint::UNSPECIFIED,
+            visibility: self.visibility,
+            category: self.category,
+            metadata: make_tool_metadata(
+                self.name,
+                self.provider_id,
+                self.semantic,
+                self.required_scope,
+                self.requires_project,
+                self.path_hint,
+                self.destructive,
+                self.shell_like,
+            ),
+            policy: ToolDefinitionPolicy::DEFAULT,
+            activity: ToolActivityPolicy::DEFAULT,
+            session_evidence: self.session_evidence,
+            runner_capability: self.runner_capability,
+        }
     }
 }
 
 // Runner-backed Project reads share this authority/effect contract. Audit
 // redaction, capability, path selection, and Session evidence stay explicit
-// at each declaration; mutation and execution tools continue to use `def`.
+// at each declaration; mutation and execution tools use a full ToolDeclaration.
 const fn runner_project_read_def(
     name: &'static str,
     audit: ToolAuditPolicy,
@@ -1234,26 +1240,27 @@ const fn runner_project_read_def(
     path_hint: ToolPathHint,
     session_evidence: ToolSessionEvidencePolicy,
 ) -> ToolDefinition {
-    def(
+    ToolDeclaration {
         name,
         audit,
-        ToolVisibility::ModelVisible,
+        visibility: ToolVisibility::ModelVisible,
         category,
-        Some(runner_capability),
-        TOOL_PROVIDER_RUNNER,
-        ToolSemanticContract {
+        runner_capability: Some(runner_capability),
+        provider_id: TOOL_PROVIDER_RUNNER,
+        semantic: ToolSemanticContract {
             effect: ToolEffect::Observe,
             risk: ToolRisk::Read,
             approval: ToolApprovalPolicy::None,
             idempotency: ToolIdempotency::PureRead,
         },
-        Some(PROJECT_READ),
-        true,
+        required_scope: Some(PROJECT_READ),
+        requires_project: true,
         path_hint,
-        false,
-        false,
+        destructive: false,
+        shell_like: false,
         session_evidence,
-    )
+    }
+    .define()
 }
 
 // Server-owned Control operations without a Project, path, Runner dispatch, or
@@ -1268,21 +1275,22 @@ const fn control_def(
     required_scope: Option<&'static str>,
     destructive: bool,
 ) -> ToolDefinition {
-    def(
+    ToolDeclaration {
         name,
         audit,
         visibility,
         category,
-        None,
-        TOOL_PROVIDER_CONTROL,
+        runner_capability: None,
+        provider_id: TOOL_PROVIDER_CONTROL,
         semantic,
         required_scope,
-        false,
-        NoPath,
+        requires_project: false,
+        path_hint: NoPath,
         destructive,
-        false,
-        ToolSessionEvidencePolicy::NONE,
-    )
+        shell_like: false,
+        session_evidence: ToolSessionEvidencePolicy::NONE,
+    }
+    .define()
 }
 
 const fn model_spec(definition: ToolDefinition, description: &'static str) -> ToolDefinition {

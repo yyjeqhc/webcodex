@@ -4,8 +4,8 @@ use super::RunnerCapabilityRequirement::{
 };
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes,
-    requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB,
+    adaptive_runtime_direct, model_spec, permission_risk, require_all_scopes,
+    requires_explicit_business_session, ToolDeclaration, ToolDefinition, PERMISSION_RISK_JOB,
     TOOL_CATEGORY_EXECUTION, TOOL_CATEGORY_JOB,
 };
 use crate::metadata::{
@@ -20,15 +20,24 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         permission_risk(
             adaptive_runtime_direct(
                 model_spec(
-                    def("project_format", super::ToolAuditPolicy::TYPED_CANONICAL,
-                        ModelVisible, TOOL_CATEGORY_EXECUTION, Some(super::RunnerCapabilityRequirement::ProjectFormat),
-                        TOOL_PROVIDER_RUNNER,
-                        super::ToolSemanticContract { effect: super::ToolEffect::Mutate,
+                    ToolDeclaration {
+                        name: "project_format",
+                        audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                        visibility: ModelVisible,
+                        category: TOOL_CATEGORY_EXECUTION,
+                        runner_capability: Some(super::RunnerCapabilityRequirement::ProjectFormat),
+                        provider_id: TOOL_PROVIDER_RUNNER,
+                        semantic: super::ToolSemanticContract { effect: super::ToolEffect::Mutate,
                             risk: crate::metadata::ToolRisk::ProjectWrite,
                             approval: super::ToolApprovalPolicy::Standard,
                             idempotency: super::ToolIdempotency::NonIdempotent },
-                        Some(crate::metadata::PROJECT_WRITE), true, NoPath, true, true,
-                        super::ToolSessionEvidencePolicy::NONE),
+                        required_scope: Some(crate::metadata::PROJECT_WRITE),
+                        requires_project: true,
+                        path_hint: NoPath,
+                        destructive: true,
+                        shell_like: true,
+                        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+                    }.define(),
                     "Intentionally format 1..8 ordered Project-relative source files under one Runner-resolved recipe root. Requires project:write, job:run and project_format_v1. Rust uses bounded Cargo edition and installed rustfmt stdin/stdout with skip_children; custom configuration and unsupported topology fail closed. Python uses bounded pyproject target-version and isolated Ruff stdin/stdout; extend configuration and unsupported topology fail closed. Go requires project_format_go_v1 and a local go.mod recipe marker; installed gofmt reads stdin with no flags, module loading or dependency validation. gofmt accepts full programs or native stdin fragments; formatting is not compilation. No workspace traversal, installs, package scripts, arbitrary flags or implied network permission. Candidate bytes stay private; Runner compares source and file identity before each guarded write. A multi-file write is not atomic: failure, cancellation, timeout, conflicting edits or a lost receipt can leave mutation unknown. Known state_changed comes only from the verified executor report, never exit status. One admitted Job owns every phase; retain and observe its exact continuation when pending or uncertain. Never automatically retry or redispatch. Review source before any new mutation. Formatting does not supply the edit_project_files receipt required by Code Mode dependent validation.",
                 ).with_discovery_keywords(&["format", "source", "code", "formatting", "格式化", "源码", "代码"]).with_execution(super::ToolExecutionContract::new(super::ToolExecutionForm::ProjectFormat,
                     super::ToolExecutionLifetime::Runner, super::ToolExecutionStart::SyncFirst,
@@ -38,11 +47,22 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         &[crate::metadata::PROJECT_WRITE, JOB_RUN]),
     adaptive_runtime_direct(
         model_spec(
-        def("write_job_input", super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible, TOOL_CATEGORY_JOB, Some(StructuredProcess), TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract { effect:super::ToolEffect::Execute, risk:JobRun,
+        ToolDeclaration {
+            name: "write_job_input",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_JOB,
+            runner_capability: Some(StructuredProcess),
+            provider_id: TOOL_PROVIDER_RUNNER,
+            semantic: super::ToolSemanticContract { effect:super::ToolEffect::Execute, risk:JobRun,
                 approval:super::ToolApprovalPolicy::Standard, idempotency:super::ToolIdempotency::Keyed },
-            Some(JOB_RUN), true, NoPath, false, true, super::ToolSessionEvidencePolicy::NONE),
+            required_scope: Some(JOB_RUN),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: true,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }.define(),
         "Write bounded UTF-8 data or EOF to an existing run_process(interactive=true) Job. No new process, PTY, signal, stdin polling or automatic restart. Use one stable input_id per payload; exact same-id/same-data/close replay reconciles the retained receipt without resending, changed payload conflicts. Pending or uncertain delivery requires same-input reconciliation or observation, never a new id to retry. Written means OS pipe acceptance, not program consumption. At most 128 data writes per Job plus one empty EOF. New input is rejected while a write is pending or after closure; receipts are process-local and do not survive Runner replacement. Rechecks Job visibility, Project, Runner incarnation and capability; observe_jobs reads output and stop_job controls the process.",
         ),
         71,
@@ -50,27 +70,27 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     ),
     adaptive_runtime_direct(
         model_spec(
-            def(
-                "project_build",
-                super::ToolAuditPolicy::TYPED_CANONICAL
+            ToolDeclaration {
+                name: "project_build",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL
                     .execution(super::ToolAuditExecutionPolicy::DIRECT_ARGV_TEXT),
-                ModelVisible,
-                TOOL_CATEGORY_EXECUTION,
-                Some(ProjectBuild),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_EXECUTION,
+                runner_capability: Some(ProjectBuild),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Runner-resolved Rust/Go/Python/Node build; fixed argv. Rust profile, targets.library/targets.binaries (<=8), artifact_policy=observe require project_build_rust_options_v1; others reject. Omission keeps defaults. Observe verifies selected Project-local Cargo outputs (path/bytes/SHA/MIME); cached files prove neither creation, correctness nor freshness. Missing/truncated/unsafe evidence fails observation while preserving native exit. No output-path/target-triple selection or toolchain installation. Rust/Go scope: <=8 packages or all_packages; Rust workspace root must equal Project root. Rust exclude_packages needs all_packages=true, 1–8 exact members and project_workspace_exclusions_v1; unknown/all-member exclusions fail before execution. Go fixes GO111MODULE=on/GOWORK=off. dependency_policy.mode=locked prevents resolution updates. Rust dependency_resolution_policy=offline adds Cargo --offline independently; others reject, missing cache never retries online. Neither policy is an OS sandbox; project code may write/network. Python: pyproject.toml, configured Python 3, installed build deps; --no-isolation builds sdist then wheel, rejects scope, requires project_build_python_v1. Node runs declared npm/pnpm/yarn/bun build with no installs, rejects scope/policies, requires project_build_node_v1. project_build_v1 gates planning/typed admission; manifests, scope and invocation are rechecked before execution. Pending: observe_jobs for the same durable Job, never redispatch. Unsupported builds: native execution.",
         ).with_discovery_keywords(&["compile", "build", "project", "编译", "构建", "项目"])
         .with_execution(super::ToolExecutionContract::new(
@@ -84,9 +104,9 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     ),
     adaptive_runtime_direct(
         model_spec(
-            def(
-                "run_process",
-                super::ToolAuditPolicy::TYPED_CANONICAL
+            ToolDeclaration {
+                name: "run_process",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL
                     .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
                         "executable",
                         "args",
@@ -94,23 +114,23 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                         "process_summary",
                     ]))
                     .execution(super::ToolAuditExecutionPolicy::DIRECT_ARGV_TEST_COUNTS),
-                ModelVisible,
-                TOOL_CATEGORY_EXECUTION,
-                Some(StructuredProcess),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_EXECUTION,
+                runner_capability: Some(StructuredProcess),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                true,
-                true,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: true,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Run native executable literal argv under Runner ownership; run_shell takes shell grammar, run_script program text. interactive=true: stdin pipe via keyed write_job_input, no PTY/SSH/initial stdin/structured validation evidence. Pending: retain returned Job/continuation; observe_jobs for Job recovery. Never redispatch pending or outcome_unknown; inspect existing execution. Runner replacement cannot inherit it.",        ).with_discovery_keywords(&["start", "run", "execute", "executable", "literal", "arguments", "argv", "program", "command", "启动", "运行", "执行", "程序", "字面量", "参数", "命令"])
         .with_execution(super::ToolExecutionContract::new(
             super::ToolExecutionForm::NativeArgv,
@@ -123,9 +143,9 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     ),
     require_all_scopes(
         model_spec(
-            def(
-                "run_detached_process",
-                super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+            ToolDeclaration {
+                name: "run_detached_process",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
                     super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
                         "executable",
                         "args",
@@ -134,23 +154,23 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                         "process_summary",
                     ]),
                 ),
-                ModelVisible,
-                TOOL_CATEGORY_EXECUTION,
-                Some(DetachedProcess),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_EXECUTION,
+                runner_capability: Some(DetachedProcess),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::Keyed,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                true,
-                true,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: true,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Start a supervisor-owned native Job when its child must survive Runner replacement; duration alone is insufficient. Ownership transfers before payload start; recovery requires matching supervisor identity and lifetime fence. Retained replay keys prevent duplicate dispatch; expired keys never authorize retry. Observe/stop the same Job; outcome_unknown never authorizes redispatch. No shell, script or SSH fallback.",
         ).with_discovery_keywords(&["background", "detached", "daemon", "service", "process", "后台", "脱离", "守护", "服务", "程序"])
         .with_execution(super::ToolExecutionContract::new(
@@ -163,33 +183,33 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     ),
     adaptive_runtime_direct(
         model_spec(
-            def(
-                "run_script",
-            super::ToolAuditPolicy::TYPED_CANONICAL
-                .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
-                    "script",
-                    "args",
-                    "stdin",
-                    "script_summary",
-                ]))
-                .execution(super::ToolAuditExecutionPolicy::SCRIPT_TEST_COUNTS),
-            ModelVisible,
-            TOOL_CATEGORY_EXECUTION,
-            Some(StructuredScript),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Execute,
-                risk: JobRun,
-                approval: super::ToolApprovalPolicy::Standard,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(JOB_RUN),
-            true,
-            NoPath,
-            true,
-            true,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+            ToolDeclaration {
+                name: "run_script",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL
+                    .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
+                        "script",
+                        "args",
+                        "stdin",
+                        "script_summary",
+                    ]))
+                    .execution(super::ToolAuditExecutionPolicy::SCRIPT_TEST_COUNTS),
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_EXECUTION,
+                runner_capability: Some(StructuredScript),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
+                    effect: super::ToolEffect::Execute,
+                    risk: JobRun,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: true,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Run typed sh/bash/PowerShell/Python/JavaScript/TypeScript script data, never interpolated into shell command text. run_process takes literal argv; run_shell takes shell grammar. Prefer structured source editors. Pending: retain returned Job/continuation; observe_jobs for Job recovery. Never redispatch pending or outcome_unknown; inspect existing execution. Runner-owned; replacement cannot inherit it.",
         ).with_discovery_keywords(&["run", "execute", "script", "code", "interpreter", "python", "javascript", "运行", "执行", "脚本", "解释器"])
         .with_execution(super::ToolExecutionContract::new(
@@ -203,31 +223,31 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     ),
     adaptive_runtime_direct(
         model_spec(
-            def(
-                "run_shell",
-                super::ToolAuditPolicy::TYPED_CANONICAL
+            ToolDeclaration {
+                name: "run_shell",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL
                     .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
                         "command",
                         "command_summary",
                     ]))
                     .execution(super::ToolAuditExecutionPolicy::TEST_COUNTS),
-                ModelVisible,
-                TOOL_CATEGORY_EXECUTION,
-                Some(Shell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_EXECUTION,
+                runner_capability: Some(Shell),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                true,
-                true,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: true,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Run shell grammar or a short related command chain; run_process takes literal argv, run_script program text. Local Jobs are Runner-owned; named Session SSH has no durable Job handoff. Pending: retain returned Job/continuation; observe_jobs for Job recovery. Never redispatch pending or outcome_unknown; inspect existing execution. Prefer structured source editors. Runner replacement cannot inherit local Jobs.",
         ).with_discovery_keywords(&["run", "execute", "shell", "command", "pipeline", "pipes", "terminal", "bash", "powershell", "运行", "执行", "命令", "管道", "终端"])
         .with_execution(super::ToolExecutionContract::new(
@@ -240,54 +260,54 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         super::ToolDirectReason::CoreWorkflow,
     ),
     requires_explicit_business_session(model_spec(
-            def(
-                "open_session_shell",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
-                TOOL_CATEGORY_EXECUTION,
-                Some(PersistentShell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
+            ToolDeclaration {
+                name: "open_session_shell",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_EXECUTION,
+                runner_capability: Some(PersistentShell),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                true,
-                true,
-                super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Open),
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: true,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Open),
+            }.define(),
             "Open one bounded long-lived shell for an explicit Workflow Session. Primary use: one shell for repeated commands on the active named SSH resource in execution_context.resource, preserving remote cwd/env/exports/functions/umask. Local sh/bash or Windows PowerShell remains supported only when same local shell-process state is actually required, not merely for several commands. New SSH targets use manage_ssh_resource list/register, Runner restart, list again, then update_session_context; no per-shell host/resource parameter. The SSH target does not need WebCodex Runner.",
     )),
     requires_explicit_business_session(model_spec(
-            def(
-                "execute_session_shell",
-                super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+            ToolDeclaration {
+                name: "execute_session_shell",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
                     super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
                         "command",
                         "command_summary",
                     ]),
                 ),
-                ModelVisible,
-                TOOL_CATEGORY_EXECUTION,
-                Some(PersistentShell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_EXECUTION,
+                runner_capability: Some(PersistentShell),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                true,
-                true,
-                super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Exec),
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: true,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Exec),
+            }.define(),
             "Execute one framed command in an existing Session persistent shell. Primary route is repeated commands on the same named SSH resource while retaining remote cwd/env/exports/functions/umask. Local persistent execution remains supported only when the same local shell process must retain state; ordinary one-shot work should use run_process, run_shell for shell semantics or short tightly related chains, and run_script for program-like shell content. Several commands alone are not a reason to open persistent shell. Commands are serialized in the same shell process.",
     )
     .with_execution(super::ToolExecutionContract::new(
@@ -297,81 +317,81 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         super::ToolExecutionContinuation::SessionShell,
     ))),
     requires_explicit_business_session(model_spec(
-        def(
-            "get_session_shell_status",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_EXECUTION,
-            Some(PersistentShell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
+        ToolDeclaration {
+            name: "get_session_shell_status",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_EXECUTION,
+            runner_capability: Some(PersistentShell),
+            provider_id: TOOL_PROVIDER_RUNNER,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(RUNTIME_READ),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Status),
-        ),
+            required_scope: Some(RUNTIME_READ),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Status),
+        }.define(),
         "Read Runner-authoritative state for an explicit Session persistent shell. This never sends input to the process.",
     )),
     requires_explicit_business_session(permission_risk(
         model_spec(
-            def(
-                "close_session_shell",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
-                TOOL_CATEGORY_EXECUTION,
-                Some(PersistentShell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
+            ToolDeclaration {
+                name: "close_session_shell",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_EXECUTION,
+                runner_capability: Some(PersistentShell),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::DesiredState,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                true,
-                false,
-                super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Close),
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Close),
+            }.define(),
             "Idempotently close an explicit Session persistent shell and terminate its complete process group.",
         ),
         PERMISSION_RISK_JOB,
     )),
     permission_risk(
         model_spec(
-            def(
-                "run_job",
-                super::ToolAuditPolicy::TYPED_CANONICAL
+            ToolDeclaration {
+                name: "run_job",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL
                     .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
                         "command",
                         "command_summary",
                     ]))
                     .execution(super::ToolAuditExecutionPolicy::TEST_COUNTS),
-                ModelVisible,
-                TOOL_CATEGORY_EXECUTION,
-                Some(AsyncJobs),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_EXECUTION,
+                runner_capability: Some(AsyncJobs),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                true,
-                true,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: true,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Start an asynchronous Runner-owned shell Job with stable job_id, including while queued. Ordinary synchronous tools can hand off the same execution when pending. Server reconnects reconcile this Job; Runner replacement does not inherit it. Pending or outcome_unknown: observe_jobs, never redispatch. Use run_detached_process from the start when a native child must outlive the Runner.",
         )
         .with_execution(super::ToolExecutionContract::new(
@@ -384,53 +404,53 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     ),
     permission_risk(
         model_spec(
-            def(
-                "stop_job",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
-                TOOL_CATEGORY_JOB,
-                None,
-                TOOL_PROVIDER_NATIVE,
-                super::ToolSemanticContract {
+            ToolDeclaration {
+                name: "stop_job",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_JOB,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_NATIVE,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: JobRun,
                     approval: super::ToolApprovalPolicy::Standard,
                     idempotency: super::ToolIdempotency::DesiredState,
                 },
-                Some(JOB_RUN),
-                true,
-                NoPath,
-                true,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
+                required_scope: Some(JOB_RUN),
+                requires_project: true,
+                path_hint: NoPath,
+                destructive: true,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Stop one existing WebCodex Job by job_id. Requires confirm=true and preserves project/session ownership; log bodies are not returned.",
         ).with_discovery_keywords(&["cancel", "stop", "terminate", "job", "process", "取消", "停止", "终止", "作业", "进程"]),
         PERMISSION_RISK_JOB,
     ),
     adaptive_runtime_direct(
         model_spec(
-            def(
-                "observe_jobs",
-                super::ToolAuditPolicy::TYPED_CANONICAL
+            ToolDeclaration {
+                name: "observe_jobs",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL
                     .session_input(super::ToolAuditSessionInputPolicy::ObserveJobs),
-                ModelVisible,
-                TOOL_CATEGORY_JOB,
-                None,
-                TOOL_PROVIDER_NATIVE,
-                super::ToolSemanticContract {
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_JOB,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_NATIVE,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
                     approval: super::ToolApprovalPolicy::None,
                     idempotency: super::ToolIdempotency::PureRead,
                 },
-                Some(RUNTIME_READ),
-                false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            )
+                required_scope: Some(RUNTIME_READ),
+                requires_project: false,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define()
             .with_activity(
                 super::ToolActivityPresentation::Transport,
                 super::ToolActivityInteraction::Meaningful,
@@ -445,26 +465,26 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     ),
     adaptive_runtime_direct(
         model_spec(
-            def(
-                "wait_for_job_readiness",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
-                TOOL_CATEGORY_JOB,
-                None,
-                TOOL_PROVIDER_NATIVE,
-                super::ToolSemanticContract {
+            ToolDeclaration {
+                name: "wait_for_job_readiness",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_JOB,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_NATIVE,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
                     approval: super::ToolApprovalPolicy::None,
                     idempotency: super::ToolIdempotency::PureRead,
                 },
-                Some(RUNTIME_READ),
-                false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            )
+                required_scope: Some(RUNTIME_READ),
+                requires_project: false,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define()
             .with_activity(
                 super::ToolActivityPresentation::Transport,
                 super::ToolActivityInteraction::Meaningful,
@@ -477,26 +497,26 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         super::ToolDirectReason::CoreWorkflow,
     ),
     model_spec(
-            def(
-                "wait_for_job_terminal",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
-                TOOL_CATEGORY_JOB,
-                None,
-                TOOL_PROVIDER_NATIVE,
-                super::ToolSemanticContract {
+            ToolDeclaration {
+                name: "wait_for_job_terminal",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_JOB,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_NATIVE,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: Read,
                     approval: super::ToolApprovalPolicy::None,
                     idempotency: super::ToolIdempotency::Keyed,
                 },
-                Some(RUNTIME_READ),
-                false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            )
+                required_scope: Some(RUNTIME_READ),
+                requires_project: false,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define()
             .with_activity(
                 super::ToolActivityPresentation::Transport,
                 super::ToolActivityInteraction::Meaningful,
@@ -508,28 +528,28 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
 
 pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(model_spec(
-        def(
-            "list_jobs",
-            super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+        ToolDeclaration {
+            name: "list_jobs",
+            audit: super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
                 super::ToolAuditSessionInputPolicy::OmitTopLevel(&["project", "session_id"]),
             ),
-            ModelVisible,
-            TOOL_CATEGORY_JOB,
-            None,
-            TOOL_PROVIDER_NATIVE,
-            super::ToolSemanticContract {
+            visibility: ModelVisible,
+            category: TOOL_CATEGORY_JOB,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_NATIVE,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        )
+            required_scope: Some(RUNTIME_READ),
+            requires_project: false,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }.define()
         .with_activity(
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::Meaningful,
@@ -537,9 +557,9 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
         "Recovery and inventory primitive for caller-visible Jobs, not the normal continuation step. Exact project/session_id/status filters combine with AND before limit; no stdout/stderr bodies. Known Job: retain its identity/continuation and use observe_jobs for logs/details/recovery; do not list first or poll inventory.",
     ).with_discovery_keywords(&["list", "background", "jobs", "tasks", "running", "列出", "后台", "作业", "任务", "运行"]), 79, super::ToolDirectReason::CoreWorkflow),
     adaptive_runtime_direct(model_spec(
-            def(
-                "present_job_terminal_continuation",
-                super::ToolAuditPolicy::typed_fields(&[
+            ToolDeclaration {
+                name: "present_job_terminal_continuation",
+                audit: super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::pointer("wait_id", "/job_terminal_continuation/wait_id"),
                     super::ToolAuditResultField::pointer("job_id", "/job_terminal_continuation/job_id"),
                     super::ToolAuditResultField::pointer("state", "/job_terminal_continuation/state"),
@@ -547,89 +567,89 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolAuditResultField::pointer("automatic_resume_available", "/job_terminal_continuation/automatic_resume_available"),
                     super::ToolAuditResultField::value("error_kind"),
                 ]),
-                ModelVisible,
-                TOOL_CATEGORY_JOB,
-                None,
-                TOOL_PROVIDER_NATIVE,
-                super::ToolSemanticContract {
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_JOB,
+                runner_capability: None,
+                provider_id: TOOL_PROVIDER_NATIVE,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
                     approval: super::ToolApprovalPolicy::None,
                     idempotency: super::ToolIdempotency::PureRead,
                 },
-                Some(RUNTIME_READ),
-                false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
+                required_scope: Some(RUNTIME_READ),
+                requires_project: false,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Present one exact caller-owned still-waiting Job terminal wait as a bounded MCP App continuation card through this dedicated callable, not call_runtime_tool. Use this only when no independent work remains and progress is blocked on that terminal transition. After successful presentation, produce a normal final assistant response and let the current turn finalize promptly; the card/tool result alone does not end the assistant turn. Do not keep polling or wait for the later follow-up in that presenting turn. An already-triggered wait should be handled in the current turn instead. Requires explicit wait_id, independently re-authorizes the wait and underlying Job visibility, never infers identity from Project, Session, ClientWindow, peer identity, credential, or recent activity, and never changes Job execution or terminal truth. Automatic readiness requires a separately verified unattended Host and an exact live authorized binding; dispatch acceptance is not a fresh turn or completed consume. Uncertain delivery is not permission to resend or retry execution.",
         ), 78, super::ToolDirectReason::Continuation),
 
-    def(
-        "bind_job_terminal_continuation",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "bind_job_terminal_continuation",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("wait_id", "/job_terminal_continuation/wait_id"),
             super::ToolAuditResultField::pointer("job_id", "/job_terminal_continuation/job_id"),
             super::ToolAuditResultField::pointer("delivery_state", "/job_terminal_continuation/delivery_state"),
             super::ToolAuditResultField::value("state_changed"),
             super::ToolAuditResultField::value("error_kind"),
         ]),
-        ModelHidden,
-        TOOL_CATEGORY_JOB,
-        None,
-        TOOL_PROVIDER_NATIVE,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_JOB,
+        runner_capability: None,
+        provider_id: TOOL_PROVIDER_NATIVE,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::DesiredState,
         },
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(RUNTIME_READ),
+        requires_project: false,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_activity(
         super::ToolActivityPresentation::Transport,
         super::ToolActivityInteraction::NonMeaningful,
     ),
-    def(
-        "get_job_terminal_continuation_state",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "get_job_terminal_continuation_state",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("wait_id", "/job_terminal_continuation/wait_id"),
             super::ToolAuditResultField::pointer("job_id", "/job_terminal_continuation/job_id"),
             super::ToolAuditResultField::pointer("state", "/job_terminal_continuation/state"),
             super::ToolAuditResultField::pointer("delivery_state", "/job_terminal_continuation/delivery_state"),
             super::ToolAuditResultField::value("error_kind"),
         ]),
-        ModelHidden,
-        TOOL_CATEGORY_JOB,
-        None,
-        TOOL_PROVIDER_NATIVE,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_JOB,
+        runner_capability: None,
+        provider_id: TOOL_PROVIDER_NATIVE,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::PureRead,
         },
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(RUNTIME_READ),
+        requires_project: false,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_activity(
         super::ToolActivityPresentation::Transport,
         super::ToolActivityInteraction::NonMeaningful,
     ),
-    def(
-        "prepare_job_terminal_continuation",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "prepare_job_terminal_continuation",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("wait_id"),
             super::ToolAuditResultField::value("job_id"),
             super::ToolAuditResultField::value("attempt_id"),
@@ -638,30 +658,30 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
             super::ToolAuditResultField::value("state_changed"),
             super::ToolAuditResultField::value("error_kind"),
         ]),
-        ModelHidden,
-        TOOL_CATEGORY_JOB,
-        None,
-        TOOL_PROVIDER_NATIVE,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_JOB,
+        runner_capability: None,
+        provider_id: TOOL_PROVIDER_NATIVE,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::FencedReplay,
         },
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(RUNTIME_READ),
+        requires_project: false,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_activity(
         super::ToolActivityPresentation::Transport,
         super::ToolActivityInteraction::NonMeaningful,
     ),
-    def(
-        "finish_job_terminal_continuation",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "finish_job_terminal_continuation",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("wait_id"),
             super::ToolAuditResultField::value("job_id"),
             super::ToolAuditResultField::value("attempt_id"),
@@ -670,75 +690,75 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
             super::ToolAuditResultField::value("state_changed"),
             super::ToolAuditResultField::value("error_kind"),
         ]),
-        ModelHidden,
-        TOOL_CATEGORY_JOB,
-        None,
-        TOOL_PROVIDER_NATIVE,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_JOB,
+        runner_capability: None,
+        provider_id: TOOL_PROVIDER_NATIVE,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::FencedReplay,
         },
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(RUNTIME_READ),
+        requires_project: false,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_activity(
         super::ToolActivityPresentation::Transport,
         super::ToolActivityInteraction::NonMeaningful,
     ),
-    def(
-        "unbind_job_terminal_continuation",
-        super::ToolAuditPolicy::typed_fields(&[
+    ToolDeclaration {
+        name: "unbind_job_terminal_continuation",
+        audit: super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("wait_id", "/job_terminal_continuation/wait_id"),
             super::ToolAuditResultField::pointer("job_id", "/job_terminal_continuation/job_id"),
             super::ToolAuditResultField::pointer("delivery_state", "/job_terminal_continuation/delivery_state"),
             super::ToolAuditResultField::value("state_changed"),
             super::ToolAuditResultField::value("error_kind"),
         ]),
-        ModelHidden,
-        TOOL_CATEGORY_JOB,
-        None,
-        TOOL_PROVIDER_NATIVE,
-        super::ToolSemanticContract {
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_JOB,
+        runner_capability: None,
+        provider_id: TOOL_PROVIDER_NATIVE,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::FencedReplay,
         },
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    )
+        required_scope: Some(RUNTIME_READ),
+        requires_project: false,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define()
     .with_activity(
         super::ToolActivityPresentation::Transport,
         super::ToolActivityInteraction::NonMeaningful,
     ),
-    def(
-        "read_job_tail",
-        super::ToolAuditPolicy::TYPED_CANONICAL,
-        ModelHidden,
-        TOOL_CATEGORY_JOB,
-        None,
-        TOOL_PROVIDER_NATIVE,
-        super::ToolSemanticContract {
+    ToolDeclaration {
+        name: "read_job_tail",
+        audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+        visibility: ModelHidden,
+        category: TOOL_CATEGORY_JOB,
+        runner_capability: None,
+        provider_id: TOOL_PROVIDER_NATIVE,
+        semantic: super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
             approval: super::ToolApprovalPolicy::None,
             idempotency: super::ToolIdempotency::PureRead,
         },
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
-    ),
+        required_scope: Some(RUNTIME_READ),
+        requires_project: false,
+        path_hint: NoPath,
+        destructive: false,
+        shell_like: false,
+        session_evidence: super::ToolSessionEvidencePolicy::NONE,
+    }.define(),
 ];

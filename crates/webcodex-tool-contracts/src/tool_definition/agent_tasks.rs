@@ -1,7 +1,7 @@
 use super::RunnerCapabilityRequirement::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    control_def, def, model_spec, permission_risk, require_all_scopes, ToolDefinition,
+    control_def, model_spec, permission_risk, require_all_scopes, ToolDeclaration, ToolDefinition,
     PERMISSION_RISK_JOB, PERMISSION_RISK_WRITE, TOOL_CATEGORY_AGENT_TASK,
 };
 use crate::metadata::{
@@ -210,26 +210,26 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     permission_risk(
         model_spec(
             require_all_scopes(
-                def(
-                    "start_agent_task_coding_run",
-                    CODING_RUN_AUDIT,
-                    ModelVisible,
-                    TOOL_CATEGORY_AGENT_TASK,
-                    Some(CodingAgentRuns),
-                    TOOL_PROVIDER_RUNNER,
-                    super::ToolSemanticContract {
+                ToolDeclaration {
+                    name: "start_agent_task_coding_run",
+                    audit: CODING_RUN_AUDIT,
+                    visibility: ModelVisible,
+                    category: TOOL_CATEGORY_AGENT_TASK,
+                    runner_capability: Some(CodingAgentRuns),
+                    provider_id: TOOL_PROVIDER_RUNNER,
+                    semantic: super::ToolSemanticContract {
                         effect: super::ToolEffect::Execute,
                         risk: JobRun,
                         approval: super::ToolApprovalPolicy::Standard,
                         idempotency: super::ToolIdempotency::FencedReplay,
                     },
-                    Some(CODING_AGENT_RUN),
-                    true,
-                    NoPath,
-                    true,
-                    false,
-                    super::ToolSessionEvidencePolicy::NONE,
-                ),
+                    required_scope: Some(CODING_AGENT_RUN),
+                    requires_project: true,
+                    path_hint: NoPath,
+                    destructive: true,
+                    shell_like: false,
+                    session_evidence: super::ToolSessionEvidencePolicy::NONE,
+                }.define(),
                 &[
                     COMMUNICATION_READ,
                     COMMUNICATION_MANAGE,
@@ -244,26 +244,26 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     permission_risk(
         model_spec(
             require_all_scopes(
-                def(
-                "reconcile_agent_task_coding_run",
-                CODING_RUN_AUDIT,
-                ModelVisible,
-                TOOL_CATEGORY_AGENT_TASK,
-                None,
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Mutate,
-                    risk: WorkflowManage,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::DesiredState,
-                },
-                Some(COMMUNICATION_MANAGE),
-                false,
-                NoPath,
-                true,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-                ),
+                ToolDeclaration {
+                    name: "reconcile_agent_task_coding_run",
+                    audit: CODING_RUN_AUDIT,
+                    visibility: ModelVisible,
+                    category: TOOL_CATEGORY_AGENT_TASK,
+                    runner_capability: None,
+                    provider_id: TOOL_PROVIDER_RUNNER,
+                    semantic: super::ToolSemanticContract {
+                        effect: super::ToolEffect::Mutate,
+                        risk: WorkflowManage,
+                        approval: super::ToolApprovalPolicy::None,
+                        idempotency: super::ToolIdempotency::DesiredState,
+                    },
+                    required_scope: Some(COMMUNICATION_MANAGE),
+                    requires_project: false,
+                    path_hint: NoPath,
+                    destructive: true,
+                    shell_like: false,
+                    session_evidence: super::ToolSessionEvidencePolicy::NONE,
+                }.define(),
                 &[COMMUNICATION_READ, COMMUNICATION_MANAGE, CODING_AGENT_RUN],
             ),
             "Reconcile only the exact CodingAgentRun already durably bound to one owned AgentTaskAttempt. It never starts execution, chooses a provider, changes intent, or requires the old browser's Attempt fence. Authoritative Completed/Failed/Cancelled truth can terminalize the exact latest bound Attempt even after its ordinary lease expires; Lost remains outcome_unknown.",

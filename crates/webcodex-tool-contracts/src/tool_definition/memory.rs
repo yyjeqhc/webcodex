@@ -1,6 +1,7 @@
 use super::ToolVisibility::ModelHidden;
 use super::{
-    def, require_all_scopes, ToolDefinition, ToolOperatorExtensionFamily, TOOL_CATEGORY_MEMORY,
+    control_def, require_all_scopes, ToolDeclaration, ToolDefinition, ToolOperatorExtensionFamily,
+    TOOL_CATEGORY_MEMORY,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -14,9 +15,9 @@ use webcodex_core::authority::{MEMORY_MANAGE_SCOPES, MEMORY_READ_SCOPES};
 /// Operator surface; the kernel capability gate is authoritative.
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
-        def(
-            "search_memory",
-            super::ToolAuditPolicy::typed_fields(&[
+        ToolDeclaration {
+            name: "search_memory",
+            audit: super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("project"),
                 super::ToolAuditResultField::value("catalog_revision"),
                 super::ToolAuditResultField::value("total_count"),
@@ -35,30 +36,31 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::value("error_kind"),
                 super::ToolAuditResultField::value("state_changed"),
             ])),
-            ModelHidden,
-            TOOL_CATEGORY_MEMORY,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelHidden,
+            category: TOOL_CATEGORY_MEMORY,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(PROJECT_READ),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+            required_scope: Some(PROJECT_READ),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }
+        .define(),
         MEMORY_READ_SCOPES,
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryRuntime),
     require_all_scopes(
-        def(
-            "read_memory",
-            super::ToolAuditPolicy::typed_fields(&[
+        ToolDeclaration {
+            name: "read_memory",
+            audit: super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("project"),
                 super::ToolAuditResultField::value("memory_id"),
                 super::ToolAuditResultField::value("memory_key"),
@@ -79,30 +81,31 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::value("error_kind"),
                 super::ToolAuditResultField::value("state_changed"),
             ])),
-            ModelHidden,
-            TOOL_CATEGORY_MEMORY,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelHidden,
+            category: TOOL_CATEGORY_MEMORY,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
                 approval: super::ToolApprovalPolicy::None,
                 idempotency: super::ToolIdempotency::PureRead,
             },
-            Some(PROJECT_READ),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+            required_scope: Some(PROJECT_READ),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }
+        .define(),
         MEMORY_READ_SCOPES,
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryRuntime),
     require_all_scopes(
-        def(
-            "set_memory",
-            super::ToolAuditPolicy::typed_fields(&[
+        ToolDeclaration {
+            name: "set_memory",
+            audit: super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("project"),
                 super::ToolAuditResultField::value("memory_id"),
                 super::ToolAuditResultField::value("memory_key"),
@@ -121,30 +124,31 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::value("error_kind"),
                 super::ToolAuditResultField::value("state_changed"),
             ])),
-            ModelHidden,
-            TOOL_CATEGORY_MEMORY,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelHidden,
+            category: TOOL_CATEGORY_MEMORY,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: MemoryManage,
                 approval: super::ToolApprovalPolicy::Standard,
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
-            Some(PROJECT_WRITE),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+            required_scope: Some(PROJECT_WRITE),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: false,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }
+        .define(),
         MEMORY_MANAGE_SCOPES,
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryManagement),
     require_all_scopes(
-        def(
-            "delete_memory",
-            super::ToolAuditPolicy::typed_fields(&[
+        ToolDeclaration {
+            name: "delete_memory",
+            audit: super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("project"),
                 super::ToolAuditResultField::value("memory_id"),
                 super::ToolAuditResultField::value("memory_key"),
@@ -161,27 +165,28 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::value("error_kind"),
                 super::ToolAuditResultField::value("state_changed"),
             ])),
-            ModelHidden,
-            TOOL_CATEGORY_MEMORY,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
+            visibility: ModelHidden,
+            category: TOOL_CATEGORY_MEMORY,
+            runner_capability: None,
+            provider_id: TOOL_PROVIDER_CONTROL,
+            semantic: super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: MemoryManage,
                 approval: super::ToolApprovalPolicy::Standard,
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
-            Some(PROJECT_WRITE),
-            true,
-            NoPath,
-            true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+            required_scope: Some(PROJECT_WRITE),
+            requires_project: true,
+            path_hint: NoPath,
+            destructive: true,
+            shell_like: false,
+            session_evidence: super::ToolSessionEvidencePolicy::NONE,
+        }
+        .define(),
         MEMORY_MANAGE_SCOPES,
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryManagement),
-    def(
+    control_def(
         "list_memory_scopes",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("total_count"),
@@ -193,8 +198,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         .context_from_result(),
         ModelHidden,
         TOOL_CATEGORY_MEMORY,
-        None,
-        TOOL_PROVIDER_CONTROL,
         super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
@@ -203,13 +206,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         },
         Some(ADMIN),
         false,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryManagement),
-    def(
+    control_def(
         "purge_memory_scope",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("memory_scope_id"),
@@ -222,8 +221,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         .context_from_result(),
         ModelHidden,
         TOOL_CATEGORY_MEMORY,
-        None,
-        TOOL_PROVIDER_CONTROL,
         super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: MemoryManage,
@@ -231,11 +228,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             idempotency: super::ToolIdempotency::NonIdempotent,
         },
         Some(ADMIN),
-        false,
-        NoPath,
         true,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryManagement),
 ];

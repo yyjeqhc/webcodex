@@ -1,12 +1,11 @@
 use super::ToolVisibility::ModelVisible;
 use super::{
-    def, model_spec, permission_risk, require_any_scopes, ToolDefinition,
+    control_def, model_spec, permission_risk, require_any_scopes, ToolDefinition,
     PERMISSION_RISK_BROWSER_CONTROL, TOOL_CATEGORY_BROWSER,
 };
 use crate::metadata::{
-    ToolPathHint::None as NoPath,
     ToolRisk::{BrowserControl as BrowserControlRisk, Read},
-    BROWSER_CONTROL, BROWSER_LAUNCH, BROWSER_READ, TOOL_PROVIDER_CONTROL,
+    BROWSER_CONTROL, BROWSER_LAUNCH, BROWSER_READ,
 };
 
 const BROWSER_ACT_GATEWAY_SCOPES: &[&str] = &[BROWSER_CONTROL, BROWSER_LAUNCH];
@@ -57,15 +56,13 @@ mod tests {
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
-        def(
+        control_def(
             "observe_browser",
             super::ToolAuditPolicy::typed_semantic(
                 super::ToolAuditSemanticResultPolicy::BrowserObservation,
             ),
             ModelVisible,
             TOOL_CATEGORY_BROWSER,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -74,25 +71,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             },
             Some(BROWSER_READ),
             false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         ),
         "Read-only Browser; needs browser:read and capabilities. discover lists explicit Share offers; browsers/pages lists attached runtimes. New tabs need Share then attach. stale_element: snapshot; stale_attachment: restore Share. surface maps exact native window, also needs computer:read; ambiguity fails closed. IDs are process-local. browsers/user_handoff recovers live hold/fence. Query AND-filters semantic fields over <=4352 nodes before paging. Bounds/truncation make absence inconclusive. New snapshot stales old ids; element_id/actions admit effects. since_cursor returns later diagnostics. No scripts/selectors/CDP.",
     ),
     require_any_scopes(
         permission_risk(
             model_spec(
-                def(
+                control_def(
                     "control_browser",
                     super::ToolAuditPolicy::typed_semantic(
                         super::ToolAuditSemanticResultPolicy::BrowserControl,
                     ),
                     ModelVisible,
                     TOOL_CATEGORY_BROWSER,
-                    None,
-                    TOOL_PROVIDER_CONTROL,
                     super::ToolSemanticContract {
                         effect: super::ToolEffect::Execute,
                         risk: BrowserControlRisk,
@@ -100,11 +91,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         idempotency: super::ToolIdempotency::NonIdempotent,
                     },
                     None,
-                    false,
-                    NoPath,
                     true,
-                    false,
-                    super::ToolSessionEvidencePolicy::NONE,
                 )
                 .with_host_orchestration_hint(
                     super::ToolHostOrchestrationHint::sequential()

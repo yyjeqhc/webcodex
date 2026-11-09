@@ -1,7 +1,8 @@
 use super::RunnerCapabilityRequirement::RunnerConfigControl;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    def, model_spec, permission_risk, ToolDefinition, PERMISSION_RISK_WRITE, TOOL_CATEGORY_RUNTIME,
+    model_spec, permission_risk, ToolDeclaration, ToolDefinition, PERMISSION_RISK_WRITE,
+    TOOL_CATEGORY_RUNTIME,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -11,50 +12,50 @@ use crate::metadata::{
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
-            def(
-                "check_runner_config",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
-                TOOL_CATEGORY_RUNTIME,
-                Some(RunnerConfigControl),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
+            ToolDeclaration {
+                name: "check_runner_config",
+                audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                visibility: ModelVisible,
+                category: TOOL_CATEGORY_RUNTIME,
+                runner_capability: Some(RunnerConfigControl),
+                provider_id: TOOL_PROVIDER_RUNNER,
+                semantic: super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
                     approval: super::ToolApprovalPolicy::None,
                     idempotency: super::ToolIdempotency::PureRead,
                 },
-                Some(RUNTIME_READ),
-                false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
+                required_scope: Some(RUNTIME_READ),
+                requires_project: false,
+                path_hint: NoPath,
+                destructive: false,
+                shell_like: false,
+                session_evidence: super::ToolSessionEvidencePolicy::NONE,
+            }.define(),
             "Read, parse, validate, and classify the candidate at one exact caller-visible Runner's startup-bound runner.toml path. This never mutates active config, accepts no filesystem path, and returns only bounded sanitized validation metadata.",
     ),
     permission_risk(
             model_spec(
-                def(
-                    "reload_runner_config",
-                    super::ToolAuditPolicy::TYPED_CANONICAL,
-                    ModelVisible,
-                    TOOL_CATEGORY_RUNTIME,
-                    Some(RunnerConfigControl),
-                    TOOL_PROVIDER_RUNNER,
-                    super::ToolSemanticContract {
+                ToolDeclaration {
+                    name: "reload_runner_config",
+                    audit: super::ToolAuditPolicy::TYPED_CANONICAL,
+                    visibility: ModelVisible,
+                    category: TOOL_CATEGORY_RUNTIME,
+                    runner_capability: Some(RunnerConfigControl),
+                    provider_id: TOOL_PROVIDER_RUNNER,
+                    semantic: super::ToolSemanticContract {
                         effect: super::ToolEffect::Mutate,
                         risk: RunControl,
                         approval: super::ToolApprovalPolicy::Standard,
                         idempotency: super::ToolIdempotency::FencedReplay,
                     },
-                    Some(RUNNER_MANAGE),
-                    false,
-                    NoPath,
-                    false,
-                    false,
-                    super::ToolSessionEvidencePolicy::NONE,
-                ),
+                    required_scope: Some(RUNNER_MANAGE),
+                    requires_project: false,
+                    path_hint: NoPath,
+                    destructive: false,
+                    shell_like: false,
+                    session_evidence: super::ToolSessionEvidencePolicy::NONE,
+                }.define(),
                 "Activate the candidate already present at one exact caller-visible Runner's startup-bound runner.toml path. Requires expected_generation, never writes the file, and reports partial activation/restart-required fields without pretending restart-only fields are live.",
             ),
             PERMISSION_RISK_WRITE,

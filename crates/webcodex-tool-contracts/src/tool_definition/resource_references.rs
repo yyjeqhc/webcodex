@@ -1,5 +1,5 @@
 use super::*;
-use crate::metadata::{ToolPathHint::None as NoPath, ToolRisk::Read};
+use crate::metadata::ToolRisk::Read;
 
 const fn resource_tool(
     name: &'static str,
@@ -10,15 +10,13 @@ const fn resource_tool(
     adaptive_runtime_direct(
         model_spec(
             require_any_scopes(
-                def(
+                control_def(
                     name,
                     ToolAuditPolicy::TYPED_CANONICAL.session_input(
                         ToolAuditSessionInputPolicy::OmitTopLevel(&["uri", "query"]),
                     ),
                     ToolVisibility::ModelVisible,
                     TOOL_CATEGORY_PROJECT,
-                    None,
-                    TOOL_PROVIDER_CONTROL,
                     ToolSemanticContract {
                         effect: ToolEffect::Observe,
                         risk: Read,
@@ -27,10 +25,6 @@ const fn resource_tool(
                     },
                     None,
                     false,
-                    NoPath,
-                    false,
-                    false,
-                    ToolSessionEvidencePolicy::NONE,
                 ),
                 &[
                     crate::metadata::PROJECT_READ,

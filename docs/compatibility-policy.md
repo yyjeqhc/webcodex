@@ -51,15 +51,37 @@ deleted. Mixed-version Runner admission continues to use negotiated capabilities
 
 ## The actual stable upgrade sources
 
-**v0.4.6 already contains Environment and is the minimum direct v0.5 upgrade source.**
+**v0.4.6 already contains Environment and remains a direct v0.5 upgrade source.**
 Its schema-1 records, service ownership, update receipts, and Tunnel configuration
 are published data contracts. v0.5 directly upgrades an existing v0.4.6-or-newer
 Environment and reuses its selected owner, service scope, Runtime paths,
 Runner/Project identities, private credential bindings, and recovery records.
 
-Installations older than v0.4.6 use v0.4.6 as the bridge. Their historical
-pre-Environment Linux service handoff and official Windows v0.4.3 package
-classification are intentionally not reimplemented in v0.5.
+Pre-Environment Linux installations still use v0.4.6 for their historical service
+handoff. Official Windows v0.4.3 Desktop installations can instead upgrade directly
+through v0.5 Desktop's saved-runtime environment migration (**requires Windows
+real-machine acceptance**). Ordinary Desktop `setup.exe` replaces programs; it does
+not invoke the unified package classifier or itself migrate data. Before importing,
+Desktop must own the saved Runner process and observe its complete connected
+project inventory (and own the local Server when present).
+
+The published v0.4.6 Windows v0.4.3 classifier was defective: it compared the full
+40-character source SHA against the official binaries' 12-character
+`b96a59a712ca`. The v0.5 development line restores `Legacy` recognition for exactly
+that short SHA or `b96a59a712ca5355ad8609cd861cd0c7acb9f99e`, retaining version,
+clean-build, official Windows target/architecture, absent Environment format,
+matching-component, owner and digest checks. Unified package transactions still
+require a source manifest published as a GitHub Release asset; a local development
+build does not satisfy that provenance requirement. See [issue #1394](https://github.com/yyjeqhc/webcodex/issues/1394).
+
+Runner profiles that depend on retired `agent.toml` / `projects.d` discovery or the
+`projects_dir` field are rejected before Desktop startup/import effects with
+`legacy_runner_layout_unsupported`. Keep a full backup, restore the previous working
+Runtime and explicitly reconcile the saved config and `project_registry_dir` with
+the original Runner/Project identities before retrying. No automatic rename,
+conversion or fallback is performed. Explicit saved config paths (including
+`agent.toml`) and explicit `project_registry_dir` paths (including `projects.d`)
+remain usable; removing discovery does not invalidate those bindings.
 
 The following code is retained for concrete consumers:
 
@@ -67,8 +89,8 @@ The following code is retained for concrete consumers:
 |---|---|
 | `crates/webcodex-environment/src/types/setup_wire.rs` | v0.4.6 writes `create/join/user_create/user_join` and may omit `service_scope` or `runner`. Scope/mode conflict checks prevent a user service from being interpreted as a system service. |
 | Environment storage, migration journals, upgrade receipts and rollback | Preserve the original target, owner, credentials, data format, and uncertain-effect recovery across an upgrade. A missing optional new field is not a reason to reset an installation. |
-| `upgrade/windows_package.rs` | The current Windows installer still owns `Fresh`, `Unconfigured`, and `Environment` package transactions, sealed receipts and rollback. The official v0.4.3 `Legacy` classifier is no longer a v0.5 direct-upgrade path. |
-| Desktop schema-1 state, backup recovery and saved Runner identity recovery | These readers shipped in v0.4.6; losing them can discard saved projects or associate an old local Runtime with a different Runner. |
+| `upgrade/windows_package.rs` | The current Windows installer owns `Fresh`, `Legacy`, `Unconfigured`, and `Environment` classification. Official v0.4.3 `Legacy` and `Unconfigured` share sealed package receipts, backups and rollback; classification grants no service or data-migration authority. |
+| Desktop schema-1 state, backup recovery and saved Runner identity recovery | These readers preserve v0.4.3 Desktop state as well as v0.4.6; losing them can discard saved projects or associate an old local Runtime with a different Runner. |
 | Desktop `secrets/tunnel-config.json` and its singleton-to-profile conversion | Both the schema-2 profile catalog and the older singleton reader shipped in v0.4.6. Non-persistent runtimes still use this store. |
 | Environment `tunnel.json` and private per-profile `webcodex.env` | v0.4.6 records contain `profile_id/installed/started` without `host_mode`. Missing owner mode must remain standalone, not silently become embedded. |
 | Workflow Session snapshots and historical context-revision decoding | Stable retained history has an actual disk consumer. Tool renames do not authorize rewriting Sessions, Jobs, replay IDs, or audit history. |
@@ -165,12 +187,15 @@ cached Host schema. Reopen the reader or reconnect/refresh the MCP schema.
 
 ## Future removal criteria
 
-The v0.5 support floor is explicit: v0.4.6 is the bridge for older installations.
-The removed Linux migration commands and Windows v0.4.3 classifier must not be
-recreated as convenience fallbacks.
+The v0.5 boundary distinguishes installation paths: v0.4.6 remains the bridge for
+pre-Environment Linux service handoff; official Windows v0.4.3 retains exact package
+recognition and Desktop environment migration. Do not remove that recognition on
+the assumption that the defective v0.4.6 classifier provides a usable bridge.
+Before retiring it, name a published, verified state-preserving replacement and
+complete Windows acceptance for identities, history, ownership and recovery.
 
 Future support-floor changes should likewise name a published bridge before
-removing readers or migrations. Current `Fresh/Unconfigured/Environment` Windows
+removing readers or migrations. Current `Fresh/Legacy/Unconfigured/Environment` Windows
 transactions, sealed receipts, owner/path checks and rollback remain installation
 infrastructure rather than legacy-version support.
 - Keep reject-before-use guards where silently ignoring old settings could

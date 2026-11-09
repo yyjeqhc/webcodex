@@ -142,6 +142,37 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "managed-file allowlist"):
                     nsis.validate_candidate(root, "win32-x64")
 
+    def test_manifest_bound_powershell_hash_fits_stock_nsis_and_fails_closed(self):
+        # Stock NSIS 3.13 reports NSIS_MAX_STRLEN=1024. A longer
+        # -EncodedCommand silently truncates at runtime and rejects valid files.
+        good = hashlib.sha256(b"candidate-cli-fixture").hexdigest()
+        code = bootstrap.candidate_hash_command(good)
+        command = (
+            '"$WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
+            f'-NoProfile -NonInteractive -EncodedCommand {code}'
+        )
+        self.assertLess(len(command), 960)
+        script = base64.b64decode(code).decode("utf-16le")
+        self.assertIn("WEBCODEX_INSTALLER_CANDIDATE_CLI", script)
+        self.assertIn(good, script)
+        if os.name == "nt":
+            with tempfile.TemporaryDirectory() as temp:
+                candidate_cli = Path(temp) / "candidate.exe"
+                candidate_cli.write_bytes(b"candidate-cli-fixture")
+                shell = str(Path(os.environ["WINDIR"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+                for description, path, digest, expected_rc in [
+                    ("valid", candidate_cli, good, 0),
+                    ("wrong digest", candidate_cli, "0" * 64, 1),
+                    ("missing CLI", candidate_cli.with_name("missing.exe"), good, 1),
+                ]:
+                    with self.subTest(case=description):
+                        env = {**os.environ, "WEBCODEX_INSTALLER_CANDIDATE_CLI": str(path)}
+                        run = subprocess.run(
+                            [shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", bootstrap.candidate_hash_command(digest)],
+                            env=env, capture_output=True, timeout=25,
+                        )
+                        self.assertEqual(run.returncode, expected_rc, run.stderr)
+
     def test_outer_bootstrap_extracts_candidate_in_section_before_inner_install(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "candidate"
@@ -215,6 +246,94 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
             self.assertEqual(depth, 0)
             self.assertNotIn("the previous environment was restored", script)
 
+    def test_unsigned_preview_ci_can_prepare_and_render_but_not_claim_release(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "candidate"
+            root.mkdir()
+            infos = self.fixture(root)
+            manifest_path = root / "source-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["local_preview"] = True
+            manifest["source_workflow_run_id"] = 0
+            manifest["source_workflow_ref"] = "webcodex/local-preview"
+            for item in manifest["artifacts"].values():
+                item["probe"] = "local-preview-host"
+            raw = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+            manifest_path.write_bytes(raw)
+            sums = nsis.parse_sums(root / "SHA256SUMS")
+            sums["source-manifest.json"] = hashlib.sha256(raw).hexdigest()
+            (root / "SHA256SUMS").write_text("".join(
+                f"{digest}  {name}\n" for name, digest in sorted(sums.items())
+            ), encoding="ascii")
+            ctx = {
+                "GITHUB_ACTIONS": "true",
+                "GITHUB_REPOSITORY": "yyjeqhc/webcodex",
+                "GITHUB_RUN_ID": "42559605539",
+                "GITHUB_WORKFLOW_REF": "yyjeqhc/webcodex/.github/workflows/windows-unified-preview.yml@refs/pull/1405/merge",
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_REF": "refs/pull/1405/merge",
+                "GITHUB_HEAD_REF": "fix/1394-windows-v043-upgrade",
+                "GITHUB_BASE_REF": "main",
+                "GITHUB_SHA": "a" * 40,
+                "EXPECTED_SHA": SOURCE,
+            }
+            inner = Path(temp) / "inner.exe"
+            inner.write_bytes(pe(0x8664))
+            with mock.patch.dict(os.environ, ctx, clear=True), mock.patch.object(
+                nsis.collector, "probe", side_effect=lambda path, name: infos[name]
+            ):
+                prepared = nsis.prepare(root, Path(temp) / "staged", "win32-x64", local_preview=True)
+                self.assertTrue(Path(prepared["config"]).is_file())
+                program = bootstrap.render(root, inner, Path(temp) / "outer.exe", "win32-x64", local_preview=True)
+                self.assertIn("LOCAL PREVIEW - NOT PUBLISHED", program)
+                with self.assertRaisesRegex(ValueError, "source manifest"):
+                    nsis.validate_candidate(root, "win32-x64", local_preview=False)
+                os.environ["GITHUB_WORKFLOW_REF"] = CI_CONTEXT["GITHUB_WORKFLOW_REF"]
+                with self.assertRaisesRegex(ValueError, "dedicated Preview workflow"):
+                    nsis.validate_candidate(root, "win32-x64", local_preview=True)
+
+    def test_offline_preview_requires_explicit_markers_at_every_build_layer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "candidate"
+            root.mkdir()
+            infos = self.fixture(root)
+            manifest_path = root / "source-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["local_preview"] = True
+            manifest["source_workflow_run_id"] = 0
+            manifest["source_workflow_ref"] = "webcodex/local-preview"
+            for item in manifest["artifacts"].values():
+                item["probe"] = "local-preview-host"
+            raw = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+            manifest_path.write_bytes(raw)
+            sums = nsis.parse_sums(root / "SHA256SUMS")
+            sums["source-manifest.json"] = hashlib.sha256(raw).hexdigest()
+            (root / "SHA256SUMS").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(sums.items())))
+            inner = Path(temp) / "inner.exe"
+            inner.write_bytes(pe(0x8664))
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(nsis.collector, "probe", side_effect=lambda path, name: infos[name]):
+                with self.assertRaisesRegex(ValueError, "manifest schema"):
+                    nsis.validate_candidate(root, "win32-x64")
+                prepared = nsis.prepare(root, Path(temp) / "staged", "win32-x64", local_preview=True)
+                self.assertTrue(Path(prepared["config"]).is_file())
+                source = bootstrap.render(root, inner, Path(temp) / "preview.exe", "win32-x64", local_preview=True)
+                self.assertIn("LOCAL PREVIEW - NOT PUBLISHED", source)
+                self.assertIn("UNSIGNED LOCAL PREVIEW", source)
+                for step in ("preflight", "prepare", "verify"):
+                    self.assertIn(f"package-upgrade-{step}", source)
+                self.assertEqual(source.count(' --local-preview --json'), 3)
+                for step in ("finish", "rollback"):
+                    self.assertIn(f"package-upgrade-{step}", source)
+                self.assertNotIn("package-upgrade-finish --local-preview", source)
+                self.assertNotIn("package-upgrade-rollback --local-preview", source)
+                manifest["source_workflow_ref"] = "webcodex/local-preview/pretend"
+                broken = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+                manifest_path.write_bytes(broken)
+                sums["source-manifest.json"] = hashlib.sha256(broken).hexdigest()
+                (root / "SHA256SUMS").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(sums.items())))
+                with self.assertRaisesRegex(ValueError, "honest offline provenance"):
+                    nsis.validate_candidate(root, "win32-x64", local_preview=True)
+
     def test_guarded_outer_requires_explicit_same_source_cli_attestation(self):
         for marker in (None, True, "1", 0, 2):
             with self.subTest(marker=marker):
@@ -242,10 +361,10 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
     def test_candidate_hash_check_quotes_the_digest_and_keeps_paths_out_of_source(self):
         expected = "a" * 64
         program = base64.b64decode(bootstrap.candidate_hash_command(expected)).decode("utf-16le")
-        self.assertIn(f"$h -ne '{expected}'", program)
-        self.assertIn("[System.IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI)", program)
-        self.assertIn("[System.Security.Cryptography.SHA256]::Create()", program)
-        self.assertIn("catch { exit 1 }", program)
+        self.assertIn(f"$h -eq '{expected}'", program)
+        self.assertIn("[IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI)", program)
+        self.assertIn("[Security.Cryptography.SHA256]::Create()", program)
+        self.assertIn("}catch{};exit 1", program)
         self.assertNotIn("Get-FileHash", program)
         self.assertNotIn("$args", program)
 

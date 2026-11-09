@@ -32,26 +32,36 @@ def candidate_hash_command(expected_sha256: str) -> str:
     # Keep the candidate path out of PowerShell source. Use .NET file/crypto APIs
     # directly instead of PowerShell provider cmdlets so exact-path hashing does
     # not depend on provider parsing or hosted-runner cmdlet behavior.
+    # Stock NSIS 3.13 uses NSIS_MAX_STRLEN=1024. The old expanded
+    # -EncodedCommand (1172 chars before its executable prefix) was truncated,
+    # so a correct candidate was rejected before installer-classify ran.
+    # Keep this PowerShell command compact; render() also checks the bound.
     script = (
-        "$ErrorActionPreference='Stop'; try { "
-        "$s=[System.IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI); try { "
-        "$sha=[System.Security.Cryptography.SHA256]::Create(); try { "
-        "$h=([System.BitConverter]::ToString($sha.ComputeHash($s))).Replace('-','').ToLowerInvariant() "
-        "} finally { $sha.Dispose() } "
-        "} finally { $s.Dispose() }; "
-        f"if($h -ne '{expected_sha256}') {{ exit 1 }}; exit 0 "
-        "} catch { exit 1 }"
+        "try{$f=[IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI);"
+        "$s=[Security.Cryptography.SHA256]::Create();"
+        "$h=[BitConverter]::ToString($s.ComputeHash($f)).Replace('-','').ToLowerInvariant();"
+        "$s.Dispose();$f.Dispose();"
+        f"if($h -eq '{expected_sha256}'){{exit 0}}"
+        "}catch{};exit 1"
     )
     return base64.b64encode(script.encode("utf-16le")).decode("ascii")
 
 
-def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: str) -> str:
-    manifest, files = candidate.validate_candidate(candidate_dir, platform)
+def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: str, *, local_preview: bool = False) -> str:
+    manifest, files = candidate.validate_candidate(candidate_dir, platform, local_preview=local_preview)
     candidate.require_guarded_bootstrap_contract(manifest)
     inner = inner_installer.resolve(strict=True)
     if inner.read_bytes()[:2] != b"MZ":
         raise ValueError("inner Tauri installer is not a Windows executable")
     target = "x86_64" if platform == "win32-x64" else "aarch64"
+    hash_command = (
+        '"$WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
+        f'-NoProfile -NonInteractive -EncodedCommand {candidate_hash_command(manifest["artifacts"]["webcodex"]["sha256"])}'
+    )
+    # NSIS expands ExecWait strings into a fixed 1024-character buffer. Leave
+    # headroom for the command's quoting and stop at build time if it grows.
+    if len(hash_command) >= 960:
+        raise ValueError("candidate hash verifier command exceeds NSIS string-size safety limit")
     lines = [
         'Unicode true',
         '!include "LogicLib.nsh"',
@@ -59,7 +69,7 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '!include "WinMessages.nsh"',
         '!include "StrFunc.nsh"',
         '${Using:StrFunc} StrStr',
-        'Name "WebCodex Unified Installer"',
+        'Name "WebCodex Unified LOCAL PREVIEW - NOT PUBLISHED"' if local_preview else 'Name "WebCodex Unified Installer"',
         f'OutFile {nsis_quote(output)}',
         'RequestExecutionLevel user',
         'InstallDir "$LOCALAPPDATA\\WebCodex Desktop"',
@@ -111,6 +121,12 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         'FunctionEnd',
         '',
         'Section "-WebCodexUnifiedBootstrap"',
+        *([
+            '  MessageBox MB_YESNO|MB_ICONEXCLAMATION "UNSIGNED LOCAL PREVIEW: No published GitHub provenance. Use only on a backed-up test installation. Continue?" IDYES preview_acknowledged',
+            '  SetErrorLevel 1',
+            '  Abort',
+            'preview_acknowledged:',
+        ] if local_preview else []),
         '  StrCpy $WebCodexExisting 0',
         '  StrCpy $WebCodexPackageUpgrade 0',
         '  StrCpy $WebCodexForeignServices 0',
@@ -151,7 +167,7 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '    SetErrorLevel 1',
         '    Abort',
         '  ${EndIf}',
-        f'  ExecWait \'"$WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand {candidate_hash_command(manifest["artifacts"]["webcodex"]["sha256"])}\' $0',
+        f"  ExecWait '{hash_command}' $0",
         '  ${If} $0 != 0',
         '    MessageBox MB_ICONSTOP "WebCodex candidate CLI failed its manifest-bound SHA-256 check."',
         '    SetErrorLevel 1',
@@ -369,6 +385,8 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
     for step in ("preflight", "prepare", "verify", "finish", "rollback"):
         arguments = ' --candidate-dir "$WebCodexCandidate"' if step in ("preflight", "prepare", "verify") else ""
         command = f'"$WebCodexCandidate\\artifacts\\bin\\webcodex.exe" environment package-upgrade-{step}{arguments} --expected-runtime-dir "$WebCodexInstallDir\\webcodex-runtime"'
+        if local_preview and step in ("preflight", "prepare", "verify"):
+            command += " --local-preview"
         lines.extend([
             f"Function WebCodexPackage{step.title()}",
             '  ${If} $WebCodexEnvironmentDir == ""',
@@ -386,7 +404,7 @@ def build(args: argparse.Namespace) -> dict:
     if args.output.exists():
         raise ValueError(f"output already exists: {args.output}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    source = render(args.candidate_dir, args.inner_installer, args.output, args.platform)
+    source = render(args.candidate_dir, args.inner_installer, args.output, args.platform, local_preview=args.local_preview)
     script = args.output.with_suffix(".nsi")
     script.write_text(source, encoding="utf-8", newline="\n")
     compiler = args.makensis or shutil.which("makensis")
@@ -406,6 +424,7 @@ def build(args: argparse.Namespace) -> dict:
         "source_sha": manifest["source_sha"],
         "workflow_run_id": manifest["source_workflow_run_id"],
         "workflow_ref": manifest["source_workflow_ref"],
+        "local_preview": args.local_preview,
         "candidate_manifest_sha256": sha256(args.candidate_dir / "source-manifest.json"),
         "inner_installer_sha256": sha256(args.inner_installer),
         "installer_sha256": sha256(args.output),
@@ -422,6 +441,7 @@ def main() -> int:
     parser.add_argument("--platform", choices=tuple(candidate.TARGETS), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--makensis")
+    parser.add_argument("--local-preview", action="store_true", help="Offline Windows-only Preview; not a published upgrade")
     args = parser.parse_args()
     try:
         print(json.dumps(build(args), sort_keys=True))

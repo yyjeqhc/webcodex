@@ -84,6 +84,42 @@ fn business_choices_and_resume_are_unambiguous() {
 }
 
 #[test]
+fn offline_preview_option_requires_the_feature_and_exact_package_commands() {
+    for command in [
+        "configure",
+        "upgrade-prepare",
+        "installer-classify",
+        "package-upgrade-finish",
+        "package-upgrade-rollback",
+        "installer-verify-same",
+    ] {
+        assert!(input(&[command, "--local-preview"]).is_err(), "{command}");
+    }
+    for command in [
+        "package-upgrade-preflight",
+        "package-upgrade-prepare",
+        "package-upgrade-verify",
+    ] {
+        let args = [
+            command,
+            "--local-preview",
+            "--candidate-dir",
+            "/candidate",
+            "--expected-runtime-dir",
+            "/old/webcodex-runtime",
+        ];
+        assert_eq!(
+            input(&args).is_ok(),
+            cfg!(all(windows, feature = "local-preview-installer")),
+            "{command}"
+        );
+        let mut mixed = args.to_vec();
+        mixed.push("--development-build");
+        assert!(input(&mixed).is_err());
+    }
+}
+
+#[test]
 fn projectless_runner_is_explicit_and_does_not_change_legacy_viewer_defaults() {
     let local = input(&["configure", "--create", "--runner"]).unwrap();
     assert!(local.runner && local.project.is_none());

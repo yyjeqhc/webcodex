@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Disabled in all published builds. Only an explicitly built local Windows Preview
+# CLI may accept an offline, self-asserted candidate for installer testing.
+local-preview-installer = []
+
 [dependencies]
 webcodex-openai-tunnel = { path = "../webcodex-openai-tunnel", default-features = false }
 webcodex-core = { path = "../webcodex-core" }

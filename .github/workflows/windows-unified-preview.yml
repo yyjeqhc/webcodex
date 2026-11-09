@@ -1,0 +1,173 @@
+# Issue #1394: opt-in, unsigned, non-release Windows x64 Unified Preview.
+name: Windows Unified LOCAL PREVIEW (#1394)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/windows-unified-preview.yml'
+      - 'scripts/build_windows_unified_preview.ps1'
+      - 'scripts/build_windows_unified_bootstrap.py'
+      - 'scripts/collect_unified_installer_inputs.py'
+      - 'scripts/prepare_windows_unified_installer.py'
+      - 'crates/webcodex-cli/**'
+      - 'crates/webcodex-environment/**'
+      - 'apps/desktop/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-unified-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-x64-preview:
+    # Fork PR code is never packaged for distribution.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'fix/1394-windows-v043-upgrade') }}
+    runs-on: windows-2022
+    timeout-minutes: 150
+    env:
+      CARGO_INCREMENTAL: '0'
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact source SHA without credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.EXPECTED_SHA }}
+      - name: Verify source identity and clean Windows x64 checkout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'Expected native Windows x64 runner' }
+          $sha = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($sha -ne $env:EXPECTED_SHA.ToLowerInvariant()) { throw 'Checkout SHA mismatch' }
+          if (@(git status --porcelain --untracked-files=all).Count -ne 0) { throw 'Checkout is dirty' }
+          Write-Host "Verified source: $sha"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: windows-unified-local-preview
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            apps/desktop/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install NSIS/7-Zip and verify Python 3.12
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nsis = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'NSIS\makensis.exe'
+          if (!(Test-Path -LiteralPath $nsis -PathType Leaf)) {
+            choco install nsis --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'NSIS install failed' }
+          }
+          if (!(Test-Path -LiteralPath $nsis -PathType Leaf)) { throw 'NSIS compiler missing' }
+          & $nsis /VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS compiler probe failed' }
+          $sevenZip = @(
+            (Join-Path $env:ProgramFiles '7-Zip\7z.exe'),
+            (Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) '7-Zip\7z.exe'),
+            'C:\ProgramData\chocolatey\tools\7z.exe'
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (!$sevenZip) {
+            choco install 7zip --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw '7-Zip install failed' }
+          }
+          & py.exe -3.12 -c "import sys; assert sys.version_info[:2] == (3, 12)"
+          if ($LASTEXITCODE -ne 0) { throw 'Python launcher could not locate Python 3.12' }
+      - name: Run Windows NSIS and offline provenance guard regressions
+        shell: pwsh
+        run: |
+          # The collector's other fixtures contain fake/non-executable PE bytes;
+          # they are tested on Linux, not executed as Windows applications.
+          & py.exe -3.12 -m unittest scripts.tests.test_prepare_windows_unified_installer scripts.tests.test_collect_unified_installer_inputs.NativeManifestCollectorTests.test_local_preview_collector_never_invents_a_ci_run scripts.tests.test_collect_unified_installer_inputs.NativeManifestCollectorTests.test_unsigned_preview_accepts_only_its_exact_ci_workflow_and_source
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Preview installer regressions failed' }
+          # Fail in seconds, before the expensive Desktop/CLI compilation,
+          # if GitHub Actions is not the dedicated unsigned Preview workflow.
+          & py.exe -3.12 -c "import os, sys; sys.path.insert(0, 'scripts'); from collect_unified_installer_inputs import validate_local_preview_context; validate_local_preview_context(os.environ['EXPECTED_SHA'])"
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Preview CI provenance guard failed before compilation' }
+      - name: Build the exact-commit unsigned Unified Preview
+        shell: pwsh
+        run: |
+          & .\scripts\build_windows_unified_preview.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Unified Preview build failed' }
+      - name: Inspect inner NSIS bytes and assemble a safe Artifact
+        id: inspect
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sha = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($sha -ne $env:EXPECTED_SHA.ToLowerInvariant()) { throw 'Source changed during build' }
+          $build = Join-Path 'target\unified-preview' $sha.Substring(0,12)
+          $exe = @(Get-ChildItem -LiteralPath $build -File -Filter 'webcodex-unified-LOCAL-PREVIEW-*-win32-x64.exe')
+          if ($exe.Count -ne 1) { throw 'Expected one completed Preview installer' }
+          $hash = (Get-FileHash -LiteralPath $exe[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ((Get-Content -LiteralPath ($exe[0].FullName + '.sha256') -Raw).Trim() -ne "$hash  $($exe[0].Name)") {
+            throw 'Installer hash does not agree with checksum sidecar'
+          }
+          $provenance = Get-Content -LiteralPath ($exe[0].FullName + '.provenance.json') -Raw | ConvertFrom-Json
+          if ($provenance.installer_sha256 -ne $hash -or !$provenance.local_preview) { throw 'Preview provenance mismatch' }
+          $candidate = Join-Path $build 'candidate-final'
+          $manifest = Get-Content -LiteralPath (Join-Path $candidate 'source-manifest.json') -Raw | ConvertFrom-Json
+          if ($manifest.source_sha -ne $sha -or !$manifest.local_preview -or
+              $manifest.source_workflow_ref -ne 'webcodex/local-preview' -or $manifest.source_workflow_run_id -ne 0) {
+            throw 'Preview manifest identity mismatch'
+          }
+          foreach ($pair in @(
+            @('webcodex','webcodex-runtime\webcodex.exe'),
+            @('webcodex-server','webcodex-runtime\webcodex-server.exe'),
+            @('webcodex-runner','webcodex-runtime\webcodex-runner.exe'),
+            @('webcodex-desktop','WebCodex.exe')
+          )) {
+            $actual = (Get-FileHash -LiteralPath (Join-Path $build ('inner-extracted\' + $pair[1])) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $manifest.artifacts.($pair[0]).sha256) {
+              throw "Inner NSIS component hash mismatch: $($pair[0])"
+            }
+          }
+          $upload = Join-Path $env:RUNNER_TEMP 'webcodex-preview-upload'
+          New-Item -Path $upload -ItemType Directory | Out-Null
+          Copy-Item -LiteralPath $exe[0].FullName -Destination $upload
+          Copy-Item -LiteralPath ($exe[0].FullName + '.sha256') -Destination $upload
+          Copy-Item -LiteralPath ($exe[0].FullName + '.provenance.json') -Destination $upload
+          Copy-Item -LiteralPath (Join-Path $candidate 'source-manifest.json') -Destination $upload
+          Copy-Item -LiteralPath (Join-Path $candidate 'SHA256SUMS') -Destination $upload
+          $note = @(
+            'UNSIGNED Windows x64 Unified LOCAL PREVIEW for Issue #1394'
+            "Source SHA: $sha"
+            "GitHub workflow run: $env:GITHUB_RUN_ID attempt $env:GITHUB_RUN_ATTEMPT"
+            "Installer SHA-256: $hash"
+            'NOT a signed, provenance-verified release or a supported published migration.'
+            'Back up credentials/SQLite/Project IDs; stop the old Desktop and its Runner/Server.'
+            'Live ChatGPT jobs may not resume automatically; keep rollback journals.'
+            'See docs/windows-unified-local-preview.md at the matching commit.'
+          )
+          [IO.File]::WriteAllLines((Join-Path $upload 'README-UNSIGNED-PREVIEW.txt'), $note)
+          "artifact_path=$upload" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          @(
+            '### Windows Unified LOCAL PREVIEW (#1394)'
+            "Source SHA: $sha"
+            "Installer SHA-256: $hash"
+            'All four inner NSIS binary hashes matched the manifest.'
+            'Unsigned and non-release; no installer was run.'
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+      - name: Upload unsigned Preview and checksums, never a Release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-unified-LOCAL-PREVIEW-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.inspect.outputs.artifact_path }}/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

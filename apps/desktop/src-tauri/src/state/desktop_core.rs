@@ -318,6 +318,7 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        environment::validate_legacy_runner_layout(&self.config)?;
         self.preflight_providers()?;
         if self.config.persistent_environment.is_some() {
             return self.resume_environment(cancellation).await;

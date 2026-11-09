@@ -4,6 +4,52 @@
 mod sqlite_runtime_tests;
 
 #[test]
+fn v043_database_opens_with_current_table_and_column_sets() {
+    fn columns(
+        path: &std::path::Path,
+    ) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        let mut tables = conn
+            .prepare(
+                "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            )
+            .unwrap();
+        tables
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|table| {
+                let table = table.unwrap();
+                let mut statement = conn
+                    .prepare("SELECT name FROM pragma_table_info(?1)")
+                    .unwrap();
+                let columns = statement
+                    .query_map([&table], |row| row.get::<_, String>(0))
+                    .unwrap()
+                    .collect::<rusqlite::Result<std::collections::BTreeSet<_>>>()
+                    .unwrap();
+                (table, columns)
+            })
+            .collect()
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("v0.4.3.sqlite");
+    let fresh = dir.path().join("fresh.sqlite");
+    rusqlite::Connection::open(&old)
+        .unwrap()
+        .execute_batch(include_str!("test_fixtures/database_v0_4_3.sql"))
+        .unwrap();
+    let before = columns(&old);
+    drop(Database::open(&old).unwrap());
+    drop(Database::open(&fresh).unwrap());
+    let expected = columns(&fresh);
+    assert_ne!(before, expected, "fixture must exercise schema migration");
+    assert_eq!(columns(&old), expected);
+    // Reopening must be idempotent; column order/defaults are not this contract.
+    drop(Database::open(&old).unwrap());
+    assert_eq!(columns(&old), expected);
+}
+
+#[test]
 fn pairing_capability_migration_preserves_old_codes_without_granting_scopes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("legacy-pairing.sqlite");

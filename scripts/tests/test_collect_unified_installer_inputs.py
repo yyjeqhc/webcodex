@@ -84,6 +84,97 @@ class NativeManifestCollectorTests(unittest.TestCase):
             )
             self.assertEqual(validated["source_sha"], SOURCE)
 
+    def test_local_preview_collector_never_invents_a_ci_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = self.fixture(root, target="x86_64-pc-windows-msvc", architecture="x86_64", suffix=".exe")
+            infos = {}
+            for name in collector.BINARIES:
+                infos[name] = {
+                    "schema_version": 1,
+                    "binary": name,
+                    "version": "0.9.0",
+                    "git_commit": SOURCE,
+                    "git_dirty": False,
+                    "built_at": "123",
+                    "target": "x86_64-pc-windows-msvc",
+                    "architecture": "x86_64",
+                    "desktop_runtime_contract": CONTRACT,
+                    "environment_data_format": 1,
+                }
+            infos["webcodex"]["windows_guarded_bootstrap_contract"] = 1
+            args = self.args(root, paths, root / "candidate", platform="win32-x64", desktop_executable="webcodex-desktop.exe")
+            args.local_preview = True
+            args.workflow_run_id = None
+            args.workflow_ref = None
+            with mock.patch.object(collector, "detect_platform", return_value="win32-x64"), mock.patch.object(collector, "probe", side_effect=lambda path, name: infos[name]), mock.patch.dict(os.environ, {}, clear=True):
+                result = collector.collect(args)
+            manifest = json.loads(Path(result["source_manifest"]).read_text(encoding="utf-8"))
+            self.assertIs(manifest["local_preview"], True)
+            self.assertEqual(manifest["source_workflow_run_id"], 0)
+            self.assertEqual(manifest["source_workflow_ref"], "webcodex/local-preview")
+            self.assertEqual({item["probe"] for item in manifest["artifacts"].values()}, {"local-preview-host"})
+            self.assertFalse(any("refs/tags" in str(v) for v in manifest.values() if isinstance(v, str)))
+
+    def test_unsigned_preview_accepts_only_its_exact_ci_workflow_and_source(self):
+        # Pull-request GITHUB_SHA is a merge SHA; checkout and binary build
+        # identity are bound to EXPECTED_SHA (the actual PR head) instead.
+        context = {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_REPOSITORY": "yyjeqhc/webcodex",
+            "GITHUB_RUN_ID": "42559605539",
+            "GITHUB_WORKFLOW_REF": "yyjeqhc/webcodex/.github/workflows/windows-unified-preview.yml@refs/pull/1405/merge",
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_REF": "refs/pull/1405/merge",
+            "GITHUB_HEAD_REF": "fix/1394-windows-v043-upgrade",
+            "GITHUB_BASE_REF": "main",
+            "GITHUB_SHA": "a" * 40,
+            "EXPECTED_SHA": SOURCE,
+        }
+        with mock.patch.dict(os.environ, context, clear=True):
+            collector.validate_local_preview_context(SOURCE)
+            with self.subTest("head workflow ref"):
+                os.environ["GITHUB_WORKFLOW_REF"] = (
+                    "yyjeqhc/webcodex/.github/workflows/windows-unified-preview.yml"
+                    "@refs/heads/fix/1394-windows-v043-upgrade"
+                )
+                collector.validate_local_preview_context(SOURCE)
+        with self.subTest("workflow_dispatch on main"), mock.patch.dict(os.environ, {
+            **context, "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": SOURCE,
+            "GITHUB_WORKFLOW_REF": "yyjeqhc/webcodex/.github/workflows/windows-unified-preview.yml@refs/heads/main",
+        }, clear=True):
+            collector.validate_local_preview_context(SOURCE)
+        bad = {
+            "GITHUB_ACTIONS": "false",
+            "GITHUB_REPOSITORY": "other/repository",
+            "GITHUB_RUN_ID": "not-a-number",
+            "GITHUB_WORKFLOW_REF": CI_CONTEXT["GITHUB_WORKFLOW_REF"],
+            "GITHUB_EVENT_NAME": "release",
+            "GITHUB_REF": "refs/tags/v0.9.0",
+            "GITHUB_HEAD_REF": "unknown-feature",
+            "GITHUB_BASE_REF": "other-base",
+            "GITHUB_SHA": "not-a-sha",
+            "EXPECTED_SHA": "a" * 40,
+        }
+        for key, replacement in bad.items():
+            with self.subTest(key=key), mock.patch.dict(os.environ, {**context, key: replacement}, clear=True):
+                with self.assertRaises(collector.CollectionError):
+                    collector.validate_local_preview_context(SOURCE)
+        for unbound in ("GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_WORKFLOW_REF"):
+            reduced = context.copy()
+            del reduced[unbound]
+            with self.subTest(missing=unbound), mock.patch.dict(os.environ, reduced, clear=True):
+                with self.assertRaises(collector.CollectionError):
+                    collector.validate_local_preview_context(SOURCE)
+        with self.subTest("local desktop build"), mock.patch.dict(os.environ, {}, clear=True):
+            collector.validate_local_preview_context(SOURCE)
+        with self.subTest("forge local context"), mock.patch.dict(os.environ, {
+            "GITHUB_ACTIONS": "true"
+        }, clear=True):
+            with self.assertRaises(collector.CollectionError):
+                collector.validate_local_preview_context(SOURCE)
+
     def test_rejects_mismatched_ci_context_before_probing_or_publishing(self):
         for variable in CI_CONTEXT:
             with self.subTest(variable=variable), tempfile.TemporaryDirectory() as temp:

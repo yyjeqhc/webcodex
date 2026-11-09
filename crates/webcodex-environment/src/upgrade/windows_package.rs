@@ -1,15 +1,33 @@
 //! A Windows package transaction without an Environment has no service authority.
-//! v0.5 accepts only Environment-aware package identities; older pre-Environment
-//! installs must first cross the published v0.4.6 bridge.
+//! The official v0.4.3 pre-Environment package uses the same sealed file
+//! transaction as an unconfigured Environment-aware package.
 use super::*;
 
 const JOURNAL: &str = "windows-package-upgrade.json";
 const RECEIPT: &str = "windows-package-prepared.json";
 
+// An offline Preview is authorized only by an explicitly feature-built Windows
+// CLI and an exact manifest marker. Published candidates still require HTTPS.
+fn candidate_authorized(candidate: &UpgradeCandidate) -> bool {
+    candidate.provenance_verified || local_preview_candidate(candidate)
+}
+
+fn require_local_preview(candidate: &UpgradeCandidate) -> SetupResultValue<()> {
+    if local_preview_candidate(candidate) {
+        Ok(())
+    } else {
+        Err(error(
+            "candidate_provenance",
+            "Local Preview requires an explicitly feature-built Windows CLI and a local-preview manifest",
+        ))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallationKind {
     Fresh,
+    Legacy,
     Unconfigured,
     Environment,
 }
@@ -83,6 +101,31 @@ fn owner_path(path: &Path, owner: &str) -> SetupResultValue<()> {
     }
     #[cfg(not(windows))]
     let _ = owner;
+    Ok(())
+}
+
+// A per-user Desktop installed into an existing administrator-owned directory
+// can have user-owned executable files beneath an administrator-owned parent.
+// The rollback authority remains bound to the exact journal, exact file owners,
+// the same user-owned backups and non-reparse targets; do not reject the parent
+// solely because its Windows owner is BUILTIN\\Administrators.
+#[cfg(any(windows, test))]
+fn rollback_parent_owner_allowed(actual: &str, owner: &str, component: &str) -> bool {
+    actual == owner || (component == "webcodex-desktop" && actual == "S-1-5-32-544")
+}
+
+fn rollback_parent_path(path: &Path, owner: &str, component: &str) -> SetupResultValue<()> {
+    verify_installed_target_path(path)?;
+    #[cfg(windows)]
+    if !rollback_parent_owner_allowed(&crate::storage::windows_path_owner(path)?, owner, component)
+    {
+        return Err(error(
+            "installer_owner",
+            "The installed program parent directory belongs to an unrecognized Windows account",
+        ));
+    }
+    #[cfg(not(windows))]
+    let _ = (owner, component);
     Ok(())
 }
 
@@ -163,6 +206,68 @@ async fn probe_installed(path: &Path, name: &str) -> SetupResultValue<MachineBui
         })
 }
 
+fn pre_environment(info: &MachineBuildInfo) -> bool {
+    // v0.4.3 release builds used git rev-parse --short=12. Accept only that
+    // published identity or its exact full SHA, never arbitrary prefixes.
+    info.version == "0.4.3"
+        && matches!(
+            info.git_commit.as_deref(),
+            Some("b96a59a712ca" | "b96a59a712ca5355ad8609cd861cd0c7acb9f99e")
+        )
+        && info.git_dirty == Some(false)
+        && info.environment_data_format.is_none()
+        && matches!(
+            (info.target.as_str(), info.architecture.as_str()),
+            ("x86_64-pc-windows-msvc", "x86_64") | ("aarch64-pc-windows-msvc", "aarch64")
+        )
+}
+
+// Pure classification of the components probed so far, independent of the host
+// OS. classify_inner checks all three, failing before it probes another component
+// when an earlier identity is unsupported or inconsistent.
+fn classify_builds(infos: &[MachineBuildInfo]) -> SetupResultValue<InstallationKind> {
+    let mut kind = None;
+    let first = infos.first().ok_or_else(|| {
+        error(
+            "package_identity",
+            "No installed build identity was provided",
+        )
+    })?;
+    for info in infos {
+        if info.version != first.version
+            || info.git_commit != first.git_commit
+            || info.git_dirty != first.git_dirty
+            || info.target != first.target
+            || info.architecture != first.architecture
+        {
+            return Err(error(
+                "package_identity",
+                "The installed runtime components have different build identities",
+            ));
+        }
+        let observed = if pre_environment(info) {
+            InstallationKind::Legacy
+        } else if info.environment_data_format == Some(DATA_FORMAT)
+            && info.target.ends_with("-pc-windows-msvc")
+        {
+            InstallationKind::Unconfigured
+        } else {
+            return Err(error(
+                "package_identity",
+                "This installed package has no supported upgrade identity",
+            ));
+        };
+        if kind.is_some_and(|k| k != observed) {
+            return Err(error(
+                "package_identity",
+                "The installed package contains mixed installation identities",
+            ));
+        }
+        kind = Some(observed);
+    }
+    Ok(kind.expect("at least one checked program"))
+}
+
 async fn classify_inner(
     store: &EnvironmentStore,
     runtime: &Path,
@@ -217,42 +322,19 @@ async fn classify_inner(
     for path in files.values() {
         owner_path(path, &owner)?;
     }
+    let mut infos = Vec::with_capacity(3);
     let mut kind = None;
-    let mut identity = None;
     for name in ["webcodex", "webcodex-server", "webcodex-runner"] {
         let before = digest(&files[name])?;
         let info = probe_installed(&files[name], name).await?;
-        let build = (
-            info.version.clone(),
-            info.git_commit.clone(),
-            info.git_dirty,
-            info.target.clone(),
-            info.architecture.clone(),
-        );
-        if identity.as_ref().is_some_and(|previous| previous != &build) {
-            return Err(error(
-                "package_identity",
-                "The installed runtime components have different build identities",
-            ));
-        }
-        identity = Some(build);
-        let observed = if info.environment_data_format == Some(DATA_FORMAT)
-            && info.target.ends_with("-pc-windows-msvc")
-        {
-            InstallationKind::Unconfigured
-        } else {
-            return Err(error(
-                "package_identity",
-                "This installed package predates the minimum direct upgrade source; upgrade through v0.4.6 first",
-            ));
-        };
-        if digest(&files[name])? != before || kind.is_some_and(|k| k != observed) {
+        infos.push(info);
+        kind = Some(classify_builds(&infos)?);
+        if digest(&files[name])? != before {
             return Err(error(
                 "package_identity",
                 "The installed package contains changing or mixed installation identities",
             ));
         }
-        kind = Some(observed);
     }
     Ok(kind.expect("three checked programs"))
 }
@@ -302,10 +384,13 @@ fn load_bound(store: &EnvironmentStore, runtime: &Path) -> SetupResultValue<Pack
     let journal: PackageJournal = store.read_json(JOURNAL)?.ok_or_else(SetupDiagnostic::io)?;
     let expected = targets(runtime)?;
     if journal.schema_version != 1
-        || !journal.candidate.provenance_verified
+        || !candidate_authorized(&journal.candidate)
         || journal.owner_identity != owner
         || journal.runtime_dir != runtime
-        || journal.kind != InstallationKind::Unconfigured
+        || !matches!(
+            journal.kind,
+            InstallationKind::Legacy | InstallationKind::Unconfigured
+        )
         || receipt(&journal).targets != expected
         || journal.programs.len() != expected.len()
         || uuid::Uuid::parse_str(&journal.operation_id).is_err()
@@ -349,12 +434,28 @@ pub async fn preflight(
     preflight_verified(store, runtime, checked).await
 }
 
+/// Offline Preview is deliberately separate from the published upgrade entry.
+/// It still checks native component identity, hashes, owner, process state and
+/// the original Windows package rollback boundaries.
+pub async fn preflight_local_preview(
+    store: &EnvironmentStore,
+    candidate: &Path,
+    runtime: &Path,
+) -> SetupResultValue<UpgradePreflight> {
+    require_windows()?;
+    let checked = NativeEnvironment::new()?
+        .upgrade_preflight_development(store, candidate)
+        .await?;
+    require_local_preview(&checked.candidate)?;
+    preflight_verified(store, runtime, checked).await
+}
+
 async fn preflight_verified(
     store: &EnvironmentStore,
     runtime: &Path,
     checked: UpgradePreflight,
 ) -> SetupResultValue<UpgradePreflight> {
-    if !checked.candidate.provenance_verified {
+    if !candidate_authorized(&checked.candidate) {
         return Err(error(
             "candidate_provenance",
             "Package preflight requires verified published candidate provenance",
@@ -376,7 +477,10 @@ async fn preflight_verified(
             ));
         }
     }
-    if classify_inner(store, runtime).await? != InstallationKind::Unconfigured {
+    if !matches!(
+        classify_inner(store, runtime).await?,
+        InstallationKind::Legacy | InstallationKind::Unconfigured
+    ) {
         return Err(error(
             "installer_environment",
             "This is not an unconfigured Windows package upgrade",
@@ -394,7 +498,7 @@ fn prepare_verified(
     runtime: &Path,
     kind: InstallationKind,
 ) -> SetupResultValue<()> {
-    if !candidate.provenance_verified {
+    if !candidate_authorized(&candidate) {
         return Err(error(
             "candidate_provenance",
             "Package preparation requires verified published candidate provenance",
@@ -461,10 +565,35 @@ pub async fn prepare(
     candidate_dir: &Path,
     runtime: &Path,
 ) -> SetupResultValue<()> {
+    prepare_with_source(store, candidate_dir, runtime, false).await
+}
+
+pub async fn prepare_local_preview(
+    store: &EnvironmentStore,
+    candidate_dir: &Path,
+    runtime: &Path,
+) -> SetupResultValue<()> {
+    prepare_with_source(store, candidate_dir, runtime, true).await
+}
+
+async fn prepare_with_source(
+    store: &EnvironmentStore,
+    candidate_dir: &Path,
+    runtime: &Path,
+    local_preview: bool,
+) -> SetupResultValue<()> {
     require_windows()?;
-    let checked = NativeEnvironment::new()?
-        .upgrade_preflight(store, candidate_dir)
-        .await?;
+    let native = NativeEnvironment::new()?;
+    let checked = if local_preview {
+        native
+            .upgrade_preflight_development(store, candidate_dir)
+            .await?
+    } else {
+        native.upgrade_preflight(store, candidate_dir).await?
+    };
+    if local_preview {
+        require_local_preview(&checked.candidate)?;
+    }
     if !checked.ready {
         return Err(error(
             "upgrade_not_ready",
@@ -492,7 +621,10 @@ pub async fn prepare(
         }
     }
     let kind = classify_inner(store, runtime).await?;
-    if kind != InstallationKind::Unconfigured {
+    if !matches!(
+        kind,
+        InstallationKind::Legacy | InstallationKind::Unconfigured
+    ) {
         return Err(error(
             "installer_environment",
             "Use the installed Environment owner's transaction",
@@ -513,6 +645,19 @@ pub async fn verify(
     verify_receipt_inner(store, &candidate, runtime)
 }
 
+pub async fn verify_local_preview(
+    store: &EnvironmentStore,
+    candidate_dir: &Path,
+    runtime: &Path,
+) -> SetupResultValue<PackageReceipt> {
+    require_windows()?;
+    let candidate = verify_upgrade_candidate(candidate_dir)?;
+    require_local_preview(&candidate)?;
+    verify_candidate_executables(&candidate).await?;
+    let _lock = store.lock()?;
+    verify_receipt_inner(store, &candidate, runtime)
+}
+
 fn verify_receipt_inner(
     store: &EnvironmentStore,
     candidate: &UpgradeCandidate,
@@ -522,7 +667,7 @@ fn verify_receipt_inner(
     let actual: PackageReceipt = store.read_json(RECEIPT)?.ok_or_else(SetupDiagnostic::io)?;
     checked_owner(&store.root().join(RECEIPT), &journal.owner_identity)?;
     let mut verified = candidate.clone();
-    verified.provenance_verified = true;
+    verified.provenance_verified = journal.candidate.provenance_verified;
     if journal.candidate != verified
         || journal.phase != Phase::SnapshotReady
         || actual != receipt(&journal)
@@ -617,17 +762,44 @@ fn rollback_inner(store: &EnvironmentStore, runtime: &Path) -> SetupResultValue<
     journal.phase = Phase::Restoring;
     store.write_json(JOURNAL, &journal)?;
     for p in &journal.programs {
-        owner_path(
+        rollback_parent_path(
             p.target.parent().ok_or_else(SetupDiagnostic::io)?,
             &journal.owner_identity,
-        )?;
+            &p.name,
+        )
+        .map_err(|_| {
+            error(
+                "upgrade_restore_parent",
+                "Rollback parent-directory ownership or path check failed",
+            )
+        })?;
         if p.target.try_exists().map_err(|_| SetupDiagnostic::io())? {
-            owner_path(&p.target, &journal.owner_identity)?;
-            stopped(&p.target)?;
+            owner_path(&p.target, &journal.owner_identity).map_err(|_| {
+                error(
+                    "upgrade_restore_target_owner",
+                    "Rollback target file ownership check failed",
+                )
+            })?;
+            stopped(&p.target).map_err(|_| {
+                error(
+                    "upgrade_restore_target_busy",
+                    "Rollback target program is still busy",
+                )
+            })?;
         }
-        restore_program(p)?;
+        restore_program(p).map_err(|_| {
+            error(
+                "upgrade_restore_file",
+                "Rollback file restoration operation failed",
+            )
+        })?;
         #[cfg(windows)]
-        crate::storage::secure_windows_path(&p.target)?;
+        crate::storage::secure_windows_path(&p.target).map_err(|_| {
+            error(
+                "upgrade_restore_acl",
+                "Rollback failed to secure restored program ownership and ACL",
+            )
+        })?;
         if digest(&p.target)? != p.sha256 {
             return Err(error(
                 "upgrade_restore_failed",

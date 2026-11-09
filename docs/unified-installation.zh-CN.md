@@ -73,9 +73,13 @@ Runtime 选择、私有凭据以及恢复记录；普通升级不需要删除配
 
 ## 从 v0.4.6 之前的安装升级
 
-v0.5 将正式发布的 v0.4.6 Environment 版本作为最低直接升级来源。pre-Environment Linux 安装以及官方 Windows v0.4.3 包不再由 v0.5 直接迁移。请先升级或迁移到 v0.4.6，确认 Environment 已正确接管原 Server/Runner 身份和服务，再从该 Environment 升级到 v0.5。
+pre-Environment Linux 安装仍通过 v0.4.6 完成服务交接。官方 Windows v0.4.3 Desktop 安装可以通过 v0.5 Desktop 的旧 runtime 环境迁移直接升级（**需在 Windows 实机验收**）。请先离线完整备份程序、Desktop 状态、Server 数据、Runner/项目注册表和私有凭据。不要删除状态或重新注册 Runner。覆盖安装 Desktop 后，先在 Desktop 中启动已保存的 runtime，恢复 Runner 连接，再导入 Environment。Desktop 必须拥有该 Runner（以及存在时的本机 Server），且项目清单必须完整。
 
-这样历史安装形态只需要经过一个已发布的桥版本，不必让后续每个版本继续携带旧 systemd handoff 和 v0.4.3 package classifier。跨桥升级时不要删除或重建凭据；旧身份由 v0.4.6 负责导入，v0.5 只保留并升级生成后的 Environment 数据。
+普通 Desktop `setup.exe` 只替换程序，不运行 unified 包分类器。已发布的 v0.4.6 分类器用 40 位 SHA 比较官方 v0.4.3 二进制中的 12 位 `b96a59a712ca`，因此错误拒绝了该安装。v0.5 开发线为独立的 unified 包事务恢复对官方 v0.4.3 包的精确识别。这不代表 Windows 安装器或真实数据迁移已经通过验收；需要分别用官方 v0.5.0 Desktop 安装器和候选 Desktop 安装器验证身份与历史保留。
+
+如果 profile 依赖已移除的 `agent.toml` / `projects.d` 自动发现或 `projects_dir` 字段，Desktop 会在停止任何进程之前以 `legacy_runner_layout_unsupported` 拒绝启动/导入。请保留备份，恢复之前可工作的 Runtime，在保留原 Runner client ID 和项目 ID 的前提下，显式核对保存的配置路径和 `project_registry_dir`。Desktop 不会自动改名、转换或静默发现这些文件。显式保存的 `agent.toml` 路径，以及显式指向 `projects.d` 的 `project_registry_dir` 仍可读取。支持边界见[兼容性政策](compatibility-policy.md)。
+
+如需在本机先验收 Windows x64 旧版迁移，可阅读 [Unified Local Preview 离线构建与测试指南](windows-unified-local-preview.md)。该包需显式启用开发构建特性，未签名、仅有本地自声明的摘要校验，**不是**通过 GitHub Release 验证的官方安装包，不能将它作为已获正式支持的迁移方式。
 
 ## Tunnel 配置
 
@@ -106,13 +110,13 @@ macOS 的 system scope 开机恢复以系统和项目所在磁盘已解锁为前
 
 ## 升级
 
-正常升级会根据已发布 HTTPS source manifest 验证候选构建，包括 source SHA、version 和 provenance hash。各身份按 manifest 声明关系校验，不要求来自同一个 CI job 或 timestamp。开发和 CI 构建必须显式使用 `--development-build`，并报告 `provenance_verified: false`；这不属于官方 Release 验证，不能如此宣传。
+正常升级会根据已发布 HTTPS source manifest 验证候选构建，包括 source SHA、version 和 provenance hash。各身份按 manifest 声明关系校验，不要求来自同一个 CI job 或 timestamp。开发和 CI 构建必须显式使用 `--development-build`，并报告 `provenance_verified: false`；这不属于官方 Release 验证，不能如此宣传。该 opt-in 不适用于 unified 包事务：包事务必须验证作为 GitHub Release 资产发布的 source manifest，没有 development 绕过开关。
 
 Linux 和 macOS 的已有安装升级，要求原用户先针对候选包和自己的 EnvironmentStore 运行 Core `upgrade-prepare`。管理员用 `installer-authorize` 授权该 receipt；包钩子会将它与候选包及稳定 runtime 目录核对，不会打开 root 的默认 EnvironmentStore。包完成阶段由 root 下的已安装 CLI 通过窄范围 owner-context broker 运行 `installer-finish`。只有 Core 提交 owner 事务后才报告成功；失败时保留授权 receipt 供恢复。全新安装使用隔离的安装事务目录，不会启动服务。Windows 外层安装器以当前用户身份运行，在调用内层 Tauri 安装器前准备并验证该用户的 Store，完成后运行 `upgrade-finish`。
 
-Windows 会由绑定候选包 manifest 的新 CLI 将安装分为 `Fresh`、`Unconfigured` 或 `Environment`。完整但尚未配置的程序包必须声明受支持的 Environment 数据格式；包括官方 v0.4.3 在内的 pre-Environment 包会被拒绝，并提示先经 v0.4.6 升级。升级前须退出旧 Desktop 并停止其 Server/Runner；程序不可访问或正在运行、安装不完整、用户不匹配、存在无法对应 owner 的 Windows 服务时，会阻止替换。候选 CLI 保存私有备份并生成 `windows-package-prepared.json`，绑定原用户 SID、四个精确文件目标、事务及已发布 manifest。调用内层安装器前核对凭据和旧文件；完成阶段核对四个安装文件的 hash 和 build-info 启动结果；回滚恢复原来的四个程序。此流程不会创建 Environment、注册 Runner、修改 provider 配置或迁移 Server 数据。已有 Environment 保留已安装 CLI 和现有 owner 事务路径。
+Windows 会由绑定候选包 manifest 的新 CLI 将安装分为 `Fresh`、`Legacy`、`Unconfigured` 或 `Environment`。`Legacy` 仅接受官方 v0.4.3：精确的已发布 12 位或完整 40 位 SHA、干净构建、官方 x64/arm64 target、缺失 Environment 格式，且三个 runtime 组件的身份一致。其他完整但尚未配置的程序包必须声明受支持的 Environment 数据格式。`Legacy` 与 `Unconfigured` 使用同一事务。升级前须退出旧 Desktop 并停止其 Server/Runner；程序不可访问或正在运行、安装不完整、用户不匹配、存在无法对应 owner 的 Windows 服务时，会阻止替换。候选 CLI 保存私有备份并生成 `windows-package-prepared.json`，绑定原用户 SID、四个精确文件目标、事务及已发布 manifest。调用内层安装器前核对凭据和旧文件；完成阶段核对四个安装文件的 hash 和 build-info 启动结果；回滚恢复原来的四个程序。此流程不会创建 Environment、注册 Runner、修改 provider 配置或迁移 Server 数据。已有 Environment 保留已安装 CLI 和现有 owner 事务路径。
 
-如果程序回滚失败，请保留所选 Environment 目录内的 `windows-package-upgrade.json` 和 `upgrade-backups/`。停止相关程序后，使用已验证的新 CLI 执行 `environment package-upgrade-rollback --expected-runtime-dir <原安装目录>/webcodex-runtime --environment-dir <原Environment目录> --json`。不要删除恢复文件或修改事务目标。此恢复命令只处理原来受支持的程序包事务，不会绕过 v0.4.6 升级桥。真实官方安装器验收仍待执行。
+如果程序回滚失败，请保留所选 Environment 目录内的 `windows-package-upgrade.json` 和 `upgrade-backups/`。停止相关程序后，使用已验证的新 CLI 执行 `environment package-upgrade-rollback --expected-runtime-dir <原安装目录>/webcodex-runtime --environment-dir <原Environment目录> --json`。不要删除恢复文件或修改事务目标。此恢复命令只处理原来受支持的程序包事务，不会导入 Desktop 数据，也不会放宽来源或所有者检查。真实官方安装器验收仍待执行。
 
 重新安装完全相同且已验证的包会走只读、幂等验证路径，即使尚未配置 Environment 也一样。Unix 上没有 Environment 时，安装器仍会拒绝不同版本的包，需要由 owner 准备恢复记录；同包校验不能用作替换不同文件的许可。已有 Environment 的不同候选包仍需要 owner receipt 流程和已发布 source manifest 验证。
 

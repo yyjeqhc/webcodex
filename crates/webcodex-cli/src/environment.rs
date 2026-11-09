@@ -27,6 +27,7 @@ struct Input {
     operand: Option<String>,
     candidate_dir: Option<PathBuf>,
     development_build: bool,
+    local_preview: bool,
     credentials_file: Option<PathBuf>,
     profile: Option<String>,
     tunnel_host: Option<TunnelHostMode>,
@@ -146,6 +147,7 @@ fn parse(args: &[String]) -> Result<Input, String> {
             "--new-pairing-code" => input.new_code = true,
             "--json" => input.json = true,
             "--development-build" => input.development_build = true,
+            "--local-preview" => input.local_preview = true,
             _ if !arg.starts_with('-') && input.operand.is_none() => {
                 input.operand = Some(arg.clone())
             }
@@ -187,6 +189,17 @@ fn parse(args: &[String]) -> Result<Input, String> {
         )
     {
         return Err("--development-build applies only to upgrade candidate verification".into());
+    }
+    if input.local_preview
+        && (!cfg!(all(windows, feature = "local-preview-installer"))
+            || !matches!(
+                input.command.as_str(),
+                "package-upgrade-preflight" | "package-upgrade-prepare" | "package-upgrade-verify"
+            )
+            || input.development_build
+            || input.upgrade_target_file.is_some())
+    {
+        return Err("--local-preview is restricted to the feature-built Windows package preflight/prepare/verify commands".into());
     }
     if input.installer_file.is_some() && input.command != "installer-apply" {
         return Err("--installer-file applies only to verified unified installer handoff".into());
@@ -585,22 +598,31 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                 )?;
                 match input.command.as_str() {
                     "package-upgrade-preflight" => {
-                        let result = windows_package::preflight(&store, &candidate, &runtime)
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        let result = if input.local_preview {
+                            windows_package::preflight_local_preview(&store, &candidate, &runtime)
+                                .await
+                        } else {
+                            windows_package::preflight(&store, &candidate, &runtime).await
+                        }
+                        .map_err(|e| e.to_string())?;
                         if !result.ready {
                             return Err(serde_json::to_string(&result).unwrap_or_default());
                         }
                     }
-                    "package-upgrade-prepare" => {
-                        windows_package::prepare(&store, &candidate, &runtime)
-                            .await
-                            .map_err(|e| e.to_string())?
+                    "package-upgrade-prepare" => if input.local_preview {
+                        windows_package::prepare_local_preview(&store, &candidate, &runtime).await
+                    } else {
+                        windows_package::prepare(&store, &candidate, &runtime).await
                     }
+                    .map_err(|e| e.to_string())?,
                     _ => {
-                        windows_package::verify(&store, &candidate, &runtime)
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        if input.local_preview {
+                            windows_package::verify_local_preview(&store, &candidate, &runtime)
+                                .await
+                        } else {
+                            windows_package::verify(&store, &candidate, &runtime).await
+                        }
+                        .map_err(|e| e.to_string())?;
                     }
                 }
             }

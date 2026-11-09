@@ -142,6 +142,37 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "managed-file allowlist"):
                     nsis.validate_candidate(root, "win32-x64")
 
+    def test_manifest_bound_powershell_hash_fits_stock_nsis_and_fails_closed(self):
+        # Stock NSIS 3.13 reports NSIS_MAX_STRLEN=1024. A longer
+        # -EncodedCommand silently truncates at runtime and rejects valid files.
+        good = hashlib.sha256(b"candidate-cli-fixture").hexdigest()
+        code = bootstrap.candidate_hash_command(good)
+        command = (
+            '"$WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
+            f'-NoProfile -NonInteractive -EncodedCommand {code}'
+        )
+        self.assertLess(len(command), 960)
+        script = base64.b64decode(code).decode("utf-16le")
+        self.assertIn("WEBCODEX_INSTALLER_CANDIDATE_CLI", script)
+        self.assertIn(good, script)
+        if os.name == "nt":
+            with tempfile.TemporaryDirectory() as temp:
+                candidate_cli = Path(temp) / "candidate.exe"
+                candidate_cli.write_bytes(b"candidate-cli-fixture")
+                shell = str(Path(os.environ["WINDIR"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+                for description, path, digest, expected_rc in [
+                    ("valid", candidate_cli, good, 0),
+                    ("wrong digest", candidate_cli, "0" * 64, 1),
+                    ("missing CLI", candidate_cli.with_name("missing.exe"), good, 1),
+                ]:
+                    with self.subTest(case=description):
+                        env = {**os.environ, "WEBCODEX_INSTALLER_CANDIDATE_CLI": str(path)}
+                        run = subprocess.run(
+                            [shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", bootstrap.candidate_hash_command(digest)],
+                            env=env, capture_output=True, timeout=25,
+                        )
+                        self.assertEqual(run.returncode, expected_rc, run.stderr)
+
     def test_outer_bootstrap_extracts_candidate_in_section_before_inner_install(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "candidate"
@@ -284,10 +315,10 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
     def test_candidate_hash_check_quotes_the_digest_and_keeps_paths_out_of_source(self):
         expected = "a" * 64
         program = base64.b64decode(bootstrap.candidate_hash_command(expected)).decode("utf-16le")
-        self.assertIn(f"$h -ne '{expected}'", program)
-        self.assertIn("[System.IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI)", program)
-        self.assertIn("[System.Security.Cryptography.SHA256]::Create()", program)
-        self.assertIn("catch { exit 1 }", program)
+        self.assertIn(f"$h -eq '{expected}'", program)
+        self.assertIn("[IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI)", program)
+        self.assertIn("[Security.Cryptography.SHA256]::Create()", program)
+        self.assertIn("}catch{};exit 1", program)
         self.assertNotIn("Get-FileHash", program)
         self.assertNotIn("$args", program)
 

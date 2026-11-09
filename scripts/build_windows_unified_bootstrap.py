@@ -32,15 +32,17 @@ def candidate_hash_command(expected_sha256: str) -> str:
     # Keep the candidate path out of PowerShell source. Use .NET file/crypto APIs
     # directly instead of PowerShell provider cmdlets so exact-path hashing does
     # not depend on provider parsing or hosted-runner cmdlet behavior.
+    # Stock NSIS 3.13 uses NSIS_MAX_STRLEN=1024. The old expanded
+    # -EncodedCommand (1172 chars before its executable prefix) was truncated,
+    # so a correct candidate was rejected before installer-classify ran.
+    # Keep this PowerShell command compact; render() also checks the bound.
     script = (
-        "$ErrorActionPreference='Stop'; try { "
-        "$s=[System.IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI); try { "
-        "$sha=[System.Security.Cryptography.SHA256]::Create(); try { "
-        "$h=([System.BitConverter]::ToString($sha.ComputeHash($s))).Replace('-','').ToLowerInvariant() "
-        "} finally { $sha.Dispose() } "
-        "} finally { $s.Dispose() }; "
-        f"if($h -ne '{expected_sha256}') {{ exit 1 }}; exit 0 "
-        "} catch { exit 1 }"
+        "try{$f=[IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI);"
+        "$s=[Security.Cryptography.SHA256]::Create();"
+        "$h=[BitConverter]::ToString($s.ComputeHash($f)).Replace('-','').ToLowerInvariant();"
+        "$s.Dispose();$f.Dispose();"
+        f"if($h -eq '{expected_sha256}'){{exit 0}}"
+        "}catch{};exit 1"
     )
     return base64.b64encode(script.encode("utf-16le")).decode("ascii")
 
@@ -52,6 +54,14 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
     if inner.read_bytes()[:2] != b"MZ":
         raise ValueError("inner Tauri installer is not a Windows executable")
     target = "x86_64" if platform == "win32-x64" else "aarch64"
+    hash_command = (
+        '"$WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
+        f'-NoProfile -NonInteractive -EncodedCommand {candidate_hash_command(manifest["artifacts"]["webcodex"]["sha256"])}'
+    )
+    # NSIS expands ExecWait strings into a fixed 1024-character buffer. Leave
+    # headroom for the command's quoting and stop at build time if it grows.
+    if len(hash_command) >= 960:
+        raise ValueError("candidate hash verifier command exceeds NSIS string-size safety limit")
     lines = [
         'Unicode true',
         '!include "LogicLib.nsh"',
@@ -157,7 +167,7 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '    SetErrorLevel 1',
         '    Abort',
         '  ${EndIf}',
-        f'  ExecWait \'"$WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand {candidate_hash_command(manifest["artifacts"]["webcodex"]["sha256"])}\' $0',
+        f"  ExecWait '{hash_command}' $0",
         '  ${If} $0 != 0',
         '    MessageBox MB_ICONSTOP "WebCodex candidate CLI failed its manifest-bound SHA-256 check."',
         '    SetErrorLevel 1',

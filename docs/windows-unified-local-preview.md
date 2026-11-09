@@ -37,6 +37,26 @@ The manifest declares local_preview=true, workflow reference
 webcodex/local-preview, workflow run ID 0, and local-preview-host for each
 component probe. These values do **not** pretend to be CI provenance.
 
+## GitHub Actions CI Preview (no Release or tag)
+
+The opt-in workflow [Windows Unified LOCAL PREVIEW](../.github/workflows/windows-unified-preview.yml)
+can build an unsigned Windows x64 acceptance candidate on GitHub-hosted Windows.
+Before this workflow is merged into the default branch, it is triggered only
+by same-repository updates to `fix/1394-windows-v043-upgrade` / PR #1405.
+After merging, a maintainer can use **Actions -> Windows Unified LOCAL PREVIEW ->
+Run workflow** to build the default branch manually. No tag, GitHub Release,
+installer signing or deployment is performed.
+
+Open the successful workflow run under **Actions**, find **Artifacts**, and
+select the `windows-unified-LOCAL-PREVIEW-<run-id>-<attempt>` ZIP. The ZIP
+contains the unsigned installer, SHA-256 checksum, local source/provenance
+manifests and a testing warning. Artifacts expire after **14 days** and
+may require a GitHub sign-in to download. Check the workflow run's exact
+source SHA and verify the installer against its `.sha256` file before testing.
+GitHub building and hosting an unsigned Preview does **not** convert its local
+source fields into official GitHub Release provenance. The real-release
+path still requires a separate published, source-verified build and review.
+
 ## Security boundary
 
 A normal WebCodex/CLI build cannot accept a local-preview manifest. The

@@ -1948,6 +1948,112 @@ async fn ordinary_receipts_production_sqlite_dual_restart_observe_and_list_filte
     assert!(probe_patch_agent_request(&runtime, client).await.is_none());
 }
 
+#[tokio::test(start_paused = true)]
+async fn observe_jobs_stale_epoch_refreshes_before_wait_for_every_policy() {
+    use webcodex_core::job_observation::JobObservationToken;
+
+    assert_eq!(ObserveJobsWakeOn::default(), ObserveJobsWakeOn::Terminal);
+    for policy in [
+        ObserveJobsWakeOn::default(),
+        ObserveJobsWakeOn::AllTerminal,
+        ObserveJobsWakeOn::Change,
+        ObserveJobsWakeOn::MeaningfulChange,
+    ] {
+        let runtime = test_runtime();
+        let (job_id, request, auth) = register_and_start_agent_job(&runtime, "stale-epoch").await;
+        update_observed_job(
+            &runtime,
+            "stale-epoch",
+            &request,
+            "running",
+            Some("retained output\n"),
+            None,
+            false,
+        )
+        .await;
+        let current = observation_token(&runtime, &job_id, &auth).await;
+        let parsed = JobObservationToken::parse(&current).unwrap();
+        // Keep the exact Job and revision; change only the registry generation.
+        // Cover both log-aware tokens and initial handoff tokens without cursors.
+        for cursors in [false, true] {
+            let stale = if cursors {
+                JobObservationToken::new(
+                    &job_id,
+                    "previous-server-epoch",
+                    parsed.revision,
+                    parsed.stdout_cursor.unwrap(),
+                    parsed.stderr_cursor.unwrap(),
+                )
+            } else {
+                JobObservationToken::new_baseline(&job_id, "previous-server-epoch", parsed.revision)
+            }
+            .unwrap();
+            assert_ne!(stale.binding, parsed.binding);
+            let result = tokio::time::timeout(
+                Duration::from_secs(1),
+                runtime.observe_jobs_for_auth(
+                    vec![item(&job_id, Some(stale.encode()))],
+                    40,
+                    Some(30),
+                    policy,
+                    Some(&auth),
+                ),
+            )
+            .await
+            .expect("stale epoch must refresh before the long-poll deadline");
+            assert!(result.success, "{:?}", result.error);
+            assert_eq!(result.output["wait"]["outcome"], "updated");
+            assert_eq!(result.output["wait"]["waited_ms"], 0);
+            let output = &result.output["items"][0]["output"];
+            assert_eq!(output["job_id"], job_id);
+            assert_eq!(output["status"], "running");
+            assert_eq!(output["terminal"], false);
+            assert_eq!(output["changed"], true);
+            assert_eq!(output["meaningful_changed"], true);
+            assert_eq!(output["log_delta_status"], "reset");
+            assert_eq!(output["stdout_tail"], "retained output\n");
+            assert_eq!(output["observation_token"], current);
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn observe_jobs_current_epoch_without_change_keeps_full_wait_for_every_policy() {
+    for policy in [
+        ObserveJobsWakeOn::default(),
+        ObserveJobsWakeOn::AllTerminal,
+        ObserveJobsWakeOn::Change,
+        ObserveJobsWakeOn::MeaningfulChange,
+    ] {
+        let runtime = test_runtime();
+        let (job_id, _, auth) = register_and_start_agent_job(&runtime, "current-epoch").await;
+        let token = observation_token(&runtime, &job_id, &auth).await;
+        let observation = runtime.observe_jobs_for_auth(
+            vec![item(&job_id, Some(token.clone()))],
+            40,
+            Some(30),
+            policy,
+            Some(&auth),
+        );
+        tokio::pin!(observation);
+        assert!(futures_util::poll!(&mut observation).is_pending());
+        tokio::time::advance(Duration::from_secs(29)).await;
+        assert!(futures_util::poll!(&mut observation).is_pending());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let result = observation.await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["wait"]["outcome"], "timeout");
+        assert_eq!(result.output["wait"]["waited_ms"], 30_000);
+        let output = &result.output["items"][0]["output"];
+        assert_eq!(output["job_id"], job_id);
+        assert_eq!(output["terminal"], false);
+        assert_eq!(output["changed"], false);
+        assert_eq!(output["meaningful_changed"], false);
+        assert_eq!(output["log_delta_status"], "unchanged");
+        assert_eq!(output["observation_token"], token);
+    }
+}
+
 #[tokio::test]
 async fn observe_jobs_terminal_policy_coalesces_noisy_jobs_with_one_deadline_and_caller_delta() {
     for policy in [ObserveJobsWakeOn::Terminal, ObserveJobsWakeOn::AllTerminal] {

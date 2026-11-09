@@ -1,4 +1,5 @@
 use super::*;
+use crate::webcodex_runner::shell::ShellExecutionContext;
 
 #[cfg(unix)]
 #[test]
@@ -33,18 +34,18 @@ fn shell_job_profile_prepare_stop_reaps_whole_tree() {
         written
     });
 
-    let result = run_shell_with_profiles(
-        1,
-        &policy,
-        &shell,
-        tmp.path(),
-        &cache,
-        Some(&cwd),
-        "true",
-        None,
-        10,
-        Some(stop_requested.as_ref()),
-    );
+    let result = (ShellExecutionContext {
+        generation: 1,
+        policy: &policy,
+        shell: &shell,
+        project_registry_dir: tmp.path(),
+        cache: &cache,
+        cwd: Some(&cwd),
+        timeout_secs: 10,
+        stop_requested: Some(stop_requested.as_ref()),
+    })
+    .run_shell("true", None, false, None)
+    .result;
 
     assert!(stopper.join().expect("stopper thread panicked"));
     assert!(
@@ -90,18 +91,18 @@ fn shell_profile_prepare_timeout_cleans_up_whole_tree() {
         )],
     );
     let start = Instant::now();
-    let result = run_shell_with_profiles(
-        1,
-        &unrestricted_test_policy(),
-        &shell,
-        tmp.path(),
-        &PreparedShellProfileCache::default(),
-        Some(tmp.path().to_string_lossy().as_ref()),
-        "true",
-        None,
-        10,
-        None,
-    );
+    let result = (ShellExecutionContext {
+        generation: 1,
+        policy: &unrestricted_test_policy(),
+        shell: &shell,
+        project_registry_dir: tmp.path(),
+        cache: &PreparedShellProfileCache::default(),
+        cwd: Some(tmp.path().to_string_lossy().as_ref()),
+        timeout_secs: 10,
+        stop_requested: None,
+    })
+    .run_shell("true", None, false, None)
+    .result;
     assert!(
         wait_until_file(&markers.parent, Duration::from_secs(15)),
         "prepare tree markers were never written: {result:?}"
@@ -158,18 +159,18 @@ fn shell_profile_prepare_stop_cleans_up_whole_tree() {
         written
     });
 
-    let result = run_shell_with_profiles(
-        1,
-        &unrestricted_test_policy(),
-        &shell,
-        tmp.path(),
-        &PreparedShellProfileCache::default(),
-        Some(tmp.path().to_string_lossy().as_ref()),
-        "true",
-        None,
-        10,
-        Some(stop_requested.as_ref()),
-    );
+    let result = (ShellExecutionContext {
+        generation: 1,
+        policy: &unrestricted_test_policy(),
+        shell: &shell,
+        project_registry_dir: tmp.path(),
+        cache: &PreparedShellProfileCache::default(),
+        cwd: Some(tmp.path().to_string_lossy().as_ref()),
+        timeout_secs: 10,
+        stop_requested: Some(stop_requested.as_ref()),
+    })
+    .run_shell("true", None, false, None)
+    .result;
 
     assert!(stopper.join().expect("stopper thread panicked"));
     assert!(

@@ -285,18 +285,18 @@ fn runner_real_process_shell_job_timeout_profile_reaps_descendant_process_group(
 
     // Exercise the production request path directly rather than the
     // test-only `run_shell` wrapper.
-    let result = run_shell_with_profiles(
-        1,
-        &policy,
-        &shell,
-        tmp.path(),
-        &cache,
-        Some(&cwd),
-        &long_lived_descendant_command(&pid_file),
-        None,
-        1,
-        None,
-    );
+    let result = (ShellExecutionContext {
+        generation: 1,
+        policy: &policy,
+        shell: &shell,
+        project_registry_dir: tmp.path(),
+        cache: &cache,
+        cwd: Some(&cwd),
+        timeout_secs: 1,
+        stop_requested: None,
+    })
+    .run_shell(&long_lived_descendant_command(&pid_file), None, false, None)
+    .result;
 
     assert_eq!(cache.len(), 1, "prepared profile path was not used");
     assert_eq!(result.exit_code, Some(-1), "{result:?}");

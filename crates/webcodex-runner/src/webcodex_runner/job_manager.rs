@@ -16,14 +16,11 @@ use super::execution_io::{
     validation_module_available, wait_failure_error, wait_managed_tree_exit, OutputChunk,
 };
 use super::output_text::OutputTextSource;
-use super::runner_skills::run_skill_resource_with_profiles_and_execution_state;
+
 use super::shell::{
     configured_explicit_shell_command, configured_prepared_shell_job_command,
     configured_shell_job_command, configured_validation_job_command, cwd_allowed,
-    prepare_detached_process_launch, resolve_prepared_shell_profile,
-    run_process_with_profiles_and_execution_state_with_internal_env_and_start_hook,
-    run_process_with_profiles_and_execution_state_with_start_hook,
-    run_script_with_profiles_and_execution_state_with_start_hook, PreparedShellProfileCache,
+    resolve_prepared_shell_profile, PreparedShellProfileCache,
 };
 use super::shutdown::{lock_unpoison, ActivityTracker};
 use super::ssh::{is_transport_failure, SshConnectionPool};

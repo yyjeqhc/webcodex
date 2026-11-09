@@ -3,7 +3,7 @@
 use super::*;
 
 // Test-only wrapper for callers that do not need prepared shell profiles; the
-// production request path uses `run_shell_with_profiles` directly.
+// production request path uses `ShellExecutionContext::run_shell`.
 #[cfg(test)]
 pub(crate) fn run_shell(
     policy: &RunnerPolicy,
@@ -29,64 +29,39 @@ pub(crate) fn run_shell(
     .result
 }
 
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_shell_with_profiles(
-    generation: u64,
-    policy: &RunnerPolicy,
-    shell: &ShellConfig,
-    project_registry_dir: &Path,
-    cache: &PreparedShellProfileCache,
-    cwd: Option<&str>,
-    command: &str,
-    stdin: Option<&str>,
-    timeout_secs: u64,
-    stop_requested: Option<&AtomicBool>,
-) -> CommandResult {
-    run_shell_with_profiles_and_execution_state(
-        generation,
-        policy,
-        shell,
-        project_registry_dir,
-        cache,
-        cwd,
-        command,
-        None,
-        false,
-        stdin,
-        timeout_secs,
-        stop_requested,
-    )
-    .result
-}
+impl ShellExecutionContext<'_> {
+    pub(crate) fn run_shell(
+        &self,
+        command: &str,
+        explicit_shell: Option<ExecutionShell>,
+        login: bool,
+        stdin: Option<&str>,
+    ) -> ShellCommandResult {
+        let ShellExecutionContext {
+            generation,
+            policy,
+            shell,
+            project_registry_dir,
+            cache,
+            cwd,
+            timeout_secs,
+            stop_requested,
+            ..
+        } = *self;
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_shell_with_profiles_and_execution_state(
-    generation: u64,
-    policy: &RunnerPolicy,
-    shell: &ShellConfig,
-    project_registry_dir: &Path,
-    cache: &PreparedShellProfileCache,
-    cwd: Option<&str>,
-    command: &str,
-    explicit_shell: Option<ExecutionShell>,
-    login: bool,
-    stdin: Option<&str>,
-    timeout_secs: u64,
-    stop_requested: Option<&AtomicBool>,
-) -> ShellCommandResult {
-    run_shell_impl(
-        policy,
-        shell,
-        Some((generation, project_registry_dir, cache)),
-        cwd,
-        command,
-        explicit_shell,
-        login,
-        stdin,
-        timeout_secs,
-        stop_requested,
-    )
+        run_shell_impl(
+            policy,
+            shell,
+            Some((generation, project_registry_dir, cache)),
+            cwd,
+            command,
+            explicit_shell,
+            login,
+            stdin,
+            timeout_secs,
+            stop_requested,
+        )
+    }
 }
 
 pub(super) fn run_shell_impl(

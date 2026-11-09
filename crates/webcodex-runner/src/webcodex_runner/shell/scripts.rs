@@ -329,158 +329,139 @@ pub(super) fn redact_temporary_script_path(result: &mut ShellCommandResult, path
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_script_with_profiles_and_execution_state(
-    generation: u64,
-    policy: &RunnerPolicy,
-    shell: &ShellConfig,
-    project_registry_dir: &Path,
-    cache: &PreparedShellProfileCache,
-    cwd: Option<&str>,
-    payload: &ShellScriptPayload,
-    stdin: Option<&str>,
-    timeout_secs: u64,
-    stop_requested: Option<&AtomicBool>,
-) -> ShellCommandResult {
-    run_script_with_profiles_and_execution_state_with_start_hook(
-        generation,
-        policy,
-        shell,
-        project_registry_dir,
-        cache,
-        cwd,
-        payload,
-        stdin,
-        timeout_secs,
-        stop_requested,
-        None,
-    )
-}
+impl ShellExecutionContext<'_> {
+    pub(crate) fn run_script(
+        &self,
+        payload: &ShellScriptPayload,
+        stdin: Option<&str>,
+        on_started: Option<&dyn Fn()>,
+    ) -> ShellCommandResult {
+        let ShellExecutionContext {
+            generation,
+            policy,
+            shell,
+            project_registry_dir,
+            cache,
+            cwd,
+            timeout_secs,
+            stop_requested,
+            ..
+        } = *self;
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_script_with_profiles_and_execution_state_with_start_hook(
-    generation: u64,
-    policy: &RunnerPolicy,
-    shell: &ShellConfig,
-    project_registry_dir: &Path,
-    cache: &PreparedShellProfileCache,
-    cwd: Option<&str>,
-    payload: &ShellScriptPayload,
-    stdin: Option<&str>,
-    timeout_secs: u64,
-    stop_requested: Option<&AtomicBool>,
-    on_started: Option<&dyn Fn()>,
-) -> ShellCommandResult {
-    // Typed script execution is consequential and receives the same Runner
-    // policy treatment as raw shell and structured native processes.
-    if !policy.allow_raw_shell {
-        return ShellCommandResult::not_started(CommandResult {
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-            duration_ms: Some(0),
-            error: Some("structured script execution is disabled by local Runner policy".into()),
-        });
-    }
-    let cwd_path = cwd
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
-    if let Err(error) = cwd_allowed(policy, &cwd_path) {
-        return ShellCommandResult::not_started(CommandResult {
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-            duration_ms: Some(0),
-            error: Some(error),
-        });
-    }
-    let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
-    let start = Instant::now();
-    let profile = match resolve_prepared_shell_profile(
-        generation,
-        shell,
-        project_registry_dir,
-        &cwd_path,
-        cwd.is_some(),
-        cache,
-        stop_requested,
-    ) {
-        Ok(profile) => profile,
-        Err(error) => {
+        // Typed script execution is consequential and receives the same Runner
+        // policy treatment as raw shell and structured native processes.
+        if !policy.allow_raw_shell {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(
+                    "structured script execution is disabled by local Runner policy".into(),
+                ),
+            });
+        }
+        let cwd_path = cwd
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        if let Err(error) = cwd_allowed(policy, &cwd_path) {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(error),
+            });
+        }
+        let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
+        let start = Instant::now();
+        let profile = match resolve_prepared_shell_profile(
+            generation,
+            shell,
+            project_registry_dir,
+            &cwd_path,
+            cwd.is_some(),
+            cache,
+            stop_requested,
+        ) {
+            Ok(profile) => profile,
+            Err(error) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(error),
+                })
+            }
+        };
+        // Resolve the semantic runtime plan before creating the payload file. Missing
+        // interpreters and unsupported TypeScript Node versions are therefore
+        // definite pre-start rejections with no user-script side effect. TypeScript
+        // performs only a bounded Runner-owned `node --version` capability probe;
+        // the user's script body is still spawned exactly once.
+        let runtime_plan = match configured_script_runtime_plan(
+            shell,
+            profile.as_deref(),
+            payload.language,
+            &cwd_path,
+            stop_requested,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(error),
+                })
+            }
+        };
+        let (temporary_path, original_path, absolute_path) = match create_temporary_script(payload)
+        {
+            Ok(temporary) => temporary,
+            Err(error) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(error),
+                })
+            }
+        };
+        let mut command = build_script_command(&runtime_plan, &absolute_path, &payload.args);
+        if let Err(error) = apply_script_environment(&mut command, shell, profile.as_deref()) {
             return ShellCommandResult::not_started(CommandResult {
                 exit_code: None,
                 stdout: None,
                 stderr: None,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
                 error: Some(error),
-            })
+            });
         }
-    };
-    // Resolve the semantic runtime plan before creating the payload file. Missing
-    // interpreters and unsupported TypeScript Node versions are therefore
-    // definite pre-start rejections with no user-script side effect. TypeScript
-    // performs only a bounded Runner-owned `node --version` capability probe;
-    // the user's script body is still spawned exactly once.
-    let runtime_plan = match configured_script_runtime_plan(
-        shell,
-        profile.as_deref(),
-        payload.language,
-        &cwd_path,
-        stop_requested,
-    ) {
-        Ok(plan) => plan,
-        Err(error) => {
-            return ShellCommandResult::not_started(CommandResult {
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-                error: Some(error),
-            })
-        }
-    };
-    let (temporary_path, original_path, absolute_path) = match create_temporary_script(payload) {
-        Ok(temporary) => temporary,
-        Err(error) => {
-            return ShellCommandResult::not_started(CommandResult {
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-                error: Some(error),
-            })
-        }
-    };
-    let mut command = build_script_command(&runtime_plan, &absolute_path, &payload.args);
-    if let Err(error) = apply_script_environment(&mut command, shell, profile.as_deref()) {
-        return ShellCommandResult::not_started(CommandResult {
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-            duration_ms: Some(start.elapsed().as_millis() as u64),
-            error: Some(error),
-        });
-    }
-    let mut result = execute_configured_command(
-        policy,
-        command,
-        &cwd_path,
-        stdin,
-        timeout_secs,
-        stop_requested,
-        start,
-        "failed to spawn script interpreter",
-        on_started,
-    );
-    redact_temporary_script_path(&mut result, &[original_path.as_path(), &absolute_path]);
-    if let Err(error) = temporary_path.close() {
-        // Cleanup is infrastructure after the child result is already known.
-        // Never rewrite completed/timed_out/outcome_unknown lifecycle truth.
-        tracing::warn!(
-            language = payload.language.as_str(),
-            error_kind = ?error.kind(),
-            "failed to remove Runner-owned temporary script file"
+        let mut result = execute_configured_command(
+            policy,
+            command,
+            &cwd_path,
+            stdin,
+            timeout_secs,
+            stop_requested,
+            start,
+            "failed to spawn script interpreter",
+            on_started,
         );
+        redact_temporary_script_path(&mut result, &[original_path.as_path(), &absolute_path]);
+        if let Err(error) = temporary_path.close() {
+            // Cleanup is infrastructure after the child result is already known.
+            // Never rewrite completed/timed_out/outcome_unknown lifecycle truth.
+            tracing::warn!(
+                language = payload.language.as_str(),
+                error_kind = ?error.kind(),
+                "failed to remove Runner-owned temporary script file"
+            );
+        }
+        result
     }
-    result
 }

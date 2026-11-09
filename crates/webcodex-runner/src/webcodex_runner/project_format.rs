@@ -5,6 +5,7 @@ use super::config::RunnerPolicy;
 use super::file_access::{directory_identity, file_identity, file_link_count, open_regular_file};
 use super::projects::find_project_shell_context_by_id;
 use super::shell::cwd_allowed;
+use crate::webcodex_runner::shell::ShellExecutionContext;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
@@ -550,18 +551,20 @@ pub(crate) fn format_candidates_with_deadline(
             args.push("--config-path".into());
             args.push(config_path.into());
         }
-        let result = super::shell::run_format_candidate(
+        let result = (ShellExecutionContext {
             generation,
             policy,
             shell,
-            registry,
+            project_registry_dir: registry,
             cache,
-            Some(cwd),
+            cwd: Some(cwd),
+            timeout_secs: remaining_secs,
+            stop_requested,
+        })
+        .run_format_candidate(
             exe,
             &args,
             Some(source),
-            remaining_secs,
-            stop_requested,
             &env_override_refs,
             &env_removals,
             Some(deadline),

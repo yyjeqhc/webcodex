@@ -2,6 +2,8 @@
 
 use super::lifecycle::process_running_activity;
 use super::*;
+use crate::webcodex_runner::runner_skills::run_skill_resource;
+use crate::webcodex_runner::shell::ShellExecutionContext;
 impl JobManager {
     pub(super) fn start_structured_job(&self, start: PendingJobStart) {
         let PendingJobStart {
@@ -71,6 +73,16 @@ impl JobManager {
             };
             let build_started = Instant::now();
             let mut build_artifacts = None;
+            let context = |cwd, timeout_secs| ShellExecutionContext {
+                generation,
+                policy: &policy,
+                shell: &shell,
+                project_registry_dir: &project_registry_dir,
+                cache: &manager.prepared_profiles,
+                cwd,
+                timeout_secs,
+                stop_requested: Some(stop_requested.as_ref()),
+            };
             let mut result = match &operation {
                 RunnerJobOperation::StartBuild(request)
                     if request.provenance.backend == "rust"
@@ -92,16 +104,8 @@ impl JobManager {
                 RunnerJobOperation::StartBuild(request)
                     if request.provenance.backend == "python" =>
                 {
-                    crate::webcodex_runner::shell::run_python_build_with_start_hook(
-                        generation,
-                        &policy,
-                        &shell,
-                        &project_registry_dir,
-                        &manager.prepared_profiles,
-                        request.cwd.as_deref(),
+                    context(request.cwd.as_deref(), request.timeout_secs).run_python_build(
                         &request.process.args,
-                        request.timeout_secs,
-                        Some(stop_requested.as_ref()),
                         Some(&on_started),
                         Some(&|| {
                             crate::webcodex_runner::project_build::fence(
@@ -125,18 +129,10 @@ impl JobManager {
                     } else {
                         &[]
                     };
-                    run_process_with_profiles_and_execution_state_with_internal_env_and_start_hook(
-                        generation,
-                        &policy,
-                        &shell,
-                        &project_registry_dir,
-                        &manager.prepared_profiles,
-                        request.cwd.as_deref(),
+                    context(request.cwd.as_deref(), request.timeout_secs).run_process(
                         &request.process.executable,
                         &request.process.args,
                         None,
-                        request.timeout_secs,
-                        Some(stop_requested.as_ref()),
                         env_overrides,
                         Some(&on_started),
                         Some(&|| {
@@ -149,53 +145,30 @@ impl JobManager {
                     )
                 }
                 RunnerJobOperation::StartProcess(request) => {
-                    run_process_with_profiles_and_execution_state_with_start_hook(
-                        generation,
-                        &policy,
-                        &shell,
-                        &project_registry_dir,
-                        &manager.prepared_profiles,
-                        request.cwd.as_deref(),
+                    context(request.cwd.as_deref(), request.timeout_secs).run_process(
                         &request.process.executable,
                         &request.process.args,
                         request.stdin.as_deref(),
-                        request.timeout_secs,
-                        Some(stop_requested.as_ref()),
+                        &[],
                         Some(&on_started),
+                        None,
                     )
                 }
                 RunnerJobOperation::StartScript(request) => {
-                    run_script_with_profiles_and_execution_state_with_start_hook(
-                        generation,
-                        &policy,
-                        &shell,
-                        &project_registry_dir,
-                        &manager.prepared_profiles,
-                        request.cwd.as_deref(),
+                    context(request.cwd.as_deref(), request.timeout_secs).run_script(
                         &request.script,
                         request.stdin.as_deref(),
-                        request.timeout_secs,
-                        Some(stop_requested.as_ref()),
                         Some(&on_started),
                     )
                 }
-                RunnerJobOperation::StartSkillResource(request) => {
-                    run_skill_resource_with_profiles_and_execution_state(
-                        generation,
-                        &skills,
-                        &client_id,
-                        &server_url,
-                        &policy,
-                        &shell,
-                        &project_registry_dir,
-                        &manager.prepared_profiles,
-                        request.cwd.as_deref(),
-                        &request.request,
-                        request.timeout_secs,
-                        Some(stop_requested.as_ref()),
-                        Some(&on_started),
-                    )
-                }
+                RunnerJobOperation::StartSkillResource(request) => run_skill_resource(
+                    &context(request.cwd.as_deref(), request.timeout_secs),
+                    &skills,
+                    &client_id,
+                    &server_url,
+                    &request.request,
+                    Some(&on_started),
+                ),
                 _ => unreachable!("structured Job starter received non structured operation"),
             };
             if let RunnerJobOperation::StartBuild(request) = &operation {

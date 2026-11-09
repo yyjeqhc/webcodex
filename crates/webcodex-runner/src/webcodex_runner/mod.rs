@@ -59,14 +59,14 @@ pub(crate) use artifacts::is_artifact_request_kind;
 pub(crate) use browser::handle_browser_operation;
 pub(crate) use computer::handle_computer_operation;
 #[cfg(test)]
-pub(crate) use config::SshConfig;
-#[cfg(test)]
 pub(crate) use config::{
     default_quic_alpn, default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs,
     default_websocket_connect_timeout_secs, QuicClientConfig, ShellProfileConfig,
     CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS,
 };
-pub(crate) use config::{HotRunnerConfig, ReloadableRunnerConfig, RunnerPolicy, ShellConfig};
+pub(crate) use config::{HotRunnerConfig, ReloadableRunnerConfig, RunnerPolicy};
+#[cfg(test)]
+pub(crate) use config::{ShellConfig, SshConfig};
 #[cfg(test)]
 pub(super) use dispatch::dispatch_request;
 #[cfg(test)]
@@ -94,21 +94,10 @@ pub(crate) use projects::{
     parse_runner_project_toml, runner_project_summary, validate_project_path_policy,
 };
 pub(crate) use runner_instructions::handle_runner_instruction_request;
-pub(crate) use runner_skills::{
-    handle_runner_skill_request, run_skill_resource_with_profiles_and_execution_state,
-};
-#[cfg(windows)]
-pub(crate) use shell::run_windows_native_search_with_profiles;
+pub(crate) use runner_skills::handle_runner_skill_request;
+pub(crate) use shell::explicit_shell_available;
 #[cfg(test)]
-pub(crate) use shell::{
-    cwd_allowed, run_shell, run_shell_with_profiles, PreparedShellProfileCache,
-};
-pub(crate) use shell::{
-    explicit_shell_available, run_internal_posix_script_with_profiles_and_execution_state,
-    run_internal_search_script_with_profiles_and_execution_state,
-    run_process_with_profiles_and_execution_state, run_script_with_profiles_and_execution_state,
-    run_shell_with_profiles_and_execution_state,
-};
+pub(crate) use shell::{cwd_allowed, run_shell, PreparedShellProfileCache};
 pub(crate) use ssh::run_ssh_shell_with_execution_state;
 pub(crate) use string_match::contains_any;
 #[cfg(all(test, unix))]

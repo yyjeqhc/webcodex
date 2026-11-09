@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use webcodex_core::project_build::{ProjectBuildArtifact, ProjectBuildScope, ProjectBuildTargets};
 use webcodex_core::runner_protocol::ShellCommandExecutionState;
 
+use crate::webcodex_runner::shell::ShellExecutionContext;
 struct SelectedPackages {
     ids: BTreeSet<String>,
 }
@@ -267,6 +268,16 @@ pub(crate) fn run_rust_build(
     let cwd = build.cwd.as_deref().expect("admitted build cwd");
     let deadline =
         started + Duration::from_secs(build.timeout_secs.min(policy.max_timeout_secs).max(1));
+    let context = ShellExecutionContext {
+        generation,
+        policy,
+        shell,
+        project_registry_dir: registry,
+        cache,
+        cwd: Some(cwd),
+        timeout_secs: policy.max_timeout_secs,
+        stop_requested: Some(stop),
+    };
     let fence = || super::fence(policy, registry, operation);
     let mut packages = None;
     let mut root = None;
@@ -290,9 +301,7 @@ pub(crate) fn run_rust_build(
             "--offline",
         ]
         .map(str::to_owned);
-        let mut metadata = crate::webcodex_runner::shell::run_rust_build_phase(
-            generation, policy, shell, registry, cache, cwd, &args, deadline, stop, None, &fence,
-        );
+        let mut metadata = context.run_rust_build_phase(&args, deadline, None, &fence);
         if metadata.execution_state != ShellCommandExecutionState::Completed
             || metadata.result.exit_code != Some(0)
             || metadata.result.error.is_some()
@@ -327,19 +336,8 @@ pub(crate) fn run_rust_build(
             }
         }
     }
-    let mut result = crate::webcodex_runner::shell::run_rust_build_phase(
-        generation,
-        policy,
-        shell,
-        registry,
-        cache,
-        cwd,
-        &build.process.args,
-        deadline,
-        stop,
-        Some(on_started),
-        &fence,
-    );
+    let mut result =
+        context.run_rust_build_phase(&build.process.args, deadline, Some(on_started), &fence);
     if result.execution_state != ShellCommandExecutionState::Completed
         || result.result.exit_code != Some(0)
         || result.result.error.is_some()

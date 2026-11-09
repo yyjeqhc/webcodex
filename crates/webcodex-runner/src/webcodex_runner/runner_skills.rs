@@ -1,16 +1,11 @@
 use super::config::SkillsConfig;
 use super::configured_skills;
 use super::output::{CommandResult, ShellCommandResult};
-#[cfg(windows)]
-use super::shell::prepare_detached_process_launch;
-use super::shell::{
-    run_process_with_profiles_and_execution_state_with_start_hook, PreparedShellProfileCache,
-};
 use super::skill_store::SkillStore;
-use super::{RunnerPolicy, ShellConfig};
+use super::RunnerPolicy;
+use crate::webcodex_runner::shell::ShellExecutionContext;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 use webcodex_core::runner_protocol::{
     PROCESS_ARGV_MAX_BYTES, PROCESS_ARG_MAX_BYTES, PROCESS_ARG_MAX_COUNT,
@@ -153,20 +148,12 @@ fn windows_skill_interpreter_path_available(path: &Path) -> bool {
     !configured_skills::metadata_is_link_like(&metadata)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_skill_resource_with_profiles_and_execution_state(
-    generation: u64,
+pub(crate) fn run_skill_resource(
+    context: &ShellExecutionContext<'_>,
     skills: &SkillsConfig,
     client_id: &str,
     server_url: &str,
-    policy: &RunnerPolicy,
-    shell: &ShellConfig,
-    project_registry_dir: &Path,
-    cache: &PreparedShellProfileCache,
-    cwd: Option<&str>,
     request: &RunnerSkillExecutionRequest,
-    timeout_secs: u64,
-    stop_requested: Option<&AtomicBool>,
     on_started: Option<&dyn Fn()>,
 ) -> ShellCommandResult {
     let prepared = match prepare_skill_resource_execution(skills, client_id, server_url, request) {
@@ -206,18 +193,7 @@ pub(crate) fn run_skill_resource_with_profiles_and_execution_state(
     for (index, (executable, args)) in candidates.into_iter().enumerate() {
         #[cfg(windows)]
         let executable = {
-            let resolved = match prepare_detached_process_launch(
-                generation,
-                policy,
-                shell,
-                project_registry_dir,
-                cache,
-                cwd,
-                &executable,
-                &args,
-                timeout_secs,
-                stop_requested,
-            ) {
+            let resolved = match context.prepare_detached_process_launch(&executable, &args) {
                 Ok(launch) => launch.process.executable,
                 Err(error)
                     if index != last
@@ -249,19 +225,13 @@ pub(crate) fn run_skill_resource_with_profiles_and_execution_state(
             }
             resolved
         };
-        let result = run_process_with_profiles_and_execution_state_with_start_hook(
-            generation,
-            policy,
-            shell,
-            project_registry_dir,
-            cache,
-            cwd,
+        let result = context.run_process(
             &executable,
             &args,
             Some(&prepared.script),
-            timeout_secs,
-            stop_requested,
+            &[],
             on_started,
+            None,
         );
         if index != last && interpreter_unavailable(&result) {
             continue;

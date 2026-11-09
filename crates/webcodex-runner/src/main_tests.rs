@@ -1,3 +1,4 @@
+use crate::webcodex_runner::shell::ShellExecutionContext;
 #[test]
 fn check_config_is_a_separate_non_runtime_action() {
     assert_eq!(
@@ -78,7 +79,7 @@ use crate::webcodex_runner::transport::registration::*;
 use crate::webcodex_runner::config::validate_shell_config;
 use crate::webcodex_runner::job_manager::job_manager_tests::{shell_job_request, ws_sink};
 use crate::webcodex_runner::projects::{project_root_fingerprint, RunnerProjectFile};
-use crate::webcodex_runner::run_shell_with_profiles;
+
 use crate::webcodex_runner::{
     handle_prepare_managed_worktree, handle_project_lifecycle_op, handle_project_op,
     handle_resolve_or_register_project,
@@ -415,18 +416,18 @@ fn run_profile_shell(
     command: &str,
 ) -> CommandResult {
     let cwd = cwd.to_string_lossy().to_string();
-    run_shell_with_profiles(
-        1,
+    (ShellExecutionContext {
+        generation: 1,
         policy,
         shell,
         project_registry_dir,
         cache,
-        Some(&cwd),
-        command,
-        None,
-        10,
-        None,
-    )
+        cwd: Some(&cwd),
+        timeout_secs: 10,
+        stop_requested: None,
+    })
+    .run_shell(command, None, false, None)
+    .result
 }
 
 fn line_edit_json(result: CommandResult) -> serde_json::Value {

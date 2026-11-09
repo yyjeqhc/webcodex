@@ -3,6 +3,7 @@
 use super::shell_worker::PreparedShellJob;
 use super::*;
 
+use crate::webcodex_runner::shell::ShellExecutionContext;
 impl JobManager {
     pub(super) fn start_interactive_process(&self, start: PendingJobStart) {
         let RunnerJobOperation::StartInteractiveProcess(request) = &start.operation else {
@@ -12,18 +13,17 @@ impl JobManager {
             if request.stdin.is_some() {
                 return Err("interactive_process_requires_job_write_input".into());
             }
-            let launch = prepare_detached_process_launch(
-                start.generation,
-                &start.policy,
-                &start.shell,
-                &start.project_registry_dir,
-                &self.prepared_profiles,
-                request.cwd.as_deref(),
-                &request.process.executable,
-                &request.process.args,
-                request.timeout_secs,
-                Some(self.shutting_down.as_ref()),
-            )?;
+            let launch = (ShellExecutionContext {
+                generation: start.generation,
+                policy: &start.policy,
+                shell: &start.shell,
+                project_registry_dir: &start.project_registry_dir,
+                cache: &self.prepared_profiles,
+                cwd: request.cwd.as_deref(),
+                timeout_secs: request.timeout_secs,
+                stop_requested: Some(self.shutting_down.as_ref()),
+            })
+            .prepare_detached_process_launch(&request.process.executable, &request.process.args)?;
             let mut command = super::super::shell::structured_process_command(
                 std::ffi::OsStr::new(&launch.process.executable),
                 &launch.process.args,

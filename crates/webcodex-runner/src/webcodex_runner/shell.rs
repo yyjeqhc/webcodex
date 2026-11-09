@@ -74,6 +74,21 @@ pub(crate) struct PreparedShellProfileCache {
     profiles: Arc<Mutex<HashMap<PreparedShellProfileKey, Arc<PreparedShellProfile>>>>,
 }
 
+/// Borrowed configuration and execution bounds for one Runner invocation.
+/// Constructed from the admitted request and its exact config generation; it
+/// neither owns a child process nor grants permission to start one.
+#[derive(Clone, Copy)]
+pub(crate) struct ShellExecutionContext<'a> {
+    pub(crate) generation: u64,
+    pub(crate) policy: &'a RunnerPolicy,
+    pub(crate) shell: &'a ShellConfig,
+    pub(crate) project_registry_dir: &'a Path,
+    pub(crate) cache: &'a PreparedShellProfileCache,
+    pub(crate) cwd: Option<&'a str>,
+    pub(crate) timeout_secs: u64,
+    pub(crate) stop_requested: Option<&'a AtomicBool>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedDetachedProcessLaunch {
     pub(crate) process: ShellProcessArgv,
@@ -116,8 +131,7 @@ mod internal;
 mod output;
 mod preparation;
 mod process;
-pub(crate) use process::run_python_build_with_start_hook;
-pub(crate) use process::run_rust_build_phase;
+
 mod process_tree;
 mod profiles;
 mod run;
@@ -150,20 +164,12 @@ pub(crate) use environment::{base_shell_env, env_keys_equal, is_sensitive_env_ke
 use execution::execute_configured_command;
 #[cfg(test)]
 use execution::spawned_output_failure;
-pub(crate) use internal::{
-    run_internal_posix_script_with_profiles_and_execution_state,
-    run_internal_search_script_with_profiles_and_execution_state,
-};
+
 #[cfg(test)]
 use output::IncrementalUtf8Validator;
 use output::{read_bounded_pipe_tail, BoundedPipeTail};
 use preparation::{run_prepare_command, stderr_tail};
-pub(crate) use process::{
-    prepare_detached_process_launch, run_format_candidate,
-    run_process_with_profiles_and_execution_state,
-    run_process_with_profiles_and_execution_state_with_internal_env_and_start_hook,
-    run_process_with_profiles_and_execution_state_with_start_hook,
-};
+
 use process_tree::{
     terminate_child_process_tree, terminate_child_process_tree_until,
     terminate_child_without_output, wait_child_until, with_cleanup_error,
@@ -175,9 +181,9 @@ pub(crate) use profiles::{
 };
 #[cfg(test)]
 use run::run_shell_impl;
-pub(crate) use run::run_shell_with_profiles_and_execution_state;
+
 #[cfg(test)]
-pub(crate) use run::{run_shell, run_shell_with_profiles};
+pub(crate) use run::run_shell;
 use scripts::configured_script_interpreter;
 #[cfg(test)]
 use scripts::{
@@ -185,18 +191,12 @@ use scripts::{
     fixed_script_prefix_args, parse_node_version, typescript_node_prefix_args,
     typescript_node_probe_error, NodeVersion, ScriptRuntimePlan,
 };
-pub(crate) use scripts::{
-    run_script_with_profiles_and_execution_state,
-    run_script_with_profiles_and_execution_state_with_start_hook,
-};
+
 #[cfg(windows)]
 #[cfg(test)]
 use search::native_search_spec;
 #[cfg(windows)]
 use search::resolve_windows_internal_posix_interpreter;
-#[cfg(windows)]
-pub(crate) use search::run_windows_native_search_with_profiles;
-
 #[cfg(test)]
 #[path = "shell_tests.rs"]
 mod runner_lifecycle_tests;

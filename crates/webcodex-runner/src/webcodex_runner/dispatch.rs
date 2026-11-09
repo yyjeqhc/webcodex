@@ -7,15 +7,13 @@ use super::{
     handle_browser_operation, handle_computer_operation, handle_prepare_managed_worktree_operation,
     handle_project_lifecycle_operation, handle_project_operation,
     handle_resolve_or_register_project_operation, handle_runner_instruction_request,
-    handle_runner_skill_request, run_internal_posix_script_with_profiles_and_execution_state,
-    run_internal_search_script_with_profiles_and_execution_state,
-    run_process_with_profiles_and_execution_state, run_script_with_profiles_and_execution_state,
-    run_shell_with_profiles_and_execution_state,
-    run_skill_resource_with_profiles_and_execution_state, run_ssh_shell_with_execution_state,
-    CommandResult, HotRunnerConfig, PersistentShellManager, ReloadableRunnerConfig, RunnerSink,
+    handle_runner_skill_request, run_ssh_shell_with_execution_state, CommandResult,
+    HotRunnerConfig, PersistentShellManager, ReloadableRunnerConfig, RunnerSink,
     ShellCommandResult, SubmitResultError,
 };
 use crate::webcodex_runner::file_dispatch::handle_file_operation_with_artifact_store;
+use crate::webcodex_runner::runner_skills::run_skill_resource;
+use crate::webcodex_runner::shell::ShellExecutionContext;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use webcodex_core::runner_operation::{
@@ -108,6 +106,16 @@ fn run_native_shell_or_internal_search(
     project_registry_dir: &Path,
     operation: &RunnerShellOperation,
 ) -> ShellCommandResult {
+    let context = ShellExecutionContext {
+        generation: config.generation,
+        policy: &config.policy,
+        shell: &config.shell,
+        project_registry_dir,
+        cache: jobs.prepared_profiles(),
+        cwd: operation.cwd.as_deref(),
+        timeout_secs: operation.timeout_secs,
+        stop_requested: Some(runtime.shutdown_flag()),
+    };
     if operation.command.lines().next() == Some(EXTERNAL_SEARCH_REQUEST_PREFIX) {
         let Some(script) = internal_search_script(&operation.command) else {
             return ShellCommandResult::not_started(invalid_command(
@@ -115,44 +123,16 @@ fn run_native_shell_or_internal_search(
             ));
         };
         #[cfg(windows)]
-        if let Some(result) = super::run_windows_native_search_with_profiles(
-            config.generation,
-            &config.policy,
-            &config.shell,
-            project_registry_dir,
-            jobs.prepared_profiles(),
-            operation.cwd.as_deref(),
-            operation.stdin.as_deref(),
-            operation.timeout_secs,
-            Some(runtime.shutdown_flag()),
-        ) {
+        if let Some(result) = context.run_windows_native_search(operation.stdin.as_deref()) {
             return result;
         }
-        return run_internal_search_script_with_profiles_and_execution_state(
-            config.generation,
-            &config.policy,
-            &config.shell,
-            project_registry_dir,
-            jobs.prepared_profiles(),
-            operation.cwd.as_deref(),
-            script,
-            operation.timeout_secs,
-            Some(runtime.shutdown_flag()),
-        );
+        return context.run_internal_search_script(script);
     }
-    run_shell_with_profiles_and_execution_state(
-        config.generation,
-        &config.policy,
-        &config.shell,
-        project_registry_dir,
-        jobs.prepared_profiles(),
-        operation.cwd.as_deref(),
+    context.run_shell(
         &operation.command,
         operation.shell,
         operation.login,
         operation.stdin.as_deref(),
-        operation.timeout_secs,
-        Some(runtime.shutdown_flag()),
     )
 }
 
@@ -498,19 +478,21 @@ pub(crate) fn dispatch_request_with_outcome(
                 .map(|_| true)
         }
         RunnerOperation::RunSkillResource(operation) => {
-            let result = run_skill_resource_with_profiles_and_execution_state(
-                config.generation,
+            let result = run_skill_resource(
+                &ShellExecutionContext {
+                    generation: config.generation,
+                    policy,
+                    shell,
+                    project_registry_dir,
+                    cache: jobs.prepared_profiles(),
+                    cwd: operation.cwd.as_deref(),
+                    timeout_secs: operation.timeout_secs,
+                    stop_requested: Some(runtime.shutdown_flag()),
+                },
                 &config.skills,
                 runtime.client_id(),
                 runtime.server_url(),
-                policy,
-                shell,
-                project_registry_dir,
-                jobs.prepared_profiles(),
-                operation.cwd.as_deref(),
                 &operation.request,
-                operation.timeout_secs,
-                Some(runtime.shutdown_flag()),
                 None,
             );
             sink.submit_shell_result_with_metadata(request_id, result, config, runtime)
@@ -522,50 +504,54 @@ pub(crate) fn dispatch_request_with_outcome(
                 .map(|_| true)
         }
         RunnerOperation::RunProcess(operation) => {
-            let result = run_process_with_profiles_and_execution_state(
-                config.generation,
+            let result = (ShellExecutionContext {
+                generation: config.generation,
                 policy,
                 shell,
                 project_registry_dir,
-                jobs.prepared_profiles(),
-                operation.cwd.as_deref(),
+                cache: jobs.prepared_profiles(),
+                cwd: operation.cwd.as_deref(),
+                timeout_secs: operation.timeout_secs,
+                stop_requested: Some(runtime.shutdown_flag()),
+            })
+            .run_process(
                 &operation.process.executable,
                 &operation.process.args,
                 operation.stdin.as_deref(),
-                operation.timeout_secs,
-                Some(runtime.shutdown_flag()),
+                &[],
+                None,
+                None,
             );
             sink.submit_shell_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }
         RunnerOperation::RunScript(operation) => {
-            let result = run_script_with_profiles_and_execution_state(
-                config.generation,
+            let result = (ShellExecutionContext {
+                generation: config.generation,
                 policy,
                 shell,
                 project_registry_dir,
-                jobs.prepared_profiles(),
-                operation.cwd.as_deref(),
-                &operation.script,
-                operation.stdin.as_deref(),
-                operation.timeout_secs,
-                Some(runtime.shutdown_flag()),
-            );
+                cache: jobs.prepared_profiles(),
+                cwd: operation.cwd.as_deref(),
+                timeout_secs: operation.timeout_secs,
+                stop_requested: Some(runtime.shutdown_flag()),
+            })
+            .run_script(&operation.script, operation.stdin.as_deref(), None);
             sink.submit_shell_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }
         RunnerOperation::RunInternalPosixScript(operation) => {
-            let result = run_internal_posix_script_with_profiles_and_execution_state(
-                config.generation,
+            let result = (ShellExecutionContext {
+                generation: config.generation,
                 policy,
                 shell,
                 project_registry_dir,
-                jobs.prepared_profiles(),
-                operation.cwd.as_deref(),
-                &operation.script.script,
-                operation.timeout_secs,
-                Some(runtime.shutdown_flag()),
-            );
+                cache: jobs.prepared_profiles(),
+                cwd: operation.cwd.as_deref(),
+                timeout_secs: operation.timeout_secs,
+                stop_requested: Some(runtime.shutdown_flag()),
+            })
+            .run_internal_posix_script(&operation.script.script);
             sink.submit_shell_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }

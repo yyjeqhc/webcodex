@@ -160,99 +160,105 @@ pub(super) fn native_search_spec(payload: &str) -> Option<NativeSearchSpec> {
 }
 
 #[cfg(windows)]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_windows_native_search_with_profiles(
-    generation: u64,
-    policy: &RunnerPolicy,
-    shell: &ShellConfig,
-    project_registry_dir: &Path,
-    cache: &PreparedShellProfileCache,
-    cwd: Option<&str>,
-    payload: Option<&str>,
-    timeout_secs: u64,
-    stop_requested: Option<&AtomicBool>,
-) -> Option<ShellCommandResult> {
-    use webcodex_core::project_search::PROJECT_TEXT_SEARCH_OUTPUT_BYTE_BUDGET;
-    const MARKER: &str =
-        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n";
-    // Native execution has the same policy gate as generated internal POSIX
-    // programs. Small transport budgets keep the existing fallback behavior.
-    if !policy.allow_raw_shell
-        || policy.max_output_bytes < MARKER.len() + PROJECT_TEXT_SEARCH_OUTPUT_BYTE_BUDGET + 4
-    {
-        return None;
-    }
-    let spec = native_search_spec(payload?)?;
-    let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
-    let cwd_path = cwd
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
-    if cwd_allowed(policy, &cwd_path).is_err() {
-        return None;
-    }
-    let canonical_cwd = canonicalize_existing(&cwd_path).ok()?;
-    let canonical_target = canonicalize_existing(&cwd_path.join(&spec.path)).ok()?;
-    if !(canonical_target.is_file() || canonical_target.is_dir())
-        || !webcodex_runner_config::paths::path_is_within(&canonical_target, &canonical_cwd)
-    {
-        return None;
-    }
+impl ShellExecutionContext<'_> {
+    pub(crate) fn run_windows_native_search(
+        &self,
+        payload: Option<&str>,
+    ) -> Option<ShellCommandResult> {
+        let ShellExecutionContext {
+            generation,
+            policy,
+            shell,
+            project_registry_dir,
+            cache,
+            cwd,
+            timeout_secs,
+            stop_requested,
+            ..
+        } = *self;
 
-    let profile = resolve_prepared_shell_profile(
-        generation,
-        shell,
-        project_registry_dir,
-        &cwd_path,
-        cwd.is_some(),
-        cache,
-        stop_requested,
-    )
-    .ok()?;
-    let path = configured_process_path(shell, profile.as_deref()).ok()?;
-    let resolved = crate::webcodex_runner::util::resolve_program_in_path("rg", &path)
-        .or_else(|| crate::webcodex_runner::util::resolve_program_in_path("rg.exe", &path))?;
-    let crate::webcodex_runner::util::ResolvedProgram::Native(program) = resolved else {
-        return None;
-    };
-
-    let mut command = Command::new(program);
-    command.args(&spec.args);
-    match profile.as_deref() {
-        Some(profile) => apply_env_snapshot(&mut command, &profile.env_snapshot),
-        None => {
-            if apply_shell_environment(&mut command, shell).is_err() {
-                return None;
-            }
-        }
-    }
-    let start = Instant::now();
-    let mut result = super::execution::execute_configured_command_with_prefix(
-        policy,
-        command,
-        &cwd_path,
-        None,
-        timeout_secs,
-        stop_requested,
-        start,
-        "failed to spawn native ripgrep search",
-        None,
-        Some(super::drains::StdoutPrefixLimit {
-            lines: spec.line_limit,
-            bytes: PROJECT_TEXT_SEARCH_OUTPUT_BYTE_BUDGET + 1,
-        }),
-    );
-    if result.execution_state == ShellCommandExecutionState::NotStarted {
-        return None;
-    }
-    if result.stdout_truncated {
-        return None;
-    }
-    if result.execution_state == ShellCommandExecutionState::Completed {
-        let stdout = result.result.stdout.take().unwrap_or_default();
-        if MARKER.len().saturating_add(stdout.len()) > policy.max_output_bytes {
+        use webcodex_core::project_search::PROJECT_TEXT_SEARCH_OUTPUT_BYTE_BUDGET;
+        const MARKER: &str =
+            "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n";
+        // Native execution has the same policy gate as generated internal POSIX
+        // programs. Small transport budgets keep the existing fallback behavior.
+        if !policy.allow_raw_shell
+            || policy.max_output_bytes < MARKER.len() + PROJECT_TEXT_SEARCH_OUTPUT_BYTE_BUDGET + 4
+        {
             return None;
         }
-        result.result.stdout = Some(format!("{MARKER}{stdout}"));
+        let spec = native_search_spec(payload?)?;
+        let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
+        let cwd_path = cwd
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        if cwd_allowed(policy, &cwd_path).is_err() {
+            return None;
+        }
+        let canonical_cwd = canonicalize_existing(&cwd_path).ok()?;
+        let canonical_target = canonicalize_existing(&cwd_path.join(&spec.path)).ok()?;
+        if !(canonical_target.is_file() || canonical_target.is_dir())
+            || !webcodex_runner_config::paths::path_is_within(&canonical_target, &canonical_cwd)
+        {
+            return None;
+        }
+
+        let profile = resolve_prepared_shell_profile(
+            generation,
+            shell,
+            project_registry_dir,
+            &cwd_path,
+            cwd.is_some(),
+            cache,
+            stop_requested,
+        )
+        .ok()?;
+        let path = configured_process_path(shell, profile.as_deref()).ok()?;
+        let resolved = crate::webcodex_runner::util::resolve_program_in_path("rg", &path)
+            .or_else(|| crate::webcodex_runner::util::resolve_program_in_path("rg.exe", &path))?;
+        let crate::webcodex_runner::util::ResolvedProgram::Native(program) = resolved else {
+            return None;
+        };
+
+        let mut command = Command::new(program);
+        command.args(&spec.args);
+        match profile.as_deref() {
+            Some(profile) => apply_env_snapshot(&mut command, &profile.env_snapshot),
+            None => {
+                if apply_shell_environment(&mut command, shell).is_err() {
+                    return None;
+                }
+            }
+        }
+        let start = Instant::now();
+        let mut result = super::execution::execute_configured_command_with_prefix(
+            policy,
+            command,
+            &cwd_path,
+            None,
+            timeout_secs,
+            stop_requested,
+            start,
+            "failed to spawn native ripgrep search",
+            None,
+            Some(super::drains::StdoutPrefixLimit {
+                lines: spec.line_limit,
+                bytes: PROJECT_TEXT_SEARCH_OUTPUT_BYTE_BUDGET + 1,
+            }),
+        );
+        if result.execution_state == ShellCommandExecutionState::NotStarted {
+            return None;
+        }
+        if result.stdout_truncated {
+            return None;
+        }
+        if result.execution_state == ShellCommandExecutionState::Completed {
+            let stdout = result.result.stdout.take().unwrap_or_default();
+            if MARKER.len().saturating_add(stdout.len()) > policy.max_output_bytes {
+                return None;
+            }
+            result.result.stdout = Some(format!("{MARKER}{stdout}"));
+        }
+        Some(result)
     }
-    Some(result)
 }

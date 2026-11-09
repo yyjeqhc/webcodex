@@ -34,6 +34,22 @@ fn windows_restored_program_acl_does_not_require_reassigning_existing_owner() {
     std::fs::write(&path, b"existing-owner-with-modify-only-acl").unwrap();
     let result = (|| {
         let account = crate::service::current_account().unwrap();
+        // On elevated GitHub-hosted Windows runners, even newly-created files
+        // may default to BUILTIN\\Administrators (S-1-5-32-544) rather than the
+        // invoking administrator's user SID. Establish the user-owned fixture
+        // explicitly before testing that reassigning its owner is unnecessary.
+        if crate::storage::windows_path_owner(&path).unwrap() != account.identity {
+            let status = Command::new("icacls.exe")
+                .arg(&path)
+                .arg("/setowner")
+                .arg(format!("*{}", account.identity))
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "cannot prepare current-user-owned ACL fixture"
+            );
+        }
         assert_eq!(
             crate::storage::windows_path_owner(&path).unwrap(),
             account.identity

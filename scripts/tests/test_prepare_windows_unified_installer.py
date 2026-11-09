@@ -246,6 +246,52 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
             self.assertEqual(depth, 0)
             self.assertNotIn("the previous environment was restored", script)
 
+    def test_unsigned_preview_ci_can_prepare_and_render_but_not_claim_release(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "candidate"
+            root.mkdir()
+            infos = self.fixture(root)
+            manifest_path = root / "source-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["local_preview"] = True
+            manifest["source_workflow_run_id"] = 0
+            manifest["source_workflow_ref"] = "webcodex/local-preview"
+            for item in manifest["artifacts"].values():
+                item["probe"] = "local-preview-host"
+            raw = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+            manifest_path.write_bytes(raw)
+            sums = nsis.parse_sums(root / "SHA256SUMS")
+            sums["source-manifest.json"] = hashlib.sha256(raw).hexdigest()
+            (root / "SHA256SUMS").write_text("".join(
+                f"{digest}  {name}\n" for name, digest in sorted(sums.items())
+            ), encoding="ascii")
+            ctx = {
+                "GITHUB_ACTIONS": "true",
+                "GITHUB_REPOSITORY": "yyjeqhc/webcodex",
+                "GITHUB_RUN_ID": "42559605539",
+                "GITHUB_WORKFLOW_REF": "yyjeqhc/webcodex/.github/workflows/windows-unified-preview.yml@refs/pull/1405/merge",
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_REF": "refs/pull/1405/merge",
+                "GITHUB_HEAD_REF": "fix/1394-windows-v043-upgrade",
+                "GITHUB_BASE_REF": "main",
+                "GITHUB_SHA": "a" * 40,
+                "EXPECTED_SHA": SOURCE,
+            }
+            inner = Path(temp) / "inner.exe"
+            inner.write_bytes(pe(0x8664))
+            with mock.patch.dict(os.environ, ctx, clear=True), mock.patch.object(
+                nsis.collector, "probe", side_effect=lambda path, name: infos[name]
+            ):
+                prepared = nsis.prepare(root, Path(temp) / "staged", "win32-x64", local_preview=True)
+                self.assertTrue(Path(prepared["config"]).is_file())
+                program = bootstrap.render(root, inner, Path(temp) / "outer.exe", "win32-x64", local_preview=True)
+                self.assertIn("LOCAL PREVIEW - NOT PUBLISHED", program)
+                with self.assertRaisesRegex(ValueError, "source manifest"):
+                    nsis.validate_candidate(root, "win32-x64", local_preview=False)
+                os.environ["GITHUB_WORKFLOW_REF"] = CI_CONTEXT["GITHUB_WORKFLOW_REF"]
+                with self.assertRaisesRegex(ValueError, "dedicated Preview workflow"):
+                    nsis.validate_candidate(root, "win32-x64", local_preview=True)
+
     def test_offline_preview_requires_explicit_markers_at_every_build_layer(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "candidate"

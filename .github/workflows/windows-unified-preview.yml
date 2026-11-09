@@ -93,8 +93,12 @@ jobs:
         run: |
           # The collector's other fixtures contain fake/non-executable PE bytes;
           # they are tested on Linux, not executed as Windows applications.
-          & py.exe -3.12 -m unittest scripts.tests.test_prepare_windows_unified_installer scripts.tests.test_collect_unified_installer_inputs.NativeManifestCollectorTests.test_local_preview_collector_never_invents_a_ci_run
+          & py.exe -3.12 -m unittest scripts.tests.test_prepare_windows_unified_installer scripts.tests.test_collect_unified_installer_inputs.NativeManifestCollectorTests.test_local_preview_collector_never_invents_a_ci_run scripts.tests.test_collect_unified_installer_inputs.NativeManifestCollectorTests.test_unsigned_preview_accepts_only_its_exact_ci_workflow_and_source
           if ($LASTEXITCODE -ne 0) { throw 'Windows Preview installer regressions failed' }
+          # Fail in seconds, before the expensive Desktop/CLI compilation,
+          # if GitHub Actions is not the dedicated unsigned Preview workflow.
+          & py.exe -3.12 -c "import os, sys; sys.path.insert(0, 'scripts'); from collect_unified_installer_inputs import validate_local_preview_context; validate_local_preview_context(os.environ['EXPECTED_SHA'])"
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Preview CI provenance guard failed before compilation' }
       - name: Build the exact-commit unsigned Unified Preview
         shell: pwsh
         run: |

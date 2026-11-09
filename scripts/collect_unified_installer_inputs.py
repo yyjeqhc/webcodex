@@ -107,6 +107,52 @@ def copy_file(source: Path, target: Path) -> None:
     if package.sha256_file(source) != package.sha256_file(target):
         raise CollectionError(f"copied native artifact digest mismatch: {source.name}")
 
+PREVIEW_WORKFLOW = "yyjeqhc/webcodex/.github/workflows/windows-unified-preview.yml"
+PREVIEW_PR_BRANCH = "fix/1394-windows-v043-upgrade"
+
+
+def validate_local_preview_context(source_sha: str) -> None:
+    """Allow unsigned Preview only off-CI or in its designated GitHub CI job.
+
+    A GitHub pull_request event's GITHUB_SHA is the synthetic merge commit,
+    not the explicitly checked-out PR head; EXPECTED_SHA binds that checkout.
+    These checks never turn an unsigned Preview into release provenance.
+    """
+    variables = ("GITHUB_RUN_ID", "GITHUB_WORKFLOW_REF", "GITHUB_SHA")
+    if all(os.environ.get(name) is None for name in variables):
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            raise CollectionError("Local Preview requires its complete GitHub CI context")
+        return
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    workflow_ref = os.environ.get("GITHUB_WORKFLOW_REF", "")
+    event = os.environ.get("GITHUB_EVENT_NAME", "")
+    git_ref = os.environ.get("GITHUB_REF", "")
+    ci_sha = os.environ.get("GITHUB_SHA", "")
+    expected_sha = os.environ.get("EXPECTED_SHA", "")
+    if (os.environ.get("GITHUB_ACTIONS") != "true"
+            or os.environ.get("GITHUB_REPOSITORY") != "yyjeqhc/webcodex"
+            or not run_id.isascii() or not run_id.isdigit() or int(run_id) <= 0
+            or not MAX_SOURCE_SHA.fullmatch(ci_sha)
+            or expected_sha != source_sha):
+        raise CollectionError("Local Preview requires its dedicated, source-bound GitHub workflow")
+    if event == "pull_request":
+        if (not re.fullmatch(r"refs/pull/[1-9][0-9]*/merge", git_ref)
+                or os.environ.get("GITHUB_HEAD_REF") != PREVIEW_PR_BRANCH
+                or os.environ.get("GITHUB_BASE_REF") != "main"):
+            raise CollectionError("Local Preview requires its designated same-repository PR")
+        # GitHub can resolve a PR workflow by either its merge ref or its
+        # same-repository head branch. Reject tags and other workflow refs.
+        allowed_refs = (git_ref, f"refs/heads/{PREVIEW_PR_BRANCH}")
+    elif event == "workflow_dispatch":
+        if git_ref != "refs/heads/main" or ci_sha != source_sha:
+            raise CollectionError("Manual Local Preview requires the default-branch source")
+        allowed_refs = (git_ref,)
+    else:
+        raise CollectionError("Local Preview cannot run under this GitHub event")
+    if workflow_ref not in {f"{PREVIEW_WORKFLOW}@{ref}" for ref in allowed_refs}:
+        raise CollectionError("Local Preview must use the dedicated Preview workflow, never release-build")
+
+
 def collect(args: argparse.Namespace) -> dict[str, Any]:
     if args.platform not in NATIVE_TARGETS:
         raise CollectionError(f"unsupported native platform: {args.platform}")
@@ -120,8 +166,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     if args.local_preview:
         if not args.platform.startswith("win32-") or args.workflow_run_id is not None or args.workflow_ref is not None:
             raise CollectionError("Local Preview is only for Windows and cannot claim a CI run")
-        if any(v is not None for v in (ci_run, ci_ref, ci_sha)):
-            raise CollectionError("Local Preview must not be collected inside a release CI context")
+        validate_local_preview_context(args.source_sha)
     else:
         if type(args.workflow_run_id) is not int or args.workflow_run_id <= 0:
             raise CollectionError("workflow run ID must be a positive CI run number")

@@ -1,7 +1,7 @@
 # Windows Unified Local Preview (#1394)
 
-This is a **locally built, unsigned, Windows x64 test installer**, not an official
-WebCodex release. It exists to validate the official v0.4.3 Desktop -> v0.5
+This is an **unsigned Windows x64 test installer** built locally or by the
+dedicated GitHub Actions Preview workflow, not an official WebCodex release. It exists to validate the official v0.4.3 Desktop -> v0.5
 migration **before** any v0.5.1 publication. Never present it as a published
 upgrade or use it without an independent recovery backup.
 
@@ -53,9 +53,13 @@ contains the unsigned installer, SHA-256 checksum, local source/provenance
 manifests and a testing warning. Artifacts expire after **14 days** and
 may require a GitHub sign-in to download. Check the workflow run's exact
 source SHA and verify the installer against its `.sha256` file before testing.
-GitHub building and hosting an unsigned Preview does **not** convert its local
-source fields into official GitHub Release provenance. The real-release
-path still requires a separate published, source-verified build and review.
+The dedicated CI job checks its repository, workflow/event identity and exact
+checked-out PR-head (or main-branch) source SHA **before compiling**. The
+manifest deliberately retains the local-preview markers, while the Artifact
+README records the actual GitHub run and checksum; it never borrows release
+provenance. GitHub hosting does **not** convert an unsigned Preview into an
+official published upgrade. The real-release path still requires a separately
+published, source-verified build and review.
 
 ## Security boundary
 

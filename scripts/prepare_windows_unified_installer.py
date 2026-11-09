@@ -89,8 +89,7 @@ def validate_candidate(candidate_dir: Path, platform: str, *, local_preview: boo
     if local_preview:
         if manifest.get("local_preview") is not True or manifest.get("source_workflow_run_id") != 0 or workflow_ref != "webcodex/local-preview":
             raise ValueError("Windows Local Preview manifest must declare honest offline provenance")
-        if any(os.environ.get(name) is not None for name in ("GITHUB_RUN_ID", "GITHUB_WORKFLOW_REF", "GITHUB_SHA")):
-            raise ValueError("Windows Local Preview cannot run as a release CI candidate")
+        collector.validate_local_preview_context(manifest["source_sha"])
     else:
         if type(manifest.get("source_workflow_run_id")) is not int or manifest["source_workflow_run_id"] <= 0:
             raise ValueError("Windows source manifest CI run id is invalid")

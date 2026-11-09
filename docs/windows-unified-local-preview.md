@@ -5,12 +5,12 @@ WebCodex release. It exists to validate the official v0.4.3 Desktop -> v0.5
 migration **before** any v0.5.1 publication. Never present it as a published
 upgrade or use it without an independent recovery backup.
 
-## Build on MSI (no CI required)
+## Build on Windows x64 (no CI required)
 
 Requirements: Windows x64, Rust/Cargo, Node.js 22, Python 3.12 (py -3.12),
 NSIS 3.13 (makensis.exe), 7-Zip (7z.exe, including Chocolatey's bundled
 copy), and a **clean committed** WebCodex checkout.
-From E:\git\webcodex on fix/1394-windows-v043-upgrade:
+From the repository root on fix/1394-windows-v043-upgrade:
 
     .\scripts\build_windows_unified_preview.ps1
 
@@ -60,18 +60,19 @@ trusted machine. Do not distribute Preview builds as official releases.
    backup API); preserve the installed program directory, Desktop state, Runner
    config/registries, Project IDs and Tunnel credentials. Verify recovery.
 3. Record Runner client_id, registered Project IDs, Tunnel profile IDs, Server
-   history row counts, and installed binary hashes. On MSI a non-secret baseline
-   is already stored under target\issue1394-validation\baseline.
+   history row counts, and installed binary hashes. Save a sanitized baseline
+   outside the installation directory before beginning the upgrade.
 4. Close the v0.4.3 Desktop and stop its Server/Runner/Tunnel processes. Do not
-   stop unrelated instances. On MSI the separate Windows app shares the old
-   Desktop Runner identity msi-80028ec57388455c, so its connection may drop.
-   The independent client_id=msi Runner can provide a control channel.
+   stop unrelated instances. If another tool client shares the Desktop Runner
+   identity, its connection will drop during the upgrade. Use an independent
+   Runner or other out-of-band control channel for recovery.
 5. Launch the LOCAL PREVIEW .exe, acknowledge its explicit warning, and check
    that it selects the existing install directory. Do not use silent install
    mode for the first acceptance test.
 6. Reopen Desktop using its **saved** runtime; do not enroll new identities.
-   Reconnect the original Runner, complete the Environment import and compare
-   Client/Project/Tunnel IDs, credentials and history. Restart and check again.
+   Reconnect the original Runner and, if offered, complete the Environment import.
+   Compare Client/Project/Tunnel IDs, credentials and history before and after a
+   restart, and confirm that the Server reports the original Runner as online.
 7. On failure, retain windows-package-upgrade.json,
    windows-package-prepared.json and upgrade-backups/ intact. Binary rollback
    does not automatically reverse Desktop data imports or recover live Jobs.

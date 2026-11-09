@@ -1545,129 +1545,58 @@ fn parse_ops_subcommand(args: &[String]) -> CliAction {
             stdout: ops_usage().to_string(),
             stderr: String::new(),
         },
-        "status" => {
-            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
-                return CliAction::Exit {
-                    code: 0,
-                    stdout: ops_status_usage().to_string(),
-                    stderr: String::new(),
-                };
-            }
-            match parse_ops_common(&args[1..], "status") {
-                Ok(opts) => CliAction::Ops(OpsCommand::Status(opts)),
-                Err(e) => CliAction::Exit {
-                    code: 2,
-                    stdout: String::new(),
-                    stderr: format!("{}\n", e),
-                },
-            }
-        }
-        "runners" => {
-            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
-                return CliAction::Exit {
-                    code: 0,
-                    stdout: ops_runners_usage().to_string(),
-                    stderr: String::new(),
-                };
-            }
-            match parse_ops_common(&args[1..], "runners") {
-                Ok(opts) => CliAction::Ops(OpsCommand::Runners(opts)),
-                Err(e) => CliAction::Exit {
-                    code: 2,
-                    stdout: String::new(),
-                    stderr: format!("{}\n", e),
-                },
-            }
-        }
-        "runner" => {
-            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
-                return CliAction::Exit {
-                    code: 0,
-                    stdout: ops_runner_usage().to_string(),
-                    stderr: String::new(),
-                };
-            }
-            match parse_ops_runner(&args[1..]) {
-                Ok(opts) => CliAction::Ops(OpsCommand::Runner(opts)),
-                Err(e) => CliAction::Exit {
-                    code: 2,
-                    stdout: String::new(),
-                    stderr: format!("{}\n", e),
-                },
-            }
-        }
-        "projects" => {
-            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
-                return CliAction::Exit {
-                    code: 0,
-                    stdout: ops_projects_usage().to_string(),
-                    stderr: String::new(),
-                };
-            }
-            match parse_ops_common(&args[1..], "projects") {
-                Ok(opts) => CliAction::Ops(OpsCommand::Projects(opts)),
-                Err(e) => CliAction::Exit {
-                    code: 2,
-                    stdout: String::new(),
-                    stderr: format!("{}\n", e),
-                },
-            }
-        }
-        "windows" => {
-            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
-                return CliAction::Exit {
-                    code: 0,
-                    stdout: ops_windows_usage().to_string(),
-                    stderr: String::new(),
-                };
-            }
-            match parse_ops_windows(&args[1..]) {
-                Ok(opts) => CliAction::Ops(OpsCommand::Windows(opts)),
-                Err(e) => CliAction::Exit {
-                    code: 2,
-                    stdout: String::new(),
-                    stderr: format!("{}\n", e),
-                },
-            }
-        }
+        "status" => parse_ops_action(&args[1..], ops_status_usage(), |args| {
+            parse_ops_common(args, "status").map(OpsCommand::Status)
+        }),
+        "runners" => parse_ops_action(&args[1..], ops_runners_usage(), |args| {
+            parse_ops_common(args, "runners").map(OpsCommand::Runners)
+        }),
+        "runner" => parse_ops_action(&args[1..], ops_runner_usage(), |args| {
+            parse_ops_runner(args).map(OpsCommand::Runner)
+        }),
+        "projects" => parse_ops_action(&args[1..], ops_projects_usage(), |args| {
+            parse_ops_common(args, "projects").map(OpsCommand::Projects)
+        }),
+        "windows" => parse_ops_action(&args[1..], ops_windows_usage(), |args| {
+            parse_ops_windows(args).map(OpsCommand::Windows)
+        }),
         "diagnose-provider" => {
-            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
-                return CliAction::Exit {
-                    code: 0,
-                    stdout: ops_diagnose_provider_usage().to_string(),
-                    stderr: String::new(),
-                };
-            }
-            match parse_ops_diagnose_provider(&args[1..]) {
-                Ok(opts) => CliAction::Ops(OpsCommand::DiagnoseProvider(opts)),
-                Err(e) => CliAction::Exit {
-                    code: 2,
-                    stdout: String::new(),
-                    stderr: format!("{}\n", e),
-                },
-            }
+            parse_ops_action(&args[1..], ops_diagnose_provider_usage(), |args| {
+                parse_ops_diagnose_provider(args).map(OpsCommand::DiagnoseProvider)
+            })
         }
-        "smoke-preflight" => {
-            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
-                return CliAction::Exit {
-                    code: 0,
-                    stdout: ops_smoke_preflight_usage().to_string(),
-                    stderr: String::new(),
-                };
-            }
-            match parse_ops_smoke_preflight(&args[1..]) {
-                Ok(opts) => CliAction::Ops(OpsCommand::SmokePreflight(opts)),
-                Err(e) => CliAction::Exit {
-                    code: 2,
-                    stdout: String::new(),
-                    stderr: format!("{}\n", e),
-                },
-            }
-        }
+        "smoke-preflight" => parse_ops_action(&args[1..], ops_smoke_preflight_usage(), |args| {
+            parse_ops_smoke_preflight(args).map(OpsCommand::SmokePreflight)
+        }),
         other => CliAction::Exit {
             code: 2,
             stdout: String::new(),
             stderr: format!("unknown ops subcommand: {}\n", other),
+        },
+    }
+}
+
+fn parse_ops_action(
+    args: &[String],
+    usage: &str,
+    parse: impl FnOnce(&[String]) -> Result<OpsCommand, String>,
+) -> CliAction {
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
+        return CliAction::Exit {
+            code: 0,
+            stdout: usage.to_string(),
+            stderr: String::new(),
+        };
+    }
+    match parse(args) {
+        Ok(command) => CliAction::Ops(command),
+        Err(error) => CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("{error}\n"),
         },
     }
 }
@@ -1688,22 +1617,33 @@ fn parse_ops_common(args: &[String], command: &str) -> Result<OpsCommonOptions, 
     let mut opts = default_ops_common_options();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--server-url" => opts.server_url = next_value(&mut iter, arg)?,
-            "--proxy" => opts.server_http.proxy = Some(next_value(&mut iter, arg)?),
-            "--no-system-proxy" => opts.server_http.no_system_proxy = true,
-            "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token" => opts.token = Some(next_value(&mut iter, arg)?),
-            "--json" => opts.json = true,
-            "--strict" => opts.strict = true,
-            other => return Err(format!("unknown ops {} flag: {}", command, other)),
-        }
+        parse_ops_common_flag(&mut opts, command, arg, &mut iter)?;
     }
-    validate_ops_common(&opts)
+    validate_ops_common(&opts)?;
+    Ok(opts)
 }
 
-fn validate_ops_common(opts: &OpsCommonOptions) -> Result<OpsCommonOptions, String> {
+fn parse_ops_common_flag<'a>(
+    opts: &mut OpsCommonOptions,
+    command: &str,
+    arg: &str,
+    iter: &mut impl Iterator<Item = &'a String>,
+) -> Result<(), String> {
+    match arg {
+        "--server-url" => opts.server_url = next_value(iter, arg)?,
+        "--proxy" => opts.server_http.proxy = Some(next_value(iter, arg)?),
+        "--no-system-proxy" => opts.server_http.no_system_proxy = true,
+        "--env-file" => opts.env_file = Some(PathBuf::from(next_value(iter, arg)?)),
+        "--token-file" => opts.token_file = Some(PathBuf::from(next_value(iter, arg)?)),
+        "--token" => opts.token = Some(next_value(iter, arg)?),
+        "--json" => opts.json = true,
+        "--strict" => opts.strict = true,
+        other => return Err(format!("unknown ops {} flag: {}", command, other)),
+    }
+    Ok(())
+}
+
+fn validate_ops_common(opts: &OpsCommonOptions) -> Result<(), String> {
     opts.server_http.validate()?;
     if opts.server_url.trim().is_empty() {
         return Err("--server-url cannot be empty".to_string());
@@ -1715,7 +1655,7 @@ fn validate_ops_common(opts: &OpsCommonOptions) -> Result<OpsCommonOptions, Stri
     {
         return Err("--token cannot be empty".to_string());
     }
-    Ok(opts.clone())
+    Ok(())
 }
 
 fn parse_ops_runner(args: &[String]) -> Result<OpsRunnerOptions, String> {
@@ -1731,18 +1671,10 @@ fn parse_ops_runner(args: &[String]) -> Result<OpsRunnerOptions, String> {
                     .parse::<u64>()
                     .map_err(|_| "--request-timeout-ms must be an integer".to_string())?;
             }
-            "--server-url" => common.server_url = next_value(&mut iter, arg)?,
-            "--proxy" => common.server_http.proxy = Some(next_value(&mut iter, arg)?),
-            "--no-system-proxy" => common.server_http.no_system_proxy = true,
-            "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token-file" => common.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token" => common.token = Some(next_value(&mut iter, arg)?),
-            "--json" => common.json = true,
-            "--strict" => common.strict = true,
-            other => return Err(format!("unknown ops runner flag: {}", other)),
+            other => parse_ops_common_flag(&mut common, "runner", other, &mut iter)?,
         }
     }
-    common = validate_ops_common(&common)?;
+    validate_ops_common(&common)?;
     let client_id = client_id.trim().to_string();
     if client_id.is_empty() {
         return Err("--client-id is required".to_string());
@@ -1773,18 +1705,10 @@ fn parse_ops_windows(args: &[String]) -> Result<OpsWindowsOptions, String> {
                     .parse::<usize>()
                     .map_err(|_| "--limit must be an integer".to_string())?;
             }
-            "--server-url" => common.server_url = next_value(&mut iter, arg)?,
-            "--proxy" => common.server_http.proxy = Some(next_value(&mut iter, arg)?),
-            "--no-system-proxy" => common.server_http.no_system_proxy = true,
-            "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token-file" => common.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token" => common.token = Some(next_value(&mut iter, arg)?),
-            "--json" => common.json = true,
-            "--strict" => common.strict = true,
-            other => return Err(format!("unknown ops windows flag: {}", other)),
+            other => parse_ops_common_flag(&mut common, "windows", other, &mut iter)?,
         }
     }
-    common = validate_ops_common(&common)?;
+    validate_ops_common(&common)?;
     let project = project.trim().to_string();
     if project.is_empty() {
         return Err("--project is required".to_string());
@@ -1810,18 +1734,10 @@ fn parse_ops_diagnose_provider(args: &[String]) -> Result<OpsDiagnoseProviderOpt
             "--project" => project = next_value(&mut iter, arg)?,
             "--provider" => provider = next_value(&mut iter, arg)?,
             "--include-live-acp" => include_live_acp = true,
-            "--server-url" => common.server_url = next_value(&mut iter, arg)?,
-            "--proxy" => common.server_http.proxy = Some(next_value(&mut iter, arg)?),
-            "--no-system-proxy" => common.server_http.no_system_proxy = true,
-            "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token-file" => common.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token" => common.token = Some(next_value(&mut iter, arg)?),
-            "--json" => common.json = true,
-            "--strict" => common.strict = true,
-            other => return Err(format!("unknown ops diagnose-provider flag: {other}")),
+            other => parse_ops_common_flag(&mut common, "diagnose-provider", other, &mut iter)?,
         }
     }
-    common = validate_ops_common(&common)?;
+    validate_ops_common(&common)?;
     let project = project.trim().to_string();
     if project.is_empty() {
         return Err("--project is required".to_string());
@@ -1845,18 +1761,10 @@ fn parse_ops_smoke_preflight(args: &[String]) -> Result<OpsSmokePreflightOptions
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--project" => project = next_value(&mut iter, arg)?,
-            "--server-url" => common.server_url = next_value(&mut iter, arg)?,
-            "--proxy" => common.server_http.proxy = Some(next_value(&mut iter, arg)?),
-            "--no-system-proxy" => common.server_http.no_system_proxy = true,
-            "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token-file" => common.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token" => common.token = Some(next_value(&mut iter, arg)?),
-            "--json" => common.json = true,
-            "--strict" => common.strict = true,
-            other => return Err(format!("unknown ops smoke-preflight flag: {}", other)),
+            other => parse_ops_common_flag(&mut common, "smoke-preflight", other, &mut iter)?,
         }
     }
-    common = validate_ops_common(&common)?;
+    validate_ops_common(&common)?;
     if project.trim().is_empty() {
         return Err("--project is required".to_string());
     }

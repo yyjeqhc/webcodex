@@ -1,276 +1,510 @@
 use super::*;
 
+fn assert_description_phrases(
+    context: &str,
+    description: &str,
+    required: &[&str],
+    forbidden: &[&str],
+) {
+    let description = description.to_lowercase();
+    for phrase in required {
+        assert!(
+            description.contains(phrase),
+            "{context}: missing required phrase {phrase:?} in {description:?}"
+        );
+    }
+    for phrase in forbidden {
+        assert!(
+            !description.contains(phrase),
+            "{context}: forbidden phrase {phrase:?} in {description:?}"
+        );
+    }
+}
+
+fn assert_tool_descriptions(specs: &[ToolSpec], cases: &[(&[&str], &[&str], &[&str])]) {
+    for &(names, required, forbidden) in cases {
+        for name in names {
+            assert_description_phrases(
+                name,
+                &spec_named(specs, name).description,
+                required,
+                forbidden,
+            );
+        }
+    }
+}
+
 #[test]
 fn tool_specs_describe_default_coding_loop_preferences() {
     let specs = registered_tool_specs();
     let specialists = exact_manifest_specialist_tool_specs();
 
-    let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
-    let specialist_desc = |name: &str| spec_named(&specialists, name).description.to_lowercase();
-
-    // Keep one small safety-copy check at the authority source. Surface tests
+    // Keep safety-copy expectations at the authority source. Surface tests
     // verify they reuse this contract instead of freezing another prose version.
-    let work_on_project_desc = desc("work_on_project");
-    for semantic in [
-        "session_id",
-        "reauthorizes",
-        "must match",
-        "project authority",
-        "uncertainty",
-        "never replay effects",
-    ] {
-        assert!(work_on_project_desc.contains(semantic), "{semantic}");
-    }
-
-    let read_files_desc = desc("read_files");
-    for phrase in [
-        "batch/snapshot-aware project inspect",
-        "read_revision",
-        "snapshot-bound continuation",
-        "protected-path policy",
-        "range normalization",
-        "target symbol/test/implementation region is known",
-        "bounded targeted ranges",
-        "batch related ranges already known to be needed",
-        "do not read an entire large file merely because the budget permits it",
-        "small known one-off observation",
-        "without downstream snapshot dependency",
-        "native file commands",
-        "no fake continuation",
-        "512 kib",
-        "exact resolved project",
-        "business session_id",
-        "continued ranges are fenced",
-        "runtime rejects a continuation",
-    ] {
-        assert!(
-            read_files_desc.contains(phrase),
-            "read_files description should mention {phrase}: {read_files_desc}"
-        );
-    }
-
-    let batch_search_desc = desc("search_project_texts");
-    for obsolete in [
-        "adaptive runtime preferred batch-capable inspect tool",
-        "including when only one known range is needed",
-    ] {
-        assert!(
-            !read_files_desc.contains(obsolete),
-            "obsolete read ritual: {read_files_desc}"
-        );
-    }
-
-    for phrase in [
-        "batch-capable project-text search",
-        "bounded structured results",
-        "protected-path policy",
-        "isolated failures",
-        "broad discovery",
-        "files_with_matches/count",
-        "matched source will be read immediately",
-        "search_file_context",
-        "small known-scope search",
-        "native rg is first-class",
-        "batch only independent queries",
-        "result-dependent follow-ups sequential",
-        "pattern_mode=literal",
-        "returned suggested_call",
-        "whole-query continuation",
-        "truncated individual queries must be narrowed",
-    ] {
-        assert!(
-            batch_search_desc.contains(phrase),
-            "search_project_texts description should mention {phrase}: {batch_search_desc}"
-        );
-    }
-    for obsolete in [
-        "adaptive runtime preferred batch-capable project-text search",
-        "including when only one query is needed",
-    ] {
-        assert!(
-            !batch_search_desc.contains(obsolete),
-            "obsolete search ritual returned: {batch_search_desc}"
-        );
-    }
-
-    let search_and_read_desc = desc("search_file_context");
-    for phrase in [
-        "1..8 predetermined independent project-text queries",
-        "provide queries",
-        "max_reads is one global read budget",
-        "shared fairly across the batch",
-        "preserving per-query batch failures",
-        "batch only independent queries",
-        "result-dependent follow-ups sequential",
-    ] {
-        assert!(
-            search_and_read_desc.contains(phrase),
-            "search_file_context description should mention {phrase}: {search_and_read_desc}"
-        );
-    }
-    assert!(
-        !search_and_read_desc.contains("run one bounded project-text search"),
-        "obsolete single-query search_file_context description returned: {search_and_read_desc}"
+    // Rows contain tool names, required phrases, and forbidden phrases.
+    assert_tool_descriptions(
+        &specs,
+        &[
+            (
+                &["work_on_project"],
+                &[
+                    "session_id",
+                    "reauthorizes",
+                    "must match",
+                    "project authority",
+                    "uncertainty",
+                    "never replay effects",
+                ],
+                &[],
+            ),
+            (
+                &["read_files"],
+                &[
+                    "batch/snapshot-aware project inspect",
+                    "read_revision",
+                    "snapshot-bound continuation",
+                    "protected-path policy",
+                    "range normalization",
+                    "target symbol/test/implementation region is known",
+                    "bounded targeted ranges",
+                    "batch related ranges already known to be needed",
+                    "do not read an entire large file merely because the budget permits it",
+                    "small known one-off observation",
+                    "without downstream snapshot dependency",
+                    "native file commands",
+                    "no fake continuation",
+                    "512 kib",
+                    "exact resolved project",
+                    "business session_id",
+                    "continued ranges are fenced",
+                    "runtime rejects a continuation",
+                ],
+                &[
+                    "adaptive runtime preferred batch-capable inspect tool",
+                    "including when only one known range is needed",
+                ],
+            ),
+            (
+                &["search_project_texts"],
+                &[
+                    "batch-capable project-text search",
+                    "bounded structured results",
+                    "protected-path policy",
+                    "isolated failures",
+                    "broad discovery",
+                    "files_with_matches/count",
+                    "matched source will be read immediately",
+                    "search_file_context",
+                    "small known-scope search",
+                    "native rg is first-class",
+                    "batch only independent queries",
+                    "result-dependent follow-ups sequential",
+                    "pattern_mode=literal",
+                    "returned suggested_call",
+                    "whole-query continuation",
+                    "truncated individual queries must be narrowed",
+                ],
+                &[
+                    "adaptive runtime preferred batch-capable project-text search",
+                    "including when only one query is needed",
+                ],
+            ),
+            (
+                &["search_file_context"],
+                &[
+                    "1..8 predetermined independent project-text queries",
+                    "provide queries",
+                    "max_reads is one global read budget",
+                    "shared fairly across the batch",
+                    "preserving per-query batch failures",
+                    "batch only independent queries",
+                    "result-dependent follow-ups sequential",
+                ],
+                &["run one bounded project-text search"],
+            ),
+            (
+                &["save_project_artifact"],
+                &[
+                    "already holds the bounded binary/base64 content",
+                    "do not read a current chatgpt/host attachment",
+                    "import_host_files",
+                ],
+                &[],
+            ),
+            (
+                &["import_host_files"],
+                &[
+                    "preferred host-native attachment-to-project transfer path",
+                    "do not base64-transfer files",
+                    "active authenticated oauth client",
+                    "openai file hosts",
+                    "arbitrary public https",
+                    "up to 256 mib per file",
+                    "batch is not atomic",
+                    "partial_success=true",
+                ],
+                &[],
+            ),
+            (
+                &["transfer_project_artifact"],
+                &[
+                    "source project:read",
+                    "destination project:write",
+                    "independently resolved and authorized",
+                    "exact source bytes/sha-256/mime snapshot",
+                    "do not pass through host attachments or model text",
+                ],
+                &[],
+            ),
+            (
+                &["inspect_project_artifact"],
+                &[
+                    "metadata=facts",
+                    "inspect=fenced segment",
+                    "image=mcp image",
+                    "export=mcp resourcelink",
+                    "not repeated inspect calls",
+                    "import_host_files",
+                ],
+                &[],
+            ),
+            (
+                &["read_project_artifact_chunk"],
+                &[
+                    "bounded chunk inspection api",
+                    "parser-ready suggested_call",
+                    "expected_sha256",
+                    "snapshot_changed",
+                    "do not manually translate",
+                    "do not loop over base64 chunks",
+                    "inspect_project_artifact(action=export)",
+                ],
+                &[],
+            ),
+            (
+                &["begin_artifact_upload"],
+                &[
+                    "low-level chunked binary artifact upload",
+                    "not the preferred path for a current chatgpt/host attachment",
+                    "import_host_files",
+                ],
+                &[],
+            ),
+            (
+                &["read_git_log"],
+                &["next_skip", "parser-ready", "10000 skip bound"],
+                &[],
+            ),
+            (
+                &["list_project_files"],
+                &[
+                    "live project directory",
+                    "next_call",
+                    "offsets are not snapshots",
+                    "older runners",
+                    "fail closed",
+                ],
+                &[],
+            ),
+            (
+                &["list_project_tracked_files"],
+                &[
+                    "bounded producer source",
+                    "source acquisition is complete",
+                    "list_truncated=true",
+                    "next_offset is null",
+                    "narrow path",
+                    "retained-tail source truncation fails closed",
+                ],
+                &[],
+            ),
+            (
+                &["read_workspace_changes"],
+                &[
+                    "workspace summary",
+                    "staged/unstaged/untracked",
+                    "without a patch by default",
+                    "not a complete staged patch",
+                    "ordinary code review uses review_changes",
+                ],
+                &["default inspect/review tool before final response"],
+            ),
+            (
+                &["read_git_review_summary"],
+                &[
+                    "exact committed git range",
+                    "without returning patch bodies",
+                    "incomplete coverage",
+                    "ordinary review uses review_changes",
+                    "read-only",
+                ],
+                &[],
+            ),
+            (
+                &["read_git_diff_hunks"],
+                &[
+                    "bounded git diff hunks",
+                    "cached=true selects staged changes",
+                    "omission selects unstaged changes",
+                    "base_commit+head_commit",
+                    "use review_changes",
+                    "source fences",
+                    "bounded page/hunk continuation",
+                    "safe recovery",
+                ],
+                &[],
+            ),
+            (
+                &["edit_project_files"],
+                &[
+                    "project editor",
+                    "read_files",
+                    "expected_read_revision",
+                    "exact edits fail closed on ambiguity",
+                    "replace_range",
+                    "from that snapshot",
+                    "preflight transactionally",
+                    "runner rechecks source",
+                    "stale state returns read_files recovery",
+                    "outcome_unknown",
+                ],
+                &[
+                    "canonical default guarded edit path",
+                    "expected_sha256",
+                    "prefer apply_patch",
+                ],
+            ),
+            (
+                &["cargo_check", "cargo_test"],
+                &[
+                    "structured",
+                    "common supported",
+                    "validation identity",
+                    "same execution job handoff",
+                ],
+                &["preferred structured", "run_shell"],
+            ),
+            (
+                &["cargo_test"],
+                &[
+                    "executed-test evidence",
+                    "min_tests/require_tests",
+                    "bounded output",
+                ],
+                &[],
+            ),
+            (
+                &["go_test"],
+                &[
+                    "structured option for common supported",
+                    "go json test-count evidence",
+                ],
+                &["preferred structured"],
+            ),
+            (
+                &["cargo_fmt"],
+                &[
+                    "final formatting after relevant rust source stabilizes",
+                    "do not use cargo_fmt as a per-edit ritual",
+                    "read-only formatting validation",
+                    "precheck",
+                    "changed/state_changed",
+                ],
+                &[],
+            ),
+            (
+                &["check_workspace_hygiene"],
+                &["pre-final", "workspace hygiene", "read-only"],
+                &[],
+            ),
+            (
+                &["read_session_handoff"],
+                &["handoff", "missing task context", "read-only"],
+                &[],
+            ),
+            (
+                &["run_shell"],
+                &[
+                    "shell grammar or a short related command chain",
+                    "run_process takes literal argv",
+                    "run_script program text",
+                    "local jobs are runner-owned",
+                    "named session ssh has no durable job handoff",
+                    "observe_jobs for job recovery",
+                    "never redispatch pending or outcome_unknown",
+                    "inspect existing execution",
+                    "structured source editors",
+                    "runner replacement cannot inherit local jobs",
+                ],
+                &[],
+            ),
+            // Cover the selection and lifecycle choices, not the retired full prose.
+            // Interactive mode shares the tool but has a deliberately explicit contract.
+            (
+                &["run_process"],
+                &[
+                    "native executable literal argv",
+                    "run_shell takes shell grammar",
+                    "runner ownership",
+                    "interactive=true",
+                    "stdin pipe",
+                    "keyed write_job_input",
+                    "no pty/ssh/initial stdin/structured validation evidence",
+                    "retain returned job/continuation",
+                    "never redispatch pending or outcome_unknown",
+                    "inspect existing execution",
+                    "runner replacement cannot inherit",
+                ],
+                &[],
+            ),
+            // Interpreter/runtime details stay locked by run_script input-schema tests;
+            // this description test keeps selection and lifecycle decisions dense.
+            (
+                &["run_script"],
+                &[
+                    "sh/bash/powershell/python/javascript/typescript script data",
+                    "run_process takes literal argv",
+                    "run_shell takes shell grammar",
+                    "structured source editors",
+                    "never interpolated into shell command text",
+                    "retain returned job/continuation",
+                    "never redispatch pending or outcome_unknown",
+                    "runner-owned; replacement cannot inherit",
+                ],
+                &[],
+            ),
+            (
+                &["run_job"],
+                &[
+                    "runner-owned",
+                    "server reconnects reconcile",
+                    "runner replacement does not inherit",
+                    "outlive the runner",
+                    "run_detached_process",
+                ],
+                &[],
+            ),
+            (
+                &["run_detached_process"],
+                &[
+                    "supervisor-owned",
+                    "survive runner replacement",
+                    "ownership transfers before payload start",
+                    "supervisor identity and lifetime fence",
+                    "expired keys never authorize retry",
+                    "duration alone is insufficient",
+                    "outcome_unknown never authorizes redispatch",
+                ],
+                &[],
+            ),
+            (
+                &["open_session_shell"],
+                &[
+                    "primary use",
+                    "repeated commands",
+                    "active named ssh resource",
+                    "execution_context.resource",
+                    "remote cwd/env/exports/functions/umask",
+                    "local sh/bash or windows powershell remains supported",
+                    "same local shell-process state",
+                    "not merely for several commands",
+                    "update_session_context",
+                    "no per-shell host/resource parameter",
+                    "does not need webcodex runner",
+                    "manage_ssh_resource",
+                    "runner restart",
+                ],
+                &[],
+            ),
+            (
+                &["update_session_context"],
+                &[
+                    "active runner-local named ssh resource",
+                    "open_session_shell",
+                    "manage_ssh_resource",
+                    "restart the runner",
+                ],
+                &[],
+            ),
+            (
+                &["execute_session_shell"],
+                &[
+                    "primary route",
+                    "same named ssh resource",
+                    "remote cwd/env/exports/functions/umask",
+                    "local persistent execution remains supported",
+                    "same local shell process must retain state",
+                    "ordinary one-shot work",
+                    "run_shell for shell semantics or short tightly related chains",
+                    "run_script for program-like shell content",
+                    "several commands alone are not a reason to open persistent shell",
+                ],
+                &[],
+            ),
+        ],
     );
 
-    let save_artifact_desc = desc("save_project_artifact");
-    for phrase in [
-        "already holds the bounded binary/base64 content",
-        "do not read a current chatgpt/host attachment",
-        "import_host_files",
-    ] {
-        assert!(
-            save_artifact_desc.contains(phrase),
-            "save_project_artifact: {phrase}"
-        );
-    }
-    let import_artifact_desc = desc("import_host_files");
-    for phrase in [
-        "preferred host-native attachment-to-project transfer path",
-        "do not base64-transfer files",
-        "active authenticated oauth client",
-        "openai file hosts",
-        "arbitrary public https",
-        "up to 256 mib per file",
-        "batch is not atomic",
-        "partial_success=true",
-    ] {
-        assert!(
-            import_artifact_desc.contains(phrase),
-            "import_host_files: {phrase}"
-        );
-    }
-    let project_artifact_desc = desc("inspect_project_artifact");
-    let transfer_artifact_desc = desc("transfer_project_artifact");
-    for phrase in [
-        "source project:read",
-        "destination project:write",
-        "independently resolved and authorized",
-        "exact source bytes/sha-256/mime snapshot",
-        "do not pass through host attachments or model text",
-    ] {
-        assert!(
-            transfer_artifact_desc.contains(phrase),
-            "transfer_project_artifact: {phrase}"
-        );
-    }
-    for phrase in [
-        "metadata=facts",
-        "inspect=fenced segment",
-        "image=mcp image",
-        "export=mcp resourcelink",
-        "not repeated inspect calls",
-        "import_host_files",
-    ] {
-        assert!(
-            project_artifact_desc.contains(phrase),
-            "inspect_project_artifact: {phrase}"
-        );
-    }
-    let read_artifact_desc = desc("read_project_artifact_chunk");
-    for phrase in [
-        "bounded chunk inspection api",
-        "parser-ready suggested_call",
-        "expected_sha256",
-        "snapshot_changed",
-        "do not manually translate",
-        "do not loop over base64 chunks",
-        "inspect_project_artifact(action=export)",
-    ] {
-        assert!(
-            read_artifact_desc.contains(phrase),
-            "read_project_artifact_chunk: {phrase}"
-        );
-    }
-    let upload_begin_desc = desc("begin_artifact_upload");
-    for phrase in [
-        "low-level chunked binary artifact upload",
-        "not the preferred path for a current chatgpt/host attachment",
-        "import_host_files",
-    ] {
-        assert!(
-            upload_begin_desc.contains(phrase),
-            "begin_artifact_upload: {phrase}"
-        );
-    }
+    // Specialist descriptions come from their exact-manifest surface.
+    // Patch input remains available without becoming the default recovery path.
+    assert_tool_descriptions(
+        &specialists,
+        &[
+            (
+                &["apply_patch"],
+                &[
+                    "naturally patch-shaped",
+                    "genuinely the clearest reliable representation",
+                    "not the default recovery",
+                    "stable unique context",
+                    "function/impl/type/test/module",
+                    "transactional",
+                    "rollback",
+                    "dry_run",
+                    "matching_mode=unique",
+                    "matching_mode_rejected",
+                    "weakening the guard",
+                    "first_match",
+                    "preserve unique/exact_unique",
+                    "outcome_unknown",
+                ],
+                &["prefer apply_patch"],
+            ),
+            (
+                &["apply_unified_diff"],
+                &[
+                    "external raw unified-diff mutation path",
+                    "input is already a standard unified diff",
+                    "clearest reliable mutation",
+                    "bounded preflight",
+                    "never needs a separate validation call",
+                    "rather than converting model-generated work into unified diff by default",
+                ],
+                &[],
+            ),
+            (
+                &["write_project_file"],
+                &[
+                    "create a new file",
+                    "intentional whole-file replacement",
+                    "expected_read_revision",
+                    "model-facing snapshot handle",
+                    "model does not copy a digest",
+                    "minimal error facts",
+                    "one parser-ready read_files recovery call",
+                    "clearest reliable mutation",
+                    "inspect the resulting diff",
+                    "validate the final source",
+                ],
+                &["expected_sha256", "prefer apply_text_edits"],
+            ),
+        ],
+    );
+}
 
-    let git_log_desc = desc("read_git_log");
-    for phrase in ["next_skip", "parser-ready", "10000 skip bound"] {
-        assert!(git_log_desc.contains(phrase), "read_git_log: {phrase}");
-    }
-    let list_files_desc = desc("list_project_files");
-    for phrase in [
-        "live project directory",
-        "next_call",
-        "offsets are not snapshots",
-        "older runners",
-        "fail closed",
-    ] {
-        assert!(
-            list_files_desc.contains(phrase),
-            "list_project_files: {phrase}"
-        );
-    }
-    let tracked_files_desc = desc("list_project_tracked_files");
-    for phrase in [
-        "bounded producer source",
-        "source acquisition is complete",
-        "list_truncated=true",
-        "next_offset is null",
-        "narrow path",
-        "retained-tail source truncation fails closed",
-    ] {
-        assert!(
-            tracked_files_desc.contains(phrase),
-            "list_project_tracked_files: {phrase}"
-        );
-    }
-
-    let show_changes_desc = desc("read_workspace_changes");
-    for phrase in [
-        "workspace summary",
-        "staged/unstaged/untracked",
-        "without a patch by default",
-        "not a complete staged patch",
-        "ordinary code review uses review_changes",
-    ] {
-        assert!(
-            show_changes_desc.contains(phrase),
-            "read_workspace_changes description should mention {phrase}: {show_changes_desc}"
-        );
-    }
+#[test]
+fn git_diff_hunks_paging_schema_preserves_budget_and_cursor_contract() {
+    let specs = registered_tool_specs();
     let git_diff_hunks = spec_named(&specs, "read_git_diff_hunks");
-    assert!(!show_changes_desc.contains("default inspect/review tool before final response"));
-
-    let git_review_summary_desc = desc("read_git_review_summary");
-    for phrase in [
-        "exact committed git range",
-        "without returning patch bodies",
-        "incomplete coverage",
-        "ordinary review uses review_changes",
-        "read-only",
-    ] {
-        assert!(
-            git_review_summary_desc.contains(phrase),
-            "read_git_review_summary description should mention {phrase}: {git_review_summary_desc}"
-        );
-    }
-    let git_diff_hunks_desc = git_diff_hunks.description.to_lowercase();
-    for phrase in [
-        "bounded git diff hunks",
-        "cached=true selects staged changes",
-        "omission selects unstaged changes",
-        "base_commit+head_commit",
-        "use review_changes",
-        "source fences",
-        "bounded page/hunk continuation",
-        "safe recovery",
-    ] {
-        assert!(
-            git_diff_hunks_desc.contains(phrase),
-            "read_git_diff_hunks description should mention {phrase}: {git_diff_hunks_desc}"
-        );
-    }
     let default_page_bytes = git_diff_hunks.input_schema["properties"]["max_page_bytes"]["default"]
         .as_u64()
         .expect("read_git_diff_hunks max_page_bytes default");
@@ -285,326 +519,31 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let continuation_desc = git_diff_hunks.input_schema["properties"]["continuation"]
         ["description"]
         .as_str()
-        .expect("read_git_diff_hunks continuation description")
-        .to_lowercase();
-    for phrase in [
-        "later-record page cursor",
-        "next complete-line fragment",
-        "scope/fence-bound",
-        "parser-ready suggested_call",
-        "exact original effective scope/paging inputs",
-        "base_commit/head_commit",
-        "cached/worktree mode",
-        "paths",
-        "max_hunks",
-        "max_hunk_lines",
-        "max_page_bytes",
-        "later-record and hunk-fragment continuations remain distinct identities",
-    ] {
-        assert!(
-            continuation_desc.contains(phrase),
-            "read_git_diff_hunks continuation description should mention {phrase}: {continuation_desc}"
-        );
-    }
+        .expect("read_git_diff_hunks continuation description");
+    assert_description_phrases(
+        "read_git_diff_hunks input_schema/properties/continuation/description",
+        continuation_desc,
+        &[
+            "later-record page cursor",
+            "next complete-line fragment",
+            "scope/fence-bound",
+            "parser-ready suggested_call",
+            "exact original effective scope/paging inputs",
+            "base_commit/head_commit",
+            "cached/worktree mode",
+            "paths",
+            "max_hunks",
+            "max_hunk_lines",
+            "max_page_bytes",
+            "later-record and hunk-fragment continuations remain distinct identities",
+        ],
+        &[],
+    );
+}
 
-    // Patch input remains available without becoming the default recovery path.
-    let apply_patch_desc = specialist_desc("apply_patch");
-    for phrase in [
-        "naturally patch-shaped",
-        "genuinely the clearest reliable representation",
-        "not the default recovery",
-        "stable unique context",
-        "function/impl/type/test/module",
-        "transactional",
-        "rollback",
-        "dry_run",
-        "matching_mode=unique",
-        "matching_mode_rejected",
-        "weakening the guard",
-        "first_match",
-        "preserve unique/exact_unique",
-        "outcome_unknown",
-    ] {
-        assert!(
-            apply_patch_desc.contains(phrase),
-            "apply_patch description should mention {phrase}: {apply_patch_desc}"
-        );
-    }
-    assert!(!apply_patch_desc.contains("prefer apply_patch"));
-
-    let apply_text_edits_desc = desc("edit_project_files");
-    for phrase in [
-        "project editor",
-        "read_files",
-        "expected_read_revision",
-        "exact edits fail closed on ambiguity",
-        "replace_range",
-        "from that snapshot",
-        "preflight transactionally",
-        "runner rechecks source",
-        "stale state returns read_files recovery",
-        "outcome_unknown",
-    ] {
-        assert!(
-            apply_text_edits_desc.contains(phrase),
-            "apply_text_edits description should mention {phrase}: {apply_text_edits_desc}"
-        );
-    }
-    assert!(!apply_text_edits_desc.contains("canonical default guarded edit path"));
-    assert!(!apply_text_edits_desc.contains("expected_sha256"));
-    assert!(!apply_text_edits_desc.contains("prefer apply_patch"));
-
-    let unified_diff_desc = specialist_desc("apply_unified_diff");
-    for phrase in [
-        "external raw unified-diff mutation path",
-        "input is already a standard unified diff",
-        "clearest reliable mutation",
-        "bounded preflight",
-        "never needs a separate validation call",
-        "rather than converting model-generated work into unified diff by default",
-    ] {
-        assert!(
-            unified_diff_desc.contains(phrase),
-            "apply_unified_diff description should mention {phrase}: {unified_diff_desc}"
-        );
-    }
-
-    let write_file_desc = specialist_desc("write_project_file");
-    for phrase in [
-        "create a new file",
-        "intentional whole-file replacement",
-        "expected_read_revision",
-        "model-facing snapshot handle",
-        "model does not copy a digest",
-        "minimal error facts",
-        "one parser-ready read_files recovery call",
-        "clearest reliable mutation",
-        "inspect the resulting diff",
-        "validate the final source",
-    ] {
-        assert!(
-            write_file_desc.contains(phrase),
-            "write_project_file description should mention {phrase}: {write_file_desc}"
-        );
-    }
-    assert!(!write_file_desc.contains("expected_sha256"));
-    assert!(!write_file_desc.contains("prefer apply_text_edits"));
-
-    // The legacy single-purpose edit tools (replace_line_range, insert_at_line,
-    // delete_line_range, replace_in_file, replace_exact_block,
-    // insert_before_pattern, insert_after_pattern) were removed; they no longer
-    // carry a model-facing ToolSpec/description. Their absence from the known
-    // tool set is asserted by
-    // `removed_legacy_edit_tools_are_not_known_tools` and the parser-name gate
-    // in `tool_call_parser_name_gate_matches_tool_definitions`.
-
-    for name in ["cargo_check", "cargo_test"] {
-        let validation_desc = desc(name);
-        assert!(
-            validation_desc.contains("structured") && validation_desc.contains("common supported"),
-            "{name} should explain the structured option's supported semantics: {validation_desc}"
-        );
-        for phrase in ["validation identity", "same execution job handoff"] {
-            assert!(
-                validation_desc.contains(phrase),
-                "{name} should explain structured evidence semantics {phrase}: {validation_desc}"
-            );
-        }
-        assert!(
-            !validation_desc.contains("preferred structured"),
-            "{name} must not encode structure as an unconditional preference: {validation_desc}"
-        );
-        assert!(
-            !validation_desc.contains("run_shell"),
-            "{name} should stay focused on its own differentiating semantics: {validation_desc}"
-        );
-    }
-    let cargo_test_desc = desc("cargo_test");
-    for phrase in [
-        "executed-test evidence",
-        "min_tests/require_tests",
-        "bounded output",
-    ] {
-        assert!(cargo_test_desc.contains(phrase), "cargo_test: {phrase}");
-    }
-    let go_test_desc = desc("go_test");
-    for phrase in [
-        "structured option for common supported",
-        "go json test-count evidence",
-    ] {
-        assert!(go_test_desc.contains(phrase), "go_test: {phrase}");
-    }
-    assert!(!go_test_desc.contains("preferred structured"));
-    let cargo_fmt_desc = desc("cargo_fmt");
-    for phrase in [
-        "final formatting after relevant rust source stabilizes",
-        "do not use cargo_fmt as a per-edit ritual",
-        "read-only formatting validation",
-        "precheck",
-        "changed/state_changed",
-    ] {
-        assert!(cargo_fmt_desc.contains(phrase), "cargo_fmt: {phrase}");
-    }
-
-    let workspace_hygiene_desc = desc("check_workspace_hygiene");
-    for phrase in ["pre-final", "workspace hygiene", "read-only"] {
-        assert!(
-            workspace_hygiene_desc.contains(phrase),
-            "check_workspace_hygiene description should mention {phrase}: {workspace_hygiene_desc}"
-        );
-    }
-
-    let handoff_desc = desc("read_session_handoff");
-    for phrase in ["handoff", "missing task context", "read-only"] {
-        assert!(
-            handoff_desc.contains(phrase),
-            "read_session_handoff description should mention {phrase}: {handoff_desc}"
-        );
-    }
-
-    let run_shell_desc = desc("run_shell");
-    for phrase in [
-        "shell grammar or a short related command chain",
-        "run_process takes literal argv",
-        "run_script program text",
-        "local jobs are runner-owned",
-        "named session ssh has no durable job handoff",
-        "observe_jobs for job recovery",
-        "never redispatch pending or outcome_unknown",
-        "inspect existing execution",
-        "structured source editors",
-        "runner replacement cannot inherit local jobs",
-    ] {
-        assert!(
-            run_shell_desc.contains(phrase),
-            "run_shell description should mention {phrase}: {run_shell_desc}"
-        );
-    }
-
-    let run_process_desc = desc("run_process");
-    // Cover the selection and lifecycle choices, not the retired full prose.
-    // Interactive mode shares the tool but has a deliberately explicit contract.
-    for phrase in [
-        "native executable literal argv",
-        "run_shell takes shell grammar",
-        "runner ownership",
-        "interactive=true",
-        "stdin pipe",
-        "keyed write_job_input",
-        "no pty/ssh/initial stdin/structured validation evidence",
-        "retain returned job/continuation",
-        "never redispatch pending or outcome_unknown",
-        "inspect existing execution",
-        "runner replacement cannot inherit",
-    ] {
-        assert!(
-            run_process_desc.contains(phrase),
-            "run_process description should mention {phrase}: {run_process_desc}"
-        );
-    }
-
-    // Interpreter/runtime details stay locked by run_script input-schema tests;
-    // this model-facing description test keeps selection and lifecycle decisions dense.
-    let run_script_desc = desc("run_script");
-    for phrase in [
-        "sh/bash/powershell/python/javascript/typescript script data",
-        "run_process takes literal argv",
-        "run_shell takes shell grammar",
-        "structured source editors",
-        "never interpolated into shell command text",
-        "retain returned job/continuation",
-        "never redispatch pending or outcome_unknown",
-        "runner-owned; replacement cannot inherit",
-    ] {
-        assert!(
-            run_script_desc.contains(phrase),
-            "run_script description should mention {phrase}: {run_script_desc}"
-        );
-    }
-
-    let run_job_desc = desc("run_job");
-    for phrase in [
-        "runner-owned",
-        "server reconnects reconcile",
-        "runner replacement does not inherit",
-        "outlive the runner",
-        "run_detached_process",
-    ] {
-        assert!(
-            run_job_desc.contains(phrase),
-            "run_job description should mention {phrase}: {run_job_desc}"
-        );
-    }
-
-    let detached_desc = desc("run_detached_process");
-    for phrase in [
-        "supervisor-owned",
-        "survive runner replacement",
-        "ownership transfers before payload start",
-        "supervisor identity and lifetime fence",
-        "expired keys never authorize retry",
-        "duration alone is insufficient",
-        "outcome_unknown never authorizes redispatch",
-    ] {
-        assert!(
-            detached_desc.contains(phrase),
-            "run_detached_process description should mention {phrase}: {detached_desc}"
-        );
-    }
-
-    let open_shell_desc = desc("open_session_shell");
-    for phrase in [
-        "primary use",
-        "repeated commands",
-        "active named ssh resource",
-        "execution_context.resource",
-        "remote cwd/env/exports/functions/umask",
-        "local sh/bash or windows powershell remains supported",
-        "same local shell-process state",
-        "not merely for several commands",
-        "update_session_context",
-        "no per-shell host/resource parameter",
-        "does not need webcodex runner",
-        "manage_ssh_resource",
-        "runner restart",
-    ] {
-        assert!(
-            open_shell_desc.contains(phrase),
-            "open_session_shell description should mention {phrase}: {open_shell_desc}"
-        );
-    }
-
-    let update_context_desc = desc("update_session_context");
-    for phrase in [
-        "active runner-local named ssh resource",
-        "open_session_shell",
-        "manage_ssh_resource",
-        "restart the runner",
-    ] {
-        assert!(
-            update_context_desc.contains(phrase),
-            "update_session_context description should mention {phrase}: {update_context_desc}"
-        );
-    }
-
-    let session_shell_exec_desc = desc("execute_session_shell");
-    for phrase in [
-        "primary route",
-        "same named ssh resource",
-        "remote cwd/env/exports/functions/umask",
-        "local persistent execution remains supported",
-        "same local shell process must retain state",
-        "ordinary one-shot work",
-        "run_shell for shell semantics or short tightly related chains",
-        "run_script for program-like shell content",
-        "several commands alone are not a reason to open persistent shell",
-    ] {
-        assert!(
-            session_shell_exec_desc.contains(phrase),
-            "execute_session_shell description should mention {phrase}: {session_shell_exec_desc}"
-        );
-    }
-
+#[test]
+fn session_shell_schema_preserves_result_expectations_and_resource_selection() {
+    let specs = registered_tool_specs();
     let persistent_exec = spec_named(&specs, "execute_session_shell");
     assert_eq!(
         persistent_exec.input_schema["properties"]["result_expectation"]["enum"],
@@ -617,18 +556,13 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let resource_desc = spec_named(&specs, "update_session_context").input_schema["properties"]
         ["execution_context"]["properties"]["resource"]["description"]
         .as_str()
-        .expect("update_session_context resource description")
-        .to_lowercase();
-    for phrase in [
-        "logical name",
-        "runner-owned resource",
-        "open_session_shell",
-    ] {
-        assert!(
-            resource_desc.contains(phrase),
-            "execution_context.resource should mention {phrase}: {resource_desc}"
-        );
-    }
+        .expect("update_session_context resource description");
+    assert_description_phrases(
+        "update_session_context input_schema/properties/execution_context/properties/resource/description",
+        resource_desc,
+        &["logical name", "runner-owned resource", "open_session_shell"],
+        &[],
+    );
 }
 
 #[test]

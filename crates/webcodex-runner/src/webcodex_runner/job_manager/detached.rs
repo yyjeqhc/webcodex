@@ -3,6 +3,7 @@
 use super::lifecycle::{runner_job_is_active, runner_job_is_terminal};
 use super::retained::job_update_from_snapshot;
 use super::*;
+use crate::webcodex_runner::shell::ShellExecutionContext;
 use webcodex_core::workflow_session_contract::ExecutionPurpose;
 pub(super) fn validate_detached_recovery_context(
     context: &ShellJobContext,
@@ -340,18 +341,18 @@ impl JobManager {
             let RunnerJobOperation::StartDetachedProcess(request) = &operation else {
                 unreachable!("detached Job starter received non-detached operation");
             };
-            let prepared = match prepare_detached_process_launch(
+            let prepared = match (ShellExecutionContext {
                 generation,
-                &policy,
-                &shell,
-                &project_registry_dir,
-                &manager.prepared_profiles,
-                request.cwd.as_deref(),
-                &request.process.executable,
-                &request.process.args,
-                request.timeout_secs,
-                Some(stop_requested.as_ref()),
-            ) {
+                policy: &policy,
+                shell: &shell,
+                project_registry_dir: &project_registry_dir,
+                cache: &manager.prepared_profiles,
+                cwd: request.cwd.as_deref(),
+                timeout_secs: request.timeout_secs,
+                stop_requested: Some(stop_requested.as_ref()),
+            })
+            .prepare_detached_process_launch(&request.process.executable, &request.process.args)
+            {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     manager.fail_job(&operation, error, None);

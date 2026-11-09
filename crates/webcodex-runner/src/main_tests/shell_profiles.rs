@@ -1,4 +1,5 @@
 use super::*;
+use crate::webcodex_runner::shell::ShellExecutionContext;
 
 #[test]
 fn prepared_profile_env_is_available_to_run_shell() {
@@ -295,50 +296,50 @@ fn prepared_profile_init_script_runs_once_per_project_profile_generation() {
     }
     assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "1");
     let cwd = tmp.path().to_string_lossy().to_string();
-    let result = run_shell_with_profiles(
-        2,
-        &unrestricted_test_policy(),
-        &shell,
-        tmp.path(),
-        &cache,
-        Some(&cwd),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
-        None,
-        10,
-        None,
-    );
+    let result = (ShellExecutionContext {
+        generation: 2,
+        policy: &unrestricted_test_policy(),
+        shell: &shell,
+        project_registry_dir: tmp.path(),
+        cache: &cache,
+        cwd: Some(&cwd),
+        timeout_secs: 10,
+        stop_requested: None,
+    })
+    .run_shell(&shell_env_var("WEBCODEX_TEST_PROFILE"), None, false, None)
+    .result;
     assert_eq!(result.stdout.as_deref(), Some("counted"));
     assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "2");
 
     // A late request that still holds generation 1 may prepare its own
     // snapshot, but it must not evict the already-cached active generation.
-    let stale = run_shell_with_profiles(
-        1,
-        &unrestricted_test_policy(),
-        &shell,
-        tmp.path(),
-        &cache,
-        Some(&cwd),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
-        None,
-        10,
-        None,
-    );
+    let stale = (ShellExecutionContext {
+        generation: 1,
+        policy: &unrestricted_test_policy(),
+        shell: &shell,
+        project_registry_dir: tmp.path(),
+        cache: &cache,
+        cwd: Some(&cwd),
+        timeout_secs: 10,
+        stop_requested: None,
+    })
+    .run_shell(&shell_env_var("WEBCODEX_TEST_PROFILE"), None, false, None)
+    .result;
     assert_eq!(stale.stdout.as_deref(), Some("counted"));
     assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "3");
 
-    let current = run_shell_with_profiles(
-        2,
-        &unrestricted_test_policy(),
-        &shell,
-        tmp.path(),
-        &cache,
-        Some(&cwd),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
-        None,
-        10,
-        None,
-    );
+    let current = (ShellExecutionContext {
+        generation: 2,
+        policy: &unrestricted_test_policy(),
+        shell: &shell,
+        project_registry_dir: tmp.path(),
+        cache: &cache,
+        cwd: Some(&cwd),
+        timeout_secs: 10,
+        stop_requested: None,
+    })
+    .run_shell(&shell_env_var("WEBCODEX_TEST_PROFILE"), None, false, None)
+    .result;
     assert_eq!(current.stdout.as_deref(), Some("counted"));
     assert_eq!(std::fs::read_to_string(counter).unwrap().trim(), "3");
     assert_eq!(cache.len(), 1);
@@ -406,18 +407,18 @@ fn prepared_profile_prepare_reaps_background_pipe_holder() {
     let worker_cwd = cwd.clone();
     let (result_tx, result_rx) = std::sync::mpsc::channel();
     let worker = std::thread::spawn(move || {
-        let result = run_shell_with_profiles(
-            1,
-            &worker_policy,
-            &worker_shell,
-            &worker_project_registry_dir,
-            &worker_cache,
-            Some(&worker_cwd),
-            &shell_env_var("WEBCODEX_TEST_PROFILE"),
-            None,
-            10,
-            None,
-        );
+        let result = (ShellExecutionContext {
+            generation: 1,
+            policy: &worker_policy,
+            shell: &worker_shell,
+            project_registry_dir: &worker_project_registry_dir,
+            cache: &worker_cache,
+            cwd: Some(&worker_cwd),
+            timeout_secs: 10,
+            stop_requested: None,
+        })
+        .run_shell(&shell_env_var("WEBCODEX_TEST_PROFILE"), None, false, None)
+        .result;
         let _ = result_tx.send(result);
     });
 

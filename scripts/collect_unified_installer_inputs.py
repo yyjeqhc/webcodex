@@ -114,19 +114,25 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         raise CollectionError("manifest collection must run on the exact native platform")
     if not MAX_SOURCE_SHA.fullmatch(args.source_sha):
         raise CollectionError("source SHA must be one exact lower-case 40-hex commit")
-    if type(args.workflow_run_id) is not int or args.workflow_run_id <= 0:
-        raise CollectionError("workflow run ID must be a positive CI run number")
-    if not args.workflow_ref or len(args.workflow_ref) > 256 or any(ch.isspace() for ch in args.workflow_ref):
-        raise CollectionError("workflow ref is invalid")
     ci_run = os.environ.get("GITHUB_RUN_ID")
     ci_ref = os.environ.get("GITHUB_WORKFLOW_REF")
     ci_sha = os.environ.get("GITHUB_SHA")
-    if ci_run is not None and ci_run != str(args.workflow_run_id):
-        raise CollectionError("workflow run ID does not match GitHub Actions context")
-    if ci_ref is not None and ci_ref != args.workflow_ref:
-        raise CollectionError("workflow ref does not match GitHub Actions context")
-    if ci_sha is not None and ci_sha.lower() != args.source_sha:
-        raise CollectionError("source SHA does not match GitHub Actions context")
+    if args.local_preview:
+        if not args.platform.startswith("win32-") or args.workflow_run_id is not None or args.workflow_ref is not None:
+            raise CollectionError("Local Preview is only for Windows and cannot claim a CI run")
+        if any(v is not None for v in (ci_run, ci_ref, ci_sha)):
+            raise CollectionError("Local Preview must not be collected inside a release CI context")
+    else:
+        if type(args.workflow_run_id) is not int or args.workflow_run_id <= 0:
+            raise CollectionError("workflow run ID must be a positive CI run number")
+        if not args.workflow_ref or len(args.workflow_ref) > 256 or any(ch.isspace() for ch in args.workflow_ref):
+            raise CollectionError("workflow ref is invalid")
+        if ci_run is not None and ci_run != str(args.workflow_run_id):
+            raise CollectionError("workflow run ID does not match GitHub Actions context")
+        if ci_ref is not None and ci_ref != args.workflow_ref:
+            raise CollectionError("workflow ref does not match GitHub Actions context")
+        if ci_sha is not None and ci_sha.lower() != args.source_sha:
+            raise CollectionError("source SHA does not match GitHub Actions context")
     os_name, target, architecture, _package_arch = NATIVE_TARGETS[args.platform]
     root = args.input_root.resolve(strict=True)
     if not root.is_dir():
@@ -213,7 +219,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 "sha256": digest,
                 "build_info": info,
                 "build_info_sha256": package.canonical_digest(info),
-                "probe": "native-build-job",
+                "probe": "local-preview-host" if args.local_preview else "native-build-job",
             }
             checksum_lines.append(f"{digest}  {relative}")
         if not runtime:
@@ -234,8 +240,8 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             "schema_version": 2 if runtime else 1,
             "version": args.version,
             "source_sha": args.source_sha,
-            "source_workflow_run_id": args.workflow_run_id,
-            "source_workflow_ref": args.workflow_ref,
+            "source_workflow_run_id": 0 if args.local_preview else args.workflow_run_id,
+            "source_workflow_ref": "webcodex/local-preview" if args.local_preview else args.workflow_ref,
             "platform": args.platform,
             "target": target,
             "architecture": architecture,
@@ -246,6 +252,8 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             manifest["package_flavor"] = "runtime"
         else:
             manifest["desktop_payload"] = desktop_payload_record
+        if args.local_preview:
+            manifest["local_preview"] = True
         manifest_path = output / "source-manifest.json"
         encoded = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
         manifest_path.write_bytes(encoded)
@@ -254,8 +262,9 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         return {
             "platform": args.platform,
             "source_sha": args.source_sha,
-            "source_workflow_run_id": args.workflow_run_id,
-            "source_workflow_ref": args.workflow_ref,
+            "source_workflow_run_id": manifest["source_workflow_run_id"],
+            "source_workflow_ref": manifest["source_workflow_ref"],
+            "local_preview": args.local_preview,
             "source_manifest": str(manifest_path),
             "sha256sums": str(output / "SHA256SUMS"),
             "artifacts": len(artifacts),
@@ -277,8 +286,9 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--desktop-executable", help="path relative to Desktop payload")
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-sha", required=True)
-    parser.add_argument("--workflow-run-id", required=True, type=int)
-    parser.add_argument("--workflow-ref", required=True)
+    parser.add_argument("--workflow-run-id", type=int)
+    parser.add_argument("--workflow-ref")
+    parser.add_argument("--local-preview", action="store_true", help="Offline Windows test: never claim CI or published provenance")
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser
 

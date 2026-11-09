@@ -1121,12 +1121,21 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
         return Err(error("candidate_source", "Candidate source SHA is invalid"));
     }
     let workflow = string(&manifest, "source_workflow_ref")?;
-    if ![
-        "yyjeqhc/webcodex/.github/workflows/release-build.yml@",
-        "Xiiiing/webcodex/.github/workflows/release-build.yml@",
-    ]
-    .iter()
-    .any(|prefix| workflow.starts_with(prefix))
+    let local_preview = cfg!(all(windows, feature = "local-preview-installer"))
+        && workflow == "webcodex/local-preview"
+        && manifest.get("local_preview") == Some(&Value::Bool(true))
+        && manifest
+            .get("source_workflow_run_id")
+            .and_then(Value::as_u64)
+            == Some(0);
+    if !local_preview
+        && (manifest.get("local_preview").is_some()
+            || ![
+                "yyjeqhc/webcodex/.github/workflows/release-build.yml@",
+                "Xiiiing/webcodex/.github/workflows/release-build.yml@",
+            ]
+            .iter()
+            .any(|prefix| workflow.starts_with(prefix)))
     {
         return Err(error(
             "candidate_provenance",
@@ -1136,7 +1145,7 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
     let run = manifest
         .get("source_workflow_run_id")
         .and_then(Value::as_u64)
-        .filter(|run| *run > 0)
+        .filter(|run| local_preview || *run > 0)
         .ok_or_else(|| {
             error(
                 "candidate_provenance",
@@ -1246,10 +1255,16 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
                 "The candidate Runner protocol is incompatible",
             ));
         }
-        if string(item, "probe")? != "native-build-job" {
+        if string(item, "probe")?
+            != if local_preview {
+                "local-preview-host"
+            } else {
+                "native-build-job"
+            }
+        {
             return Err(error(
                 "candidate_provenance",
-                "A component has no native build verification",
+                "A component has no matching native build verification",
             ));
         }
         let relative = string(item, "path")?;
@@ -1300,6 +1315,15 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
         artifacts,
         desktop,
     })
+}
+
+/// Whether a candidate is explicitly marked as an offline, same-machine
+/// Preview. This must never be confused with published HTTPS provenance.
+pub(crate) fn local_preview_candidate(candidate: &UpgradeCandidate) -> bool {
+    cfg!(all(windows, feature = "local-preview-installer"))
+        && candidate.source_workflow_ref == "webcodex/local-preview"
+        && candidate.source_workflow_run_id == 0
+        && !candidate.provenance_verified
 }
 
 /// Proves that reinstalling this published package would not replace any

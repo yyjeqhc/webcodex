@@ -45,8 +45,8 @@ def candidate_hash_command(expected_sha256: str) -> str:
     return base64.b64encode(script.encode("utf-16le")).decode("ascii")
 
 
-def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: str) -> str:
-    manifest, files = candidate.validate_candidate(candidate_dir, platform)
+def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: str, *, local_preview: bool = False) -> str:
+    manifest, files = candidate.validate_candidate(candidate_dir, platform, local_preview=local_preview)
     candidate.require_guarded_bootstrap_contract(manifest)
     inner = inner_installer.resolve(strict=True)
     if inner.read_bytes()[:2] != b"MZ":
@@ -59,7 +59,7 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '!include "WinMessages.nsh"',
         '!include "StrFunc.nsh"',
         '${Using:StrFunc} StrStr',
-        'Name "WebCodex Unified Installer"',
+        'Name "WebCodex Unified LOCAL PREVIEW - NOT PUBLISHED"' if local_preview else 'Name "WebCodex Unified Installer"',
         f'OutFile {nsis_quote(output)}',
         'RequestExecutionLevel user',
         'InstallDir "$LOCALAPPDATA\\WebCodex Desktop"',
@@ -111,6 +111,12 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         'FunctionEnd',
         '',
         'Section "-WebCodexUnifiedBootstrap"',
+        *([
+            '  MessageBox MB_YESNO|MB_ICONEXCLAMATION "UNSIGNED LOCAL PREVIEW: No published GitHub provenance. Use only on a backed-up test installation. Continue?" IDYES preview_acknowledged',
+            '  SetErrorLevel 1',
+            '  Abort',
+            'preview_acknowledged:',
+        ] if local_preview else []),
         '  StrCpy $WebCodexExisting 0',
         '  StrCpy $WebCodexPackageUpgrade 0',
         '  StrCpy $WebCodexForeignServices 0',
@@ -369,6 +375,8 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
     for step in ("preflight", "prepare", "verify", "finish", "rollback"):
         arguments = ' --candidate-dir "$WebCodexCandidate"' if step in ("preflight", "prepare", "verify") else ""
         command = f'"$WebCodexCandidate\\artifacts\\bin\\webcodex.exe" environment package-upgrade-{step}{arguments} --expected-runtime-dir "$WebCodexInstallDir\\webcodex-runtime"'
+        if local_preview and step in ("preflight", "prepare", "verify"):
+            command += " --local-preview"
         lines.extend([
             f"Function WebCodexPackage{step.title()}",
             '  ${If} $WebCodexEnvironmentDir == ""',
@@ -386,7 +394,7 @@ def build(args: argparse.Namespace) -> dict:
     if args.output.exists():
         raise ValueError(f"output already exists: {args.output}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    source = render(args.candidate_dir, args.inner_installer, args.output, args.platform)
+    source = render(args.candidate_dir, args.inner_installer, args.output, args.platform, local_preview=args.local_preview)
     script = args.output.with_suffix(".nsi")
     script.write_text(source, encoding="utf-8", newline="\n")
     compiler = args.makensis or shutil.which("makensis")
@@ -406,6 +414,7 @@ def build(args: argparse.Namespace) -> dict:
         "source_sha": manifest["source_sha"],
         "workflow_run_id": manifest["source_workflow_run_id"],
         "workflow_ref": manifest["source_workflow_ref"],
+        "local_preview": args.local_preview,
         "candidate_manifest_sha256": sha256(args.candidate_dir / "source-manifest.json"),
         "inner_installer_sha256": sha256(args.inner_installer),
         "installer_sha256": sha256(args.output),
@@ -422,6 +431,7 @@ def main() -> int:
     parser.add_argument("--platform", choices=tuple(candidate.TARGETS), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--makensis")
+    parser.add_argument("--local-preview", action="store_true", help="Offline Windows-only Preview; not a published upgrade")
     args = parser.parse_args()
     try:
         print(json.dumps(build(args), sort_keys=True))

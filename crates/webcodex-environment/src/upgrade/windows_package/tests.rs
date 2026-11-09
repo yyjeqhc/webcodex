@@ -101,6 +101,33 @@ fn v043_legacy_identity_rejects_lookalikes_and_mixed_components() {
     }
 }
 
+#[test]
+fn offline_preview_candidates_are_never_published_or_silently_trusted() {
+    let f = Fixture::new(InstallationKind::Legacy);
+    let mut candidate = f.candidate.clone();
+    candidate.provenance_verified = false;
+    candidate.source_workflow_run_id = 0;
+    candidate.source_workflow_ref = "webcodex/local-preview".into();
+    assert_eq!(
+        candidate_authorized(&candidate),
+        cfg!(all(windows, feature = "local-preview-installer"))
+    );
+    assert_eq!(
+        require_local_preview(&candidate).is_ok(),
+        cfg!(all(windows, feature = "local-preview-installer"))
+    );
+    candidate.source_workflow_ref = "webcodex/local-preview/other".into();
+    assert!(!candidate_authorized(&candidate));
+    assert!(require_local_preview(&candidate).is_err());
+    candidate.source_workflow_ref = "webcodex/local-preview".into();
+    candidate.source_workflow_run_id = 1;
+    assert!(!candidate_authorized(&candidate));
+    candidate.source_workflow_run_id = 0;
+    candidate.provenance_verified = true;
+    assert!(candidate_authorized(&candidate));
+    assert!(require_local_preview(&candidate).is_err());
+}
+
 // A native host fixture reports the historical Windows wire shape without
 // accessing user state. This exercises probing/preflight on macOS too; native
 // Windows executable locking, ACLs and installer acceptance remain separate.

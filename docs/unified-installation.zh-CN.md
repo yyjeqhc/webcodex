@@ -79,6 +79,8 @@ pre-Environment Linux 安装仍通过 v0.4.6 完成服务交接。官方 Windows
 
 如果 profile 依赖已移除的 `agent.toml` / `projects.d` 自动发现或 `projects_dir` 字段，Desktop 会在停止任何进程之前以 `legacy_runner_layout_unsupported` 拒绝启动/导入。请保留备份，恢复之前可工作的 Runtime，在保留原 Runner client ID 和项目 ID 的前提下，显式核对保存的配置路径和 `project_registry_dir`。Desktop 不会自动改名、转换或静默发现这些文件。显式保存的 `agent.toml` 路径，以及显式指向 `projects.d` 的 `project_registry_dir` 仍可读取。支持边界见[兼容性政策](compatibility-policy.md)。
 
+如需在本机先验收 Windows x64 旧版迁移，可阅读 [Unified Local Preview 离线构建与测试指南](windows-unified-local-preview.md)。该包需显式启用开发构建特性，未签名、仅有本地自声明的摘要校验，**不是**通过 GitHub Release 验证的官方安装包，不能将它作为已获正式支持的迁移方式。
+
 ## Tunnel 配置
 
 持久本机 Server 推荐在创建时直接选择 Server owner：`webcodex environment configure-tunnel work --host embedded --credentials-file /secure/work.json`。受保护 JSON 只包含 `tunnel_id` 和 `api_key`，也可使用隐藏终端输入。该命令把精确 profile 与私有 local-MCP binding 写入 `EnvironmentStore`，绝不安装或启动 standalone Tunnel 服务，也不会 hot reload 或暗中重启正在工作的 Server。JSON 结果会返回 `server_restart_required` 和 `next_action`；可连续配置多个 profile，最后按提示只执行一次 `webcodex environment restart server`。Desktop 中对应 **Run with WebCodex Server (recommended)**，并显示同一个显式重启操作。

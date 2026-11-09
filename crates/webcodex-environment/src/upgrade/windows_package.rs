@@ -6,6 +6,23 @@ use super::*;
 const JOURNAL: &str = "windows-package-upgrade.json";
 const RECEIPT: &str = "windows-package-prepared.json";
 
+// An offline Preview is authorized only by an explicitly feature-built Windows
+// CLI and an exact manifest marker. Published candidates still require HTTPS.
+fn candidate_authorized(candidate: &UpgradeCandidate) -> bool {
+    candidate.provenance_verified || local_preview_candidate(candidate)
+}
+
+fn require_local_preview(candidate: &UpgradeCandidate) -> SetupResultValue<()> {
+    if local_preview_candidate(candidate) {
+        Ok(())
+    } else {
+        Err(error(
+            "candidate_provenance",
+            "Local Preview requires an explicitly feature-built Windows CLI and a local-preview manifest",
+        ))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallationKind {
@@ -342,7 +359,7 @@ fn load_bound(store: &EnvironmentStore, runtime: &Path) -> SetupResultValue<Pack
     let journal: PackageJournal = store.read_json(JOURNAL)?.ok_or_else(SetupDiagnostic::io)?;
     let expected = targets(runtime)?;
     if journal.schema_version != 1
-        || !journal.candidate.provenance_verified
+        || !candidate_authorized(&journal.candidate)
         || journal.owner_identity != owner
         || journal.runtime_dir != runtime
         || !matches!(
@@ -392,12 +409,28 @@ pub async fn preflight(
     preflight_verified(store, runtime, checked).await
 }
 
+/// Offline Preview is deliberately separate from the published upgrade entry.
+/// It still checks native component identity, hashes, owner, process state and
+/// the original Windows package rollback boundaries.
+pub async fn preflight_local_preview(
+    store: &EnvironmentStore,
+    candidate: &Path,
+    runtime: &Path,
+) -> SetupResultValue<UpgradePreflight> {
+    require_windows()?;
+    let checked = NativeEnvironment::new()?
+        .upgrade_preflight_development(store, candidate)
+        .await?;
+    require_local_preview(&checked.candidate)?;
+    preflight_verified(store, runtime, checked).await
+}
+
 async fn preflight_verified(
     store: &EnvironmentStore,
     runtime: &Path,
     checked: UpgradePreflight,
 ) -> SetupResultValue<UpgradePreflight> {
-    if !checked.candidate.provenance_verified {
+    if !candidate_authorized(&checked.candidate) {
         return Err(error(
             "candidate_provenance",
             "Package preflight requires verified published candidate provenance",
@@ -440,7 +473,7 @@ fn prepare_verified(
     runtime: &Path,
     kind: InstallationKind,
 ) -> SetupResultValue<()> {
-    if !candidate.provenance_verified {
+    if !candidate_authorized(&candidate) {
         return Err(error(
             "candidate_provenance",
             "Package preparation requires verified published candidate provenance",
@@ -507,10 +540,35 @@ pub async fn prepare(
     candidate_dir: &Path,
     runtime: &Path,
 ) -> SetupResultValue<()> {
+    prepare_with_source(store, candidate_dir, runtime, false).await
+}
+
+pub async fn prepare_local_preview(
+    store: &EnvironmentStore,
+    candidate_dir: &Path,
+    runtime: &Path,
+) -> SetupResultValue<()> {
+    prepare_with_source(store, candidate_dir, runtime, true).await
+}
+
+async fn prepare_with_source(
+    store: &EnvironmentStore,
+    candidate_dir: &Path,
+    runtime: &Path,
+    local_preview: bool,
+) -> SetupResultValue<()> {
     require_windows()?;
-    let checked = NativeEnvironment::new()?
-        .upgrade_preflight(store, candidate_dir)
-        .await?;
+    let native = NativeEnvironment::new()?;
+    let checked = if local_preview {
+        native
+            .upgrade_preflight_development(store, candidate_dir)
+            .await?
+    } else {
+        native.upgrade_preflight(store, candidate_dir).await?
+    };
+    if local_preview {
+        require_local_preview(&checked.candidate)?;
+    }
     if !checked.ready {
         return Err(error(
             "upgrade_not_ready",
@@ -562,6 +620,19 @@ pub async fn verify(
     verify_receipt_inner(store, &candidate, runtime)
 }
 
+pub async fn verify_local_preview(
+    store: &EnvironmentStore,
+    candidate_dir: &Path,
+    runtime: &Path,
+) -> SetupResultValue<PackageReceipt> {
+    require_windows()?;
+    let candidate = verify_upgrade_candidate(candidate_dir)?;
+    require_local_preview(&candidate)?;
+    verify_candidate_executables(&candidate).await?;
+    let _lock = store.lock()?;
+    verify_receipt_inner(store, &candidate, runtime)
+}
+
 fn verify_receipt_inner(
     store: &EnvironmentStore,
     candidate: &UpgradeCandidate,
@@ -571,7 +642,7 @@ fn verify_receipt_inner(
     let actual: PackageReceipt = store.read_json(RECEIPT)?.ok_or_else(SetupDiagnostic::io)?;
     checked_owner(&store.root().join(RECEIPT), &journal.owner_identity)?;
     let mut verified = candidate.clone();
-    verified.provenance_verified = true;
+    verified.provenance_verified = journal.candidate.provenance_verified;
     if journal.candidate != verified
         || journal.phase != Phase::SnapshotReady
         || actual != receipt(&journal)

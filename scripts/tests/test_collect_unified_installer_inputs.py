@@ -84,6 +84,38 @@ class NativeManifestCollectorTests(unittest.TestCase):
             )
             self.assertEqual(validated["source_sha"], SOURCE)
 
+    def test_local_preview_collector_never_invents_a_ci_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = self.fixture(root, target="x86_64-pc-windows-msvc", architecture="x86_64", suffix=".exe")
+            infos = {}
+            for name in collector.BINARIES:
+                infos[name] = {
+                    "schema_version": 1,
+                    "binary": name,
+                    "version": "0.9.0",
+                    "git_commit": SOURCE,
+                    "git_dirty": False,
+                    "built_at": "123",
+                    "target": "x86_64-pc-windows-msvc",
+                    "architecture": "x86_64",
+                    "desktop_runtime_contract": CONTRACT,
+                    "environment_data_format": 1,
+                }
+            infos["webcodex"]["windows_guarded_bootstrap_contract"] = 1
+            args = self.args(root, paths, root / "candidate", platform="win32-x64", desktop_executable="webcodex-desktop.exe")
+            args.local_preview = True
+            args.workflow_run_id = None
+            args.workflow_ref = None
+            with mock.patch.object(collector, "detect_platform", return_value="win32-x64"), mock.patch.object(collector, "probe", side_effect=lambda path, name: infos[name]), mock.patch.dict(os.environ, {}, clear=True):
+                result = collector.collect(args)
+            manifest = json.loads(Path(result["source_manifest"]).read_text(encoding="utf-8"))
+            self.assertIs(manifest["local_preview"], True)
+            self.assertEqual(manifest["source_workflow_run_id"], 0)
+            self.assertEqual(manifest["source_workflow_ref"], "webcodex/local-preview")
+            self.assertEqual({item["probe"] for item in manifest["artifacts"].values()}, {"local-preview-host"})
+            self.assertFalse(any("refs/tags" in str(v) for v in manifest.values() if isinstance(v, str)))
+
     def test_rejects_mismatched_ci_context_before_probing_or_publishing(self):
         for variable in CI_CONTEXT:
             with self.subTest(variable=variable), tempfile.TemporaryDirectory() as temp:

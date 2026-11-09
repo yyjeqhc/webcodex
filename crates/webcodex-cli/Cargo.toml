@@ -8,6 +8,9 @@ edition.workspace = true
 name = "webcodex"
 path = "src/main.rs"
 
+[features]
+local-preview-installer = ["webcodex-environment/local-preview-installer"]
+
 [dependencies]
 webcodex-build-info = { path = "../webcodex-build-info" }
 webcodex = { path = "../.." }

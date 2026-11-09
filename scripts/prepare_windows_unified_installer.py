@@ -65,7 +65,7 @@ def pe_machine(path: Path) -> int:
     return int.from_bytes(data[offset + 4:offset + 6], "little")
 
 
-def validate_candidate(candidate_dir: Path, platform: str) -> tuple[dict, dict[str, Path]]:
+def validate_candidate(candidate_dir: Path, platform: str, *, local_preview: bool = False) -> tuple[dict, dict[str, Path]]:
     if platform not in TARGETS:
         raise ValueError("unsupported Windows target")
     root = candidate_dir.resolve(strict=True)
@@ -77,25 +77,33 @@ def validate_candidate(candidate_dir: Path, platform: str) -> tuple[dict, dict[s
         "platform", "target", "architecture", "desktop_runtime_contract", "artifacts", "desktop_payload",
     }
     target, arch, machine = TARGETS[platform]
+    if local_preview:
+        required.add("local_preview")
     if not isinstance(manifest, dict) or set(manifest) != required or manifest.get("schema_version") != 1:
         raise ValueError("unsupported Windows source manifest schema")
     if (manifest.get("platform"), manifest.get("target"), manifest.get("architecture")) != (platform, target, arch):
         raise ValueError("Windows source manifest platform, target, or architecture mismatch")
     if not isinstance(manifest.get("source_sha"), str) or not SOURCE_RE.fullmatch(manifest["source_sha"]):
         raise ValueError("Windows source manifest source SHA is invalid")
-    if type(manifest.get("source_workflow_run_id")) is not int or manifest["source_workflow_run_id"] <= 0:
-        raise ValueError("Windows source manifest CI run id is invalid")
     workflow_ref = manifest.get("source_workflow_ref")
-    if not isinstance(workflow_ref, str) or ".github/workflows/release-build.yml@refs/tags/" not in workflow_ref:
-        raise ValueError("Windows source manifest workflow ref is not the release-build tag job")
-    for variable, recorded in (
-        ("GITHUB_RUN_ID", str(manifest["source_workflow_run_id"])),
-        ("GITHUB_WORKFLOW_REF", workflow_ref),
-        ("GITHUB_SHA", manifest["source_sha"]),
-    ):
-        actual = os.environ.get(variable)
-        if actual is not None and actual.lower() != recorded.lower():
-            raise ValueError(f"Windows source manifest {variable} does not match GitHub Actions context")
+    if local_preview:
+        if manifest.get("local_preview") is not True or manifest.get("source_workflow_run_id") != 0 or workflow_ref != "webcodex/local-preview":
+            raise ValueError("Windows Local Preview manifest must declare honest offline provenance")
+        if any(os.environ.get(name) is not None for name in ("GITHUB_RUN_ID", "GITHUB_WORKFLOW_REF", "GITHUB_SHA")):
+            raise ValueError("Windows Local Preview cannot run as a release CI candidate")
+    else:
+        if type(manifest.get("source_workflow_run_id")) is not int or manifest["source_workflow_run_id"] <= 0:
+            raise ValueError("Windows source manifest CI run id is invalid")
+        if not isinstance(workflow_ref, str) or ".github/workflows/release-build.yml@refs/tags/" not in workflow_ref:
+            raise ValueError("Windows source manifest workflow ref is not the release-build tag job")
+        for variable, recorded in (
+            ("GITHUB_RUN_ID", str(manifest["source_workflow_run_id"])),
+            ("GITHUB_WORKFLOW_REF", workflow_ref),
+            ("GITHUB_SHA", manifest["source_sha"]),
+        ):
+            actual = os.environ.get(variable)
+            if actual is not None and actual.lower() != recorded.lower():
+                raise ValueError(f"Windows source manifest {variable} does not match GitHub Actions context")
     contract = manifest.get("desktop_runtime_contract")
     if not isinstance(contract, dict) or set(contract) != {"min_generation", "max_generation"}:
         raise ValueError("Windows Desktop Runtime contract is malformed")
@@ -120,8 +128,8 @@ def validate_candidate(candidate_dir: Path, platform: str) -> tuple[dict, dict[s
             raise ValueError(f"Windows component digest mismatch for {name}")
         if sums.get(relative.as_posix()) != item["sha256"]:
             raise ValueError(f"Windows component digest is not bound by SHA256SUMS: {name}")
-        if item.get("probe") != "native-build-job":
-            raise ValueError(f"Windows component was not collected by its native build job: {name}")
+        if item.get("probe") != ("local-preview-host" if local_preview else "native-build-job"):
+            raise ValueError(f"Windows component provenance does not match its build mode: {name}")
         info = item.get("build_info")
         if not isinstance(info, dict) or collector.package.canonical_digest(info) != item.get("build_info_sha256"):
             raise ValueError(f"Windows component build-info sidecar mismatch: {name}")
@@ -166,8 +174,8 @@ def require_guarded_bootstrap_contract(manifest: dict) -> None:
     if type(marker) is not int or marker != GUARDED_BOOTSTRAP_VERSION:
         raise ValueError("Windows outer bootstrap requires its same-source CLI guarded contract attestation")
 
-def prepare(candidate_dir: Path, output_dir: Path, platform_name: str) -> dict:
-    manifest, artifacts = validate_candidate(candidate_dir, platform_name)
+def prepare(candidate_dir: Path, output_dir: Path, platform_name: str, *, local_preview: bool = False) -> dict:
+    manifest, artifacts = validate_candidate(candidate_dir, platform_name, local_preview=local_preview)
     if output_dir.exists():
         raise ValueError(f"output already exists: {output_dir}")
     output_dir.mkdir(parents=True)
@@ -203,9 +211,10 @@ def main() -> int:
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--platform", choices=tuple(TARGETS), required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--local-preview", action="store_true", help="Offline Windows test; never published provenance")
     args = parser.parse_args()
     try:
-        result = prepare(args.candidate_dir, args.output_dir, args.platform)
+        result = prepare(args.candidate_dir, args.output_dir, args.platform, local_preview=args.local_preview)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise SystemExit(str(exc)) from exc
     print(json.dumps(result, sort_keys=True))

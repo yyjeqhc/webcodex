@@ -7,8 +7,10 @@ use rusqlite::{params, Connection};
 use std::collections::{BTreeSet, HashMap};
 use webcodex_core::workflow_session_contract::is_safe_job_id;
 
-// Window history is already bounded by ActionAudit retention. Keep the human
-// console able to inspect the retained set instead of imposing tiny UI-only caps.
+// Window activity reads are bounded by the limits below. The underlying
+// action_events ledger is not auto-pruned today (no retention is implemented
+// yet), so these caps bound what a read returns, not how much the ledger
+// grows.
 pub const MAX_WINDOW_ACTIVITY_LIMIT: usize = 2_000;
 pub const MAX_WINDOW_LINK_LIMIT: usize = 2_000;
 

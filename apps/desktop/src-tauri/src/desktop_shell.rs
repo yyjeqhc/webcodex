@@ -118,8 +118,10 @@ impl DockIconState {
     }
 }
 
-fn dock_icon_visible(hide_when_closed: bool, window_visible: bool) -> bool {
-    !hide_when_closed || window_visible
+fn dock_icon_visible(hide_when_closed: bool, window_visible: bool, reopening: bool) -> bool {
+    // A window being recreated needs foreground app status to take focus,
+    // even before its new WebView becomes visible.
+    !hide_when_closed || window_visible || reopening
 }
 
 #[cfg(target_os = "macos")]
@@ -132,12 +134,47 @@ fn apply_dock_icon(app: &AppHandle, visible: bool) {
 #[cfg(not(target_os = "macos"))]
 fn apply_dock_icon(_app: &AppHandle, _visible: bool) {}
 
-pub fn sync_dock_icon(app: &AppHandle) {
+fn dock_icon_should_be_visible(app: &AppHandle) -> bool {
     let window_visible = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .is_some_and(|window| window.is_visible().unwrap_or(false));
-    let hide_when_closed = app.state::<DockIconState>().hide_when_closed();
-    apply_dock_icon(app, dock_icon_visible(hide_when_closed, window_visible));
+    let reopening = app.state::<DesktopShellState>().with(|state| {
+        matches!(
+            state.phase,
+            lifecycle::Phase::Recreating { .. } | lifecycle::Phase::Destroying { reopen: true }
+        )
+    });
+    dock_icon_visible(
+        app.state::<DockIconState>().hide_when_closed(),
+        window_visible,
+        reopening,
+    )
+}
+
+pub fn sync_dock_icon(app: &AppHandle) {
+    let visible = dock_icon_should_be_visible(app);
+    apply_dock_icon(app, visible);
+
+    #[cfg(target_os = "macos")]
+    if !visible {
+        // tao ignores DockHide for one second after DockShow to avoid duplicate
+        // macOS Dock icons. A rapid show -> close (or preference toggle) can
+        // therefore leave the icon visible although the native call succeeded.
+        // Retry once after that grace period, checking current window intent
+        // so a later reopen cannot be hidden by a stale callback.
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+            let retry = handle.clone();
+            if let Err(error) = handle.run_on_main_thread(move || {
+                if !dock_icon_should_be_visible(&retry) {
+                    apply_dock_icon(&retry, false);
+                }
+            }) {
+                report_window_error(&window_error(error));
+            }
+        });
+    }
 }
 
 pub fn set_hide_dock_icon(app: &AppHandle, hide: bool) {
@@ -233,6 +270,7 @@ fn perform_open(app: &AppHandle, action: OpenAction) {
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                 if let Err(error) = show_existing(&window) {
                     report_window_error(&error);
+                    sync_dock_icon(app);
                 }
                 notify_navigation(app);
             } else {
@@ -287,6 +325,7 @@ fn recreate_main_window(app: &AppHandle, generation: u32) {
                         {
                             if let Err(error) = show_existing(&window) {
                                 report_window_error(&error);
+                                sync_dock_icon(&complete);
                             }
                             notify_navigation(&complete);
                         } else {
@@ -298,6 +337,7 @@ fn recreate_main_window(app: &AppHandle, generation: u32) {
                         complete
                             .state::<DesktopShellState>()
                             .with(|state| state.recreate_failed(generation));
+                        sync_dock_icon(&complete);
                         report_window_error(&error);
                     }
                 }
@@ -312,6 +352,7 @@ fn recreate_main_window(app: &AppHandle, generation: u32) {
     if spawned.is_err() {
         app.state::<DesktopShellState>()
             .with(|state| state.recreate_failed(generation));
+        sync_dock_icon(app);
         eprintln!("WebCodex window action failed: desktop_recreation_worker_unavailable");
     }
 }
@@ -420,10 +461,12 @@ mod tests {
 
     #[test]
     fn dock_icon_hides_only_for_a_closed_window_with_the_preference_on() {
-        assert!(!dock_icon_visible(true, false));
-        assert!(dock_icon_visible(true, true));
-        assert!(dock_icon_visible(false, false));
-        assert!(dock_icon_visible(false, true));
+        assert!(!dock_icon_visible(true, false, false));
+        assert!(dock_icon_visible(true, true, false));
+        assert!(dock_icon_visible(false, false, false));
+        assert!(dock_icon_visible(false, true, false));
+        // A delayed hide retry must not steal focus from an in-flight reopen.
+        assert!(dock_icon_visible(true, false, true));
     }
 
     #[test]

@@ -379,7 +379,11 @@ observe_job_call() {
     local job_id="$1"; local token="$2"; local wait_secs="$3"
     local encoded_token
     encoded_token="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$token")"
-    tool_call "observe_jobs" "{\"items\":[{\"job_id\":\"${job_id}\",\"after_observation_token\":${encoded_token}}],\"tail_lines\":40,\"wait_secs\":${wait_secs}}"
+    # The Server keeps its side of this call open for up to wait_secs while it
+    # waits for command-side progress; the curl deadline must cover that whole
+    # window plus transfer/processing margin, or the client aborts (exit 28)
+    # exactly when the Server legitimately uses its full wait budget.
+    tool_call "observe_jobs" "{\"items\":[{\"job_id\":\"${job_id}\",\"after_observation_token\":${encoded_token}}],\"tail_lines\":40,\"wait_secs\":${wait_secs}}" "$((wait_secs + 15))"
 }
 
 observe_one_job_call() {

@@ -88,11 +88,13 @@ jobs:
           }
           & py.exe -3.12 -c "import sys; assert sys.version_info[:2] == (3, 12)"
           if ($LASTEXITCODE -ne 0) { throw 'Python launcher could not locate Python 3.12' }
-      - name: Run Windows candidate/NSIS guard regressions
+      - name: Run Windows NSIS and offline provenance guard regressions
         shell: pwsh
         run: |
-          & py.exe -3.12 -m unittest scripts.tests.test_collect_unified_installer_inputs scripts.tests.test_prepare_windows_unified_installer
-          if ($LASTEXITCODE -ne 0) { throw 'Windows installer guard regressions failed' }
+          # The collector's other fixtures contain fake/non-executable PE bytes;
+          # they are tested on Linux, not executed as Windows applications.
+          & py.exe -3.12 -m unittest scripts.tests.test_prepare_windows_unified_installer scripts.tests.test_collect_unified_installer_inputs.NativeManifestCollectorTests.test_local_preview_collector_never_invents_a_ci_run
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Preview installer regressions failed' }
       - name: Build the exact-commit unsigned Unified Preview
         shell: pwsh
         run: |

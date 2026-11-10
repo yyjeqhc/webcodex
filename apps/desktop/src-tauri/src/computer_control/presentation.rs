@@ -1,16 +1,20 @@
 //! Native activity hints and local Escape detection never own execution authority.
+#[cfg(windows)]
 use std::sync::atomic::AtomicBool;
 #[cfg(windows)]
 use std::sync::atomic::Ordering;
+#[cfg(windows)]
 use tauri::{AppHandle, Manager};
 
 #[derive(Default)]
 pub struct Presentation {
+    #[cfg(windows)]
     pub controlling: AtomicBool,
     #[cfg(windows)]
     pub shortcut_ready: AtomicBool,
 }
 
+#[cfg(windows)]
 pub fn update_edge(app: &AppHandle, activity: bool) {
     let monitors = app.available_monitors().unwrap_or_default();
     for (index, monitor) in monitors.iter().enumerate().take(16) {

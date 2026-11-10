@@ -263,6 +263,7 @@ pub fn start_background_observer(app: &AppHandle) {
     });
 }
 
+#[cfg(windows)]
 pub fn start_computer_observer(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -613,6 +614,7 @@ pub(crate) fn handle_menu_event(app: &AppHandle, id: &str) {
     }
 }
 
+#[cfg(windows)]
 pub(crate) fn pause_computer(app: &AppHandle) {
     let observed = app
         .state::<TrayPresentationCache>()

@@ -1,4 +1,5 @@
 impl AppState {
+    #[cfg(test)]
     pub fn new(data_dir: PathBuf, resource_dir: PathBuf) -> DesktopResult<Self> {
         let desktop_data_dir = crate::desktop_data_dir::DesktopDataDir {
             effective: data_dir,
@@ -391,6 +392,7 @@ impl AppState {
         self.shutdown_with_deadline(deadline).await;
     }
 
+    #[cfg(any(windows, test))]
     pub(crate) async fn shutdown_until(&self, deadline: Deadline) {
         self.shutdown_with_deadline(Some(deadline)).await;
     }

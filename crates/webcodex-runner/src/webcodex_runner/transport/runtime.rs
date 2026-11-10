@@ -2,6 +2,12 @@
 
 use super::*;
 
+enum ProjectScanPublishOutcome {
+    Published,
+    Stale,
+    Stopped,
+}
+
 impl RunnerRuntimeState {
     pub(crate) fn new(cfg: &RunnerConfig, path: PathBuf) -> Self {
         Self::with_shutdown_budget(cfg, path, DEFAULT_SHUTDOWN_BUDGET)
@@ -87,23 +93,36 @@ impl RunnerRuntimeState {
         cache.get_with_shutdown(cfg, Some(shutdown.as_ref()))
     }
 
-    /// Registration and keepalive must not wait for serial Git probes. Reuse
-    /// an in-flight scan across reconnects, so only one scanner can run per
-    /// process. The existing shutdown flag, Git tree ownership, and bounded
-    /// background-thread drain still own cancellation and cleanup.
+    pub(super) fn project_metadata_summaries(
+        &self,
+        cfg: &RunnerConfig,
+    ) -> Vec<RunnerProjectSummary> {
+        let shutdown = self.shutdown_flag();
+        crate::webcodex_runner::projects::load_runner_project_metadata(cfg, Some(shutdown.as_ref()))
+    }
+
+    /// Registration, keepalive and the first authorized catalog must not wait
+    /// for serial Git probes. Reuse an in-flight scan across reconnects, so
+    /// only one scanner can run per process. The existing shutdown flag, Git
+    /// tree ownership, and bounded background-thread drain still own
+    /// cancellation and cleanup.
     pub(super) fn initial_project_scan(
         &self,
         cfg: &RunnerConfig,
     ) -> Result<ProjectScanReceiver, String> {
+        let metadata_runtime = self.clone();
+        let metadata_cfg = cfg.clone();
         let runtime = self.clone();
         let cfg = cfg.clone();
-        self.initial_project_scan_with(move || {
-            runtime.project_summaries(&mut RunnerProjectCache::default(), &cfg)
-        })
+        self.initial_project_scan_with(
+            move || metadata_runtime.project_metadata_summaries(&metadata_cfg),
+            move || runtime.project_summaries(&mut RunnerProjectCache::default(), &cfg),
+        )
     }
 
     pub(super) fn initial_project_scan_with(
         &self,
+        mut scan_metadata: impl FnMut() -> Vec<RunnerProjectSummary> + Send + 'static,
         mut scan_projects: impl FnMut() -> Vec<RunnerProjectSummary> + Send + 'static,
     ) -> Result<ProjectScanReceiver, String> {
         let mut scan = self
@@ -114,12 +133,15 @@ impl RunnerRuntimeState {
             return Err("project_inventory_scan_stopped".to_string());
         }
         if let Some(receiver) = scan.receiver.as_ref() {
-            if receiver.borrow().is_none() && receiver.has_changed().is_ok() {
+            let complete = receiver
+                .borrow()
+                .as_ref()
+                .is_some_and(|publication| publication.complete);
+            if !complete && receiver.has_changed().is_ok() {
                 return Ok(receiver.clone());
             }
         }
         self.background_threads.reap_finished();
-        scan.invalidated = false;
         let (sender, receiver) = tokio::sync::watch::channel(None);
         let runtime = self.clone();
         let handle = std::thread::Builder::new()
@@ -128,29 +150,85 @@ impl RunnerRuntimeState {
                 if runtime.shutdown_requested() {
                     break;
                 }
+                let generation = runtime.project_inventory_generation();
+                let metadata = scan_metadata();
+                match runtime.publish_project_scan(&sender, generation, metadata, false) {
+                    ProjectScanPublishOutcome::Published => {}
+                    ProjectScanPublishOutcome::Stale => continue,
+                    ProjectScanPublishOutcome::Stopped => break,
+                }
                 let projects = scan_projects();
-                let mut scan = runtime
-                    .initial_project_scan
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                if runtime.shutdown_requested() {
-                    break;
+                match runtime.publish_project_scan(&sender, generation, projects, true) {
+                    ProjectScanPublishOutcome::Stale => continue,
+                    ProjectScanPublishOutcome::Published | ProjectScanPublishOutcome::Stopped => {
+                        break
+                    }
                 }
-                if scan.invalidated {
-                    // Keep the one owned worker, but discard a catalog observed
-                    // before a Project mutation. Reconnects share this receiver.
-                    scan.invalidated = false;
-                    continue;
-                }
-                // Serialize publication with invalidation so an obsolete result
-                // cannot become the pending scan of a later connection.
-                let _ = sender.send(Some(Arc::new(projects)));
-                break;
             })
             .map_err(|_| "project_inventory_scan_start_failed".to_string())?;
         self.register_background_thread(handle);
         scan.receiver = Some(receiver.clone());
         Ok(receiver)
+    }
+
+    /// Serialize publication with invalidation so an obsolete catalog cannot
+    /// become the pending scan of a later connection. Reconnects share the
+    /// receiver, so a stale result restarts the one owned worker instead.
+    fn publish_project_scan(
+        &self,
+        sender: &tokio::sync::watch::Sender<Option<ProjectScanPublication>>,
+        generation: u64,
+        projects: Vec<RunnerProjectSummary>,
+        complete: bool,
+    ) -> ProjectScanPublishOutcome {
+        let scan = self
+            .initial_project_scan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if self.shutdown_requested() {
+            return ProjectScanPublishOutcome::Stopped;
+        }
+        if scan.generation != generation {
+            return ProjectScanPublishOutcome::Stale;
+        }
+        let _ = sender.send(Some(ProjectScanPublication {
+            projects: Arc::new(projects),
+            complete,
+            generation,
+        }));
+        ProjectScanPublishOutcome::Published
+    }
+
+    fn project_inventory_generation(&self) -> u64 {
+        self.initial_project_scan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .generation
+    }
+
+    /// Wait for a catalog this stream has not published. A catalog read before
+    /// the latest mutation stays unpublished even when it is already buffered.
+    pub(super) async fn next_project_scan_publication(
+        &self,
+        receiver: &mut ProjectScanReceiver,
+        last: Option<&ProjectScanPublication>,
+    ) -> Result<ProjectScanPublication, &'static str> {
+        loop {
+            let current = receiver.borrow_and_update().clone();
+            if let Some(publication) = current {
+                let already_published =
+                    last.is_some_and(|last| Arc::ptr_eq(&last.projects, &publication.projects));
+                if !already_published
+                    && publication.generation == self.project_inventory_generation()
+                {
+                    return Ok(publication);
+                }
+            }
+            receiver
+                .changed()
+                .await
+                .map_err(|_| "project_inventory_scan_failed")?;
+        }
     }
 
     pub(super) fn project_inventory_changes(&self) -> tokio::sync::watch::Receiver<()> {
@@ -166,7 +244,7 @@ impl RunnerRuntimeState {
             .initial_project_scan
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        scan.invalidated = true;
+        scan.generation = scan.generation.wrapping_add(1);
         // Runtime ownership preserves completion notifications from dispatches
         // whose original stream has already disconnected. Watch coalesces bursts.
         scan.changed.send_replace(());

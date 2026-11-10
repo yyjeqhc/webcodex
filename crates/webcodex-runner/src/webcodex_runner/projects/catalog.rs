@@ -674,6 +674,7 @@ fn load_runner_project_with_incarnation(file: &Path) -> Result<RunnerProjectFile
 
 fn load_runner_project_summaries_from_dir_with_shutdown(
     dir: &Path,
+    include_git: bool,
     shutdown: Option<&AtomicBool>,
 ) -> Vec<RunnerProjectSummary> {
     let entries = match std::fs::read_dir(dir) {
@@ -725,7 +726,10 @@ fn load_runner_project_summaries_from_dir_with_shutdown(
         }
         warn_empty_hook_commands(&file, &project);
         projects.push(runner_project_summary_with_shutdown(
-            &project, updated_at, true, shutdown,
+            &project,
+            updated_at,
+            include_git,
+            shutdown,
         ));
     }
     projects.sort_by(|a, b| a.id.cmp(&b.id));
@@ -733,11 +737,28 @@ fn load_runner_project_summaries_from_dir_with_shutdown(
 }
 
 pub(crate) fn load_runner_project_summaries_from_dir(dir: &Path) -> Vec<RunnerProjectSummary> {
-    load_runner_project_summaries_from_dir_with_shutdown(dir, None)
+    load_runner_project_summaries_from_dir_with_shutdown(dir, true, None)
+}
+
+/// The validated registration catalog without any Git probe. Absent Git fields
+/// mean unknown or pending, never a clean or empty repository.
+pub(crate) fn load_runner_project_metadata(
+    cfg: &RunnerConfig,
+    shutdown: Option<&AtomicBool>,
+) -> Vec<RunnerProjectSummary> {
+    load_runner_project_catalog(cfg, false, shutdown)
 }
 
 fn load_runner_project_summaries(
     cfg: &RunnerConfig,
+    shutdown: Option<&AtomicBool>,
+) -> Vec<RunnerProjectSummary> {
+    load_runner_project_catalog(cfg, true, shutdown)
+}
+
+fn load_runner_project_catalog(
+    cfg: &RunnerConfig,
+    include_git: bool,
     shutdown: Option<&AtomicBool>,
 ) -> Vec<RunnerProjectSummary> {
     // Loaded configs always carry a materialized project_registry_dir; a bare
@@ -750,7 +771,7 @@ fn load_runner_project_summaries(
             return Vec::new();
         }
     };
-    load_runner_project_summaries_from_dir_with_shutdown(&dir, shutdown)
+    load_runner_project_summaries_from_dir_with_shutdown(&dir, include_git, shutdown)
 }
 
 impl RunnerProjectCache {

@@ -65,13 +65,15 @@ When upgrading an older installation across the 0.4 boundary, upgrade the first-
 
 The exact protocol-generation field names, baseline capability list, registration grammar, and compatibility-test matrix are maintainer/wire-contract details and are intentionally omitted from this operations guide.
 
-Streaming Runners register before gathering project Git metadata. The initial
-project catalog is scanned in one process-owned background worker, then sent
-through the usual acknowledged inventory pages. Registration, keepalive and
-shutdown remain responsive while a large or slow catalog is being inspected;
-project inventory can still be pending just after the Runner connects. Reconnects
-reuse an in-flight scan, and process shutdown cancels its Git probes through the
-existing owned-tree cleanup path.
+Streaming Runners register before gathering project Git metadata. One
+process-owned background worker first publishes the validated project catalog
+through the usual acknowledged inventory pages, then replaces it once Git details
+are known. Until then a Project's `git_branch`, `git_head` and `git_dirty` are
+absent, which means unknown, not clean. Registration, keepalive and shutdown
+remain responsive while a large or slow catalog is being inspected. A Project
+mutation republishes the catalog immediately and restarts enrichment, so an older
+result is never published. Reconnects reuse an in-flight scan, and process
+shutdown cancels its Git probes through the existing owned-tree cleanup path.
 
 A ChatGPT Host message that the current conversation does not support developer
 MCPs is not a Runner heartbeat or reconnect result. If ChatGPT cannot dispatch

@@ -54,12 +54,51 @@ pub(crate) struct InstructionsConfig {
     pub(crate) files: Vec<PathBuf>,
 }
 
+fn validate_managed_worktree_root_config(policy: &RunnerPolicy) -> Result<(), String> {
+    let Some(path) = policy.managed_worktree_root.as_ref() else {
+        return Ok(());
+    };
+    if !path.is_absolute() || webcodex_runner_config::paths::project_path_has_parent_traversal(path)
+    {
+        return Err(
+            "policy.managed_worktree_root must be an absolute path without parent traversal"
+                .to_string(),
+        );
+    }
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        format!("policy.managed_worktree_root must be an existing directory: {error}")
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(
+            "policy.managed_worktree_root must be an existing non-redirected directory".to_string(),
+        );
+    }
+    let canonical = std::fs::canonicalize(path).map_err(|error| {
+        format!("policy.managed_worktree_root cannot be canonicalized: {error}")
+    })?;
+    if !webcodex_runner_config::paths::paths_equal(path, &canonical) {
+        return Err(
+            "policy.managed_worktree_root must not contain redirected path components".to_string(),
+        );
+    }
+    let roots =
+        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
+    if !roots
+        .iter()
+        .any(|root| webcodex_runner_config::paths::path_is_within(&canonical, root))
+    {
+        return Err(
+            "policy.managed_worktree_root must be inside effective allowed_roots".to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub(crate) struct SkillsConfig {
     #[serde(default)]
     pub(crate) roots: Vec<PathBuf>,
 }
-
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct RunnerConfig {
     pub(crate) server_url: String,
@@ -375,6 +414,11 @@ pub(crate) struct RunnerPolicy {
     pub(crate) allow_cwd_anywhere: bool,
     #[serde(default)]
     pub(crate) allowed_roots: Vec<PathBuf>,
+    /// Optional operator-selected central namespace for new managed
+    /// worktrees. It is validated against the effective roots at config load
+    /// and revalidated against the live filesystem before each operation.
+    #[serde(default)]
+    pub(crate) managed_worktree_root: Option<PathBuf>,
     #[serde(default = "default_max_timeout_secs")]
     pub(crate) max_timeout_secs: u64,
     /// Per-stream Runner capture/presentation policy for stdout and stderr.
@@ -389,6 +433,7 @@ impl Default for RunnerPolicy {
             allow_raw_shell: true,
             allow_cwd_anywhere: false,
             allowed_roots: Vec::new(),
+            managed_worktree_root: None,
             max_timeout_secs: DEFAULT_MAX_TIMEOUT_SECS,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
         }
@@ -1072,6 +1117,12 @@ fn reload_error_diagnostic(
             Some(RunnerConfigErrorReason::InvalidPath),
         );
     }
+    if error.starts_with("policy.managed_worktree_root") {
+        return (
+            Some(RunnerConfigErrorField::ManagedWorktreeRoot),
+            Some(RunnerConfigErrorReason::InvalidPath),
+        );
+    }
     OUT_OF_RANGE_FIELDS
         .iter()
         .find_map(|(prefix, field)| {
@@ -1649,6 +1700,7 @@ pub(crate) fn load_config_with_server_url(
     let effective =
         effective_allowed_roots(&cfg.policy.allowed_roots, cfg.policy.allow_cwd_anywhere)?;
     cfg.policy.allowed_roots = effective;
+    validate_managed_worktree_root_config(&cfg.policy)?;
     if cfg.project_registry_dir.is_none() {
         cfg.project_registry_dir = Some(default_project_registry_dir()?);
     }

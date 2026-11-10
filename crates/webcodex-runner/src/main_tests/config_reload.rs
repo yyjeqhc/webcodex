@@ -236,6 +236,121 @@ fn instruction_files_do_not_expand_project_allowed_roots() {
 }
 
 #[test]
+fn managed_worktree_root_is_hot_reloadable_and_rejects_invalid_values() {
+    let (tmp, path, runtime) = reload_fixture();
+    // An explicit temp root is portable: "/" is not the Temp directory's
+    // drive on Windows and must not authorize the configured worktree root.
+    let allowed_root = format!(
+        "policy.allowed_roots = [{:?}]",
+        tmp.path().canonicalize().unwrap().to_string_lossy()
+    );
+    let central = tmp.path().join("central-worktrees");
+    std::fs::create_dir(&central).unwrap();
+    let central = central.canonicalize().unwrap();
+    let valid = reload_toml(
+        "oe",
+        None,
+        60,
+        1024,
+        "sh",
+        "native",
+        false,
+        "claude",
+        "project_search_generation_1",
+    )
+    .replace("policy.allowed_roots = [\"/\"]", &allowed_root)
+    .replace(
+        "policy.max_output_bytes = 1024",
+        &format!(
+            "policy.max_output_bytes = 1024\npolicy.managed_worktree_root = {:?}",
+            central.to_string_lossy()
+        ),
+    );
+    std::fs::write(&path, valid).unwrap();
+    let checked = runtime.check_config();
+    assert_eq!(checked.valid, Some(true));
+    assert!(!checked.restart_required);
+    assert_eq!(runtime.reload().generation, 2);
+    assert_eq!(
+        runtime.snapshot().policy.managed_worktree_root,
+        Some(central.clone())
+    );
+
+    std::fs::write(
+        &path,
+        reload_toml(
+            "oe",
+            None,
+            60,
+            1024,
+            "sh",
+            "native",
+            false,
+            "claude",
+            "project_search_generation_2",
+        )
+        .replace("policy.allowed_roots = [\"/\"]", &allowed_root)
+        .replace(
+            "policy.max_output_bytes = 1024",
+            &format!(
+                "policy.max_output_bytes = 1024\npolicy.managed_worktree_root = {:?}",
+                tmp.path().join("missing").to_string_lossy()
+            ),
+        ),
+    )
+    .unwrap();
+    let rejected = runtime.check_config();
+    assert_eq!(rejected.valid, Some(false));
+    assert_eq!(
+        rejected.error_field,
+        Some(runner_protocol::RunnerConfigErrorField::ManagedWorktreeRoot)
+    );
+    assert_eq!(
+        rejected.error_reason,
+        Some(runner_protocol::RunnerConfigErrorReason::InvalidPath)
+    );
+    assert_eq!(
+        runtime.snapshot().policy.managed_worktree_root,
+        Some(central)
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let target = tmp.path().join("real-central");
+        let redirected = tmp.path().join("redirected-central");
+        std::fs::create_dir(&target).unwrap();
+        symlink(&target, &redirected).unwrap();
+        let candidate = reload_toml(
+            "oe",
+            None,
+            60,
+            1024,
+            "sh",
+            "native",
+            false,
+            "claude",
+            "project_search_generation_3",
+        )
+        .replace("policy.allowed_roots = [\"/\"]", &allowed_root)
+        .replace(
+            "policy.max_output_bytes = 1024",
+            &format!(
+                "policy.max_output_bytes = 1024\npolicy.managed_worktree_root = {:?}",
+                redirected.to_string_lossy()
+            ),
+        );
+        std::fs::write(&path, candidate).unwrap();
+        let checked = runtime.check_config();
+        assert_eq!(checked.valid, Some(false));
+        assert_eq!(
+            checked.error_field,
+            Some(runner_protocol::RunnerConfigErrorField::ManagedWorktreeRoot)
+        );
+    }
+}
+
+#[test]
 fn invalid_instruction_paths_are_structured_config_diagnostics() {
     let (_tmp, path, runtime) = reload_fixture();
     let base = reload_toml(

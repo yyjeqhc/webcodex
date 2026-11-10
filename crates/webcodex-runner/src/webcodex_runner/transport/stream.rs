@@ -276,6 +276,7 @@ where
         #[cfg(test)]
         InitialProjectInventory::Disabled => (None, None),
     };
+    let mut last_scan_publication: Option<ProjectScanPublication> = None;
     let mut project_inventory = if initial_scan.is_some() {
         StreamingProjectInventoryCoordinator::pending_scan()
     } else {
@@ -294,13 +295,9 @@ where
         let project_inventory_retry_deadline =
             project_inventory_retry_at.unwrap_or_else(tokio::time::Instant::now);
         tokio::select! {
-            projects = async {
+            publication = async {
                 let receiver = initial_scan.as_mut().expect("guarded pending scan");
-                if receiver.borrow().is_none() {
-                    receiver.changed().await.map_err(|_| "project_inventory_scan_failed")?;
-                }
-                let projects = receiver.borrow().clone().ok_or("project_inventory_scan_failed")?;
-                Ok::<_, &str>(projects)
+                runtime.next_project_scan_publication(receiver, last_scan_publication.as_ref()).await
             }, if initial_scan.is_some() => {
                 // A result and a mutation can become ready together. Keep the
                 // receiver pending until the known dirty notification replaces
@@ -308,15 +305,28 @@ where
                 if project_inventory_refresh_rx.has_changed().unwrap_or(false) {
                     continue;
                 }
-                initial_scan = None;
-                let projects = match projects {
-                    Ok(projects) => projects,
+                let publication = match publication {
+                    Ok(publication) => publication,
+                    Err(_) if last_scan_publication.is_some() => {
+                        // The catalog is already published; only its Git details
+                        // are unavailable, and absent fields already mean unknown.
+                        initial_scan = None;
+                        last_scan_publication = None;
+                        continue;
+                    }
                     Err(error) => {
                         session_error = Some(error.to_string());
                         break;
                     }
                 };
-                project_inventory = StreamingProjectInventoryCoordinator::new(Some(paged_sync_after_registration((*projects).clone())));
+                let projects = (*publication.projects).clone();
+                if publication.complete {
+                    initial_scan = None;
+                    last_scan_publication = None;
+                } else {
+                    last_scan_publication = Some(publication);
+                }
+                project_inventory = StreamingProjectInventoryCoordinator::new(Some(paged_sync_after_registration(projects)));
                 project_inventory.queue_pending(transport, &out_tx);
             }
             _ = tokio::time::sleep_until(project_inventory_retry_deadline), if project_inventory_retry_at.is_some() => {
@@ -325,6 +335,15 @@ where
             refresh = project_inventory_refresh_rx.changed() => {
                 if refresh.is_ok() {
                     if initial_scan.is_some() {
+                        if last_scan_publication.is_some() {
+                            project_inventory.refresh_from_project_metadata(
+                                transport,
+                                cfg,
+                                runtime,
+                                &out_tx,
+                                "project_inventory_local_project_mutation",
+                            );
+                        }
                         // Reuse the dirty worker, or replace an already completed
                         // but unconsumed scan. Never run a second synchronous Git
                         // scan on the stream thread while initial discovery waits.

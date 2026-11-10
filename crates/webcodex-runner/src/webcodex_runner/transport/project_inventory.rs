@@ -37,14 +37,24 @@ pub(super) enum InitialProjectInventory {
     Disabled,
 }
 
-pub(super) type ProjectScanReceiver =
-    tokio::sync::watch::Receiver<Option<std::sync::Arc<Vec<RunnerProjectSummary>>>>;
+/// One stage of the initial scan. The registration catalog is published first
+/// with unknown Git fields, then replaced once when Git enrichment completes.
+#[derive(Clone)]
+pub(super) struct ProjectScanPublication {
+    pub(super) projects: std::sync::Arc<Vec<RunnerProjectSummary>>,
+    pub(super) complete: bool,
+    /// Inventory generation the catalog was read under. A later Project
+    /// mutation makes it stale even if a stream has not consumed it yet.
+    pub(super) generation: u64,
+}
+
+pub(super) type ProjectScanReceiver = tokio::sync::watch::Receiver<Option<ProjectScanPublication>>;
 
 /// Shared across transport sessions so a mutation fences an in-flight scan even
 /// after its original stream disconnects.
 pub(super) struct InitialProjectScanState {
     pub(super) receiver: Option<ProjectScanReceiver>,
-    pub(super) invalidated: bool,
+    pub(super) generation: u64,
     pub(super) changed: tokio::sync::watch::Sender<()>,
 }
 
@@ -53,7 +63,7 @@ impl Default for InitialProjectScanState {
         let (changed, _) = tokio::sync::watch::channel(());
         Self {
             receiver: None,
-            invalidated: false,
+            generation: 0,
             changed,
         }
     }
@@ -468,6 +478,33 @@ impl StreamingProjectInventoryCoordinator {
         }
         self.project_cache.invalidate();
         let projects = runtime.project_summaries(&mut self.project_cache, cfg);
+        self.replace_projects(projects, transport, out_tx, reason_code);
+    }
+
+    /// A mutation during Git enrichment must not leave the older catalog
+    /// visible until the worker finishes, and needs no Git probe to correct it.
+    pub(super) fn refresh_from_project_metadata(
+        &mut self,
+        transport: StreamTransport,
+        cfg: &RunnerConfig,
+        runtime: &RunnerRuntimeState,
+        out_tx: &tokio::sync::mpsc::Sender<RunnerEnvelope>,
+        reason_code: &str,
+    ) {
+        if !self.supported {
+            return;
+        }
+        let projects = runtime.project_metadata_summaries(cfg);
+        self.replace_projects(projects, transport, out_tx, reason_code);
+    }
+
+    fn replace_projects(
+        &mut self,
+        projects: Vec<RunnerProjectSummary>,
+        transport: StreamTransport,
+        out_tx: &tokio::sync::mpsc::Sender<RunnerEnvelope>,
+        reason_code: &str,
+    ) {
         let projects_count = projects.len();
         self.sync = Some(ProjectInventorySync::new(projects));
         self.retry_backoff.reset();

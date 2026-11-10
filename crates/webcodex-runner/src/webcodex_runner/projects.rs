@@ -24,6 +24,7 @@ mod lifecycle;
 mod managed_worktree;
 mod registration;
 
+pub(crate) use catalog::load_runner_project_metadata;
 pub(crate) use catalog::{
     find_project_shell_context, find_project_shell_context_by_id,
     load_runner_project_summaries_from_dir, project_root_fingerprint,

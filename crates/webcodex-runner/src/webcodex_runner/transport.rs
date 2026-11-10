@@ -54,7 +54,7 @@ use project_inventory::{
 use project_inventory::{
     log_project_inventory_degraded, paged_sync_after_registration, polling_projects_for_poll,
     InitialProjectInventory, InitialProjectScanState, PollingProjectRefresh, ProjectInventorySync,
-    ProjectScanReceiver, StreamingProjectInventoryCoordinator,
+    ProjectScanPublication, ProjectScanReceiver, StreamingProjectInventoryCoordinator,
 };
 use registration::{build_register_request_with_provider_status, register, RegisterRecoveryAction};
 use reqwest::blocking::Client;

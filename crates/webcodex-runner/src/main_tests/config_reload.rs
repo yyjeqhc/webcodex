@@ -238,6 +238,12 @@ fn instruction_files_do_not_expand_project_allowed_roots() {
 #[test]
 fn managed_worktree_root_is_hot_reloadable_and_rejects_invalid_values() {
     let (tmp, path, runtime) = reload_fixture();
+    // An explicit temp root is portable: "/" is not the Temp directory's
+    // drive on Windows and must not authorize the configured worktree root.
+    let allowed_root = format!(
+        "policy.allowed_roots = [{:?}]",
+        tmp.path().canonicalize().unwrap().to_string_lossy()
+    );
     let central = tmp.path().join("central-worktrees");
     std::fs::create_dir(&central).unwrap();
     let central = central.canonicalize().unwrap();
@@ -252,6 +258,7 @@ fn managed_worktree_root_is_hot_reloadable_and_rejects_invalid_values() {
         "claude",
         "project_search_generation_1",
     )
+    .replace("policy.allowed_roots = [\"/\"]", &allowed_root)
     .replace(
         "policy.max_output_bytes = 1024",
         &format!(
@@ -282,6 +289,7 @@ fn managed_worktree_root_is_hot_reloadable_and_rejects_invalid_values() {
             "claude",
             "project_search_generation_2",
         )
+        .replace("policy.allowed_roots = [\"/\"]", &allowed_root)
         .replace(
             "policy.max_output_bytes = 1024",
             &format!(
@@ -324,6 +332,7 @@ fn managed_worktree_root_is_hot_reloadable_and_rejects_invalid_values() {
             "claude",
             "project_search_generation_3",
         )
+        .replace("policy.allowed_roots = [\"/\"]", &allowed_root)
         .replace(
             "policy.max_output_bytes = 1024",
             &format!(

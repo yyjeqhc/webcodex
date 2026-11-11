@@ -1258,6 +1258,49 @@ mod tests {
         assert!(build_download_client(None, None).is_ok());
     }
 
+    #[tokio::test]
+    async fn local_openai_file_proxy_client_performs_connect_via_loopback() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local test listener");
+        let local_port = listener.local_addr().unwrap().port();
+        let proxy = parse_loopback_openai_file_proxy(&format!("http://127.0.0.1:{local_port}"))
+            .expect("valid local proxy");
+        let client = build_download_client(None, Some(&proxy))
+            .expect("client must accept explicit loopback proxy");
+        let probe = tokio::spawn(async move {
+            let (mut connection, _) = listener.accept().await.expect("CONNECT should arrive");
+            let mut buf = [0u8; 2048];
+            let count = connection
+                .read(&mut buf)
+                .await
+                .expect("read CONNECT request");
+            let request = String::from_utf8_lossy(&buf[..count]);
+            assert!(
+                request.starts_with("CONNECT files.oaiusercontent.com:443 HTTP/1.1"),
+                "unexpected CONNECT target"
+            );
+            connection
+                .write_all(
+                    b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n",
+                )
+                .await
+                .expect("reply to CONNECT");
+        });
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.get("https://files.oaiusercontent.com/file").send(),
+        )
+        .await
+        .expect("the mocked proxy must respond promptly");
+        tokio::time::timeout(Duration::from_secs(5), probe)
+            .await
+            .expect("the local proxy was not contacted")
+            .expect("proxy probe failed");
+    }
+
     #[test]
     fn local_openai_file_proxy_remains_host_and_session_scoped() {
         let allowed = TrustedDownloadTarget {

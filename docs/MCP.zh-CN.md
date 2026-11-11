@@ -296,6 +296,17 @@ credential 认证的 ChatGPT host-file rewrite。WebCodex Desktop 自 v0.4.2 起
 该 credential，并只把它注入原生 Tunnel 的固定本地 Authorization；用户不应复制或暴露该
 credential。独立/network-accessible Server 仍默认关闭，不应使用它替代 OAuth。
 
+
+如果仅监听 loopback 的 Desktop Server 通过本地 HTTP 代理访问外网，并且 OpenAI
+附件域名被代理 DNS 解析成 Fake-IP，可信 tunnel 已通过 Fake-IP 准入检查后，
+直接建立 TLS 连接仍可能失败。运维者可以在 Server 环境中显式设置
+`WEBCODEX_OPENAI_FILE_IMPORT_PROXY=http://127.0.0.1:PORT`，然后重启 Server；
+也支持 `http://[::1]:PORT`。该配置默认关闭，只作用于可信本机 MCP 来源的
+OpenAI 附件域名，不会代理普通 trusted MCP URL 或远程认证导入。
+TLS 证书验证和禁止重定向仍然生效。不过，HTTP CONNECT 代理会自行选择上游地址，
+不会使用 WebCodex 直连模式固定的 DNS 地址，因此只能配置自己控制且信任的本机代理。
+配置不接受远程代理地址、带凭据的 URL 或主机名形式的代理端点。
+
 如果在 Windows 上使用普通独立 Server + Runner 并通过 OpenAI Tunnel 接入，或排查“本地 MCP 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。它是深入配置/排障文档，不是普通用户第一次必须阅读的教程。
 
 ## 结果卡片

@@ -434,7 +434,9 @@ fn select_loopback_openai_file_proxy(
         .as_deref()
         .is_some_and(is_openai_download_host)
     {
-        return Err("OpenAI file proxy is restricted to OpenAI attachment hosts".to_string());
+        // Preserve the normal direct-download path for unrelated trusted MCP
+        // URLs even when the operator enables the OpenAI-specific proxy.
+        return Ok(None);
     }
     Ok(Some(parse_loopback_openai_file_proxy(value)?))
 }
@@ -1343,7 +1345,8 @@ mod tests {
             ConversationImportDownloadPolicy::LoopbackTrustedMcpHostFile,
             Some(endpoint)
         )
-        .is_err());
+        .unwrap()
+        .is_none());
     }
 
     #[test]

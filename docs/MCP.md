@@ -99,6 +99,21 @@ authorization; users should not copy or expose that credential. Independent/netw
 accessible Servers remain off by default and must not use this as a substitute for
 OAuth.
 
+
+When a loopback-only Desktop Server is behind a local HTTP proxy and OpenAI
+attachment domains resolve to a proxy-managed fake IP, direct TLS connections
+may fail even after the trusted tunnel's fake-IP admission succeeds. Operators
+may opt in to the **OpenAI host-file import only** proxy by setting
+`WEBCODEX_OPENAI_FILE_IMPORT_PROXY=http://127.0.0.1:PORT` in the Server
+environment and restarting the Server. IPv6 `http://[::1]:PORT` is also
+accepted. The setting defaults to off and is ignored for ordinary trusted MCP
+URLs and remote authenticated imports; it requires an explicitly trusted
+loopback MCP source and an allowlisted OpenAI attachment hostname. TLS server
+certificate verification and redirect rejection remain enabled. The HTTP
+CONNECT proxy chooses the upstream address instead of WebCodex's directly
+pinned DNS addresses, so use only a proxy you control and trust; no remote
+proxy endpoints, credentials, or hostnames are accepted as proxy settings.
+
 For a regular independent Windows Server + Runner reached through OpenAI Tunnel, or to troubleshoot a case where local MCP is healthy but ChatGPT Connector creation still fails, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material, not required reading for a first-time user.
 
 ## Result cards

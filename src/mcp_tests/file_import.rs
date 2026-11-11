@@ -185,6 +185,47 @@ async fn start_mcp_import_mock_server(response: Vec<u8>) -> McpImportMockServer 
     }
 }
 
+#[tokio::test]
+async fn mcp_import_loopback_proxy_sends_https_connect() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("local test listener");
+    let local_port = listener.local_addr().unwrap().port();
+    let client = crate::tool_runtime::conversation_import::build_loopback_proxy_client_for_test(
+        &format!("http://127.0.0.1:{local_port}"),
+    )
+    .expect("client must accept an explicit loopback proxy");
+    let probe = tokio::spawn(async move {
+        let (mut connection, _) = listener.accept().await.expect("CONNECT should arrive");
+        let mut buf = [0u8; 2048];
+        let count = connection
+            .read(&mut buf)
+            .await
+            .expect("read CONNECT request");
+        let request = String::from_utf8_lossy(&buf[..count]);
+        assert!(
+            request.starts_with("CONNECT files.oaiusercontent.com:443 HTTP/1.1"),
+            "unexpected CONNECT target"
+        );
+        connection
+            .write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .expect("reply to CONNECT");
+    });
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.get("https://files.oaiusercontent.com/file").send(),
+    )
+    .await
+    .expect("the mocked proxy must respond promptly");
+    tokio::time::timeout(std::time::Duration::from_secs(5), probe)
+        .await
+        .expect("the local proxy was not contacted")
+        .expect("proxy probe failed");
+}
+
 fn mcp_import_config(trusted_client_ids: &[&str]) -> Arc<crate::Config> {
     let mut config = (*test_config_oauth2(Some("secret"))).clone();
     config.oauth2.trusted_mcp_file_client_ids = trusted_client_ids

@@ -392,13 +392,97 @@ async fn validate_trusted_mcp_download_url(
     })
 }
 
+const LOOPBACK_OPENAI_FILE_PROXY_ENV: &str = "WEBCODEX_OPENAI_FILE_IMPORT_PROXY";
+
+fn parse_loopback_openai_file_proxy(raw: &str) -> Result<reqwest::Url, String> {
+    let proxy = reqwest::Url::parse(raw)
+        .map_err(|_| "OpenAI file proxy must be a valid loopback HTTP URL".to_string())?;
+    let loopback = match proxy.host() {
+        Some(url::Host::Ipv4(ip)) => ip == Ipv4Addr::LOCALHOST,
+        Some(url::Host::Ipv6(ip)) => ip == Ipv6Addr::LOCALHOST,
+        _ => false,
+    };
+    // url::Url normalizes explicit HTTP :80 to no stored port, so inspect
+    // the original authority to distinguish :80 from an omitted port.
+    let explicit_port = raw
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split(['/', '?', '#']).next())
+        .and_then(|authority| authority.rsplit_once(':'))
+        .and_then(|(_, port)| port.parse::<u16>().ok());
+    if proxy.scheme() != "http"
+        || !loopback
+        || explicit_port.is_none()
+        || !proxy.username().is_empty()
+        || proxy.password().is_some()
+        || proxy.path() != "/"
+        || proxy.query().is_some()
+        || proxy.fragment().is_some()
+    {
+        return Err(
+            "OpenAI file proxy must be http://127.0.0.1:PORT or http://[::1]:PORT".to_string(),
+        );
+    }
+    Ok(proxy)
+}
+
+fn select_loopback_openai_file_proxy(
+    target: &TrustedDownloadTarget,
+    policy: ConversationImportDownloadPolicy,
+    value: Option<&str>,
+) -> Result<Option<reqwest::Url>, String> {
+    if policy != ConversationImportDownloadPolicy::LoopbackTrustedMcpHostFile {
+        return Ok(None);
+    }
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if !target
+        .resolver_host
+        .as_deref()
+        .is_some_and(is_openai_download_host)
+    {
+        // Preserve the normal direct-download path for unrelated trusted MCP
+        // URLs even when the operator enables the OpenAI-specific proxy.
+        return Ok(None);
+    }
+    Ok(Some(parse_loopback_openai_file_proxy(value)?))
+}
+
+fn configured_loopback_openai_file_proxy(
+    target: &TrustedDownloadTarget,
+    policy: ConversationImportDownloadPolicy,
+) -> Result<Option<reqwest::Url>, String> {
+    // Never proxy arbitrary trusted-MCP URLs or remote OAuth imports. The
+    // explicit local proxy is an opt-in trust boundary for OpenAI attachments
+    // on the local Desktop/Secure-Tunnel session only.
+    if policy != ConversationImportDownloadPolicy::LoopbackTrustedMcpHostFile {
+        return Ok(None);
+    }
+    let value = match std::env::var(LOOPBACK_OPENAI_FILE_PROXY_ENV) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(_) => return Err("OpenAI file proxy setting is not valid UTF-8".to_string()),
+    };
+    select_loopback_openai_file_proxy(target, policy, Some(&value))
+}
+
 fn build_download_client(
     trusted_target: Option<&TrustedDownloadTarget>,
+    local_proxy: Option<&reqwest::Url>,
 ) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none());
-    if let Some(target) = trusted_target {
+    if let Some(proxy) = local_proxy {
+        // An HTTP CONNECT proxy cannot guarantee that the proxy-selected
+        // upstream IP equals the prevalidated DNS answer. Restrict this opt-in
+        // path to an explicit loopback proxy, authenticated local-session
+        // provenance, and allowlisted OpenAI hosts; HTTPS verification remains
+        // enabled. The default direct path retains DNS address pinning.
+        let proxy = reqwest::Proxy::https(proxy.as_str())
+            .map_err(|_| "failed to configure loopback OpenAI file proxy".to_string())?;
+        builder = builder.proxy(proxy);
+    } else if let Some(target) = trusted_target {
         if let Some(host) = target.resolver_host.as_deref() {
             builder = builder.resolve_to_addrs(host, &target.pinned_addrs);
         }
@@ -406,6 +490,14 @@ fn build_download_client(
     builder
         .build()
         .map_err(|_| "failed to build bounded import HTTP client".to_string())
+}
+
+#[cfg(test)]
+pub(crate) fn build_loopback_proxy_client_for_test(
+    endpoint: &str,
+) -> Result<reqwest::Client, String> {
+    let proxy = parse_loopback_openai_file_proxy(endpoint)?;
+    build_download_client(None, Some(&proxy))
 }
 
 async fn prepare_download_request(
@@ -420,7 +512,7 @@ async fn prepare_download_request(
                 TrustedMcpAddressPolicy::PublicOnly,
             )
             .await?;
-            let client = build_download_client(Some(&target))?;
+            let client = build_download_client(Some(&target), None)?;
             Ok((client, request_url_for_download(target.url)))
         }
         ConversationImportDownloadPolicy::LoopbackTrustedMcpHostFile => {
@@ -429,7 +521,8 @@ async fn prepare_download_request(
                 TrustedMcpAddressPolicy::PublicOrOpenAiRfc2544FakeIp,
             )
             .await?;
-            let client = build_download_client(Some(&target))?;
+            let local_proxy = configured_loopback_openai_file_proxy(&target, policy)?;
+            let client = build_download_client(Some(&target), local_proxy.as_ref())?;
             Ok((client, request_url_for_download(target.url)))
         }
         ConversationImportDownloadPolicy::TrustedMcpHostFile => {
@@ -438,7 +531,7 @@ async fn prepare_download_request(
                 TrustedMcpAddressPolicy::PublicOnly,
             )
             .await?;
-            let client = build_download_client(Some(&target))?;
+            let client = build_download_client(Some(&target), None)?;
             Ok((client, request_url_for_download(target.url)))
         }
     }
@@ -1154,6 +1247,89 @@ mod tests {
 
         set_import_test_resolved_ips(None);
         reset_import_test_dns_resolution_count();
+    }
+
+    #[test]
+    fn local_openai_file_proxy_accepts_only_explicit_loopback_http_endpoints() {
+        for (good, port) in [
+            ("http://127.0.0.1:10090", 10090),
+            ("http://[::1]:10090", 10090),
+            ("http://127.0.0.1:80", 80),
+            ("http://[::1]:80", 80),
+            ("http://127.0.0.1:80/", 80),
+        ] {
+            let url = parse_loopback_openai_file_proxy(good).expect(good);
+            assert_eq!(url.scheme(), "http");
+            assert_eq!(url.port_or_known_default(), Some(port));
+            if port == 80 {
+                assert_eq!(url.port(), None, "the default port is normalized away");
+            }
+        }
+        for bad in [
+            "https://127.0.0.1:10090",
+            "http://localhost:10090",
+            "http://10.0.0.1:10090",
+            "http://127.0.0.2:10090",
+            "http://198.18.0.42:10090",
+            "http://127.0.0.1",
+            "http://[::1]",
+            "http://127.0.0.1/",
+            "http://127.0.0.1:10090/path",
+            "http://127.0.0.1:10090/?query=1",
+            "http://user:pass@127.0.0.1:10090",
+            "http://127.0.0.1:10090#fragment",
+        ] {
+            assert!(parse_loopback_openai_file_proxy(bad).is_err(), "{bad}");
+        }
+        let proxy = parse_loopback_openai_file_proxy("http://127.0.0.1:10090").unwrap();
+        assert!(build_download_client(None, Some(&proxy)).is_ok());
+        assert!(build_download_client(None, None).is_ok());
+    }
+
+    #[test]
+    fn local_openai_file_proxy_remains_host_and_session_scoped() {
+        let allowed = TrustedDownloadTarget {
+            url: reqwest::Url::parse("https://files.oaiusercontent.com/file").unwrap(),
+            resolver_host: Some("files.oaiusercontent.com".to_string()),
+            pinned_addrs: vec![],
+        };
+        let other = TrustedDownloadTarget {
+            url: reqwest::Url::parse("https://example.com/file").unwrap(),
+            resolver_host: Some("example.com".to_string()),
+            pinned_addrs: vec![],
+        };
+        let endpoint = "http://127.0.0.1:10090";
+        for policy in [
+            ConversationImportDownloadPolicy::AuthenticatedMcpOpenAiHostFile,
+            ConversationImportDownloadPolicy::TrustedMcpHostFile,
+        ] {
+            assert!(
+                select_loopback_openai_file_proxy(&allowed, policy, Some(endpoint))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert!(select_loopback_openai_file_proxy(
+            &allowed,
+            ConversationImportDownloadPolicy::LoopbackTrustedMcpHostFile,
+            None
+        )
+        .unwrap()
+        .is_none());
+        assert!(select_loopback_openai_file_proxy(
+            &allowed,
+            ConversationImportDownloadPolicy::LoopbackTrustedMcpHostFile,
+            Some(endpoint)
+        )
+        .unwrap()
+        .is_some());
+        assert!(select_loopback_openai_file_proxy(
+            &other,
+            ConversationImportDownloadPolicy::LoopbackTrustedMcpHostFile,
+            Some(endpoint)
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]

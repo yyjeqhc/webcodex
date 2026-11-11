@@ -402,9 +402,16 @@ fn parse_loopback_openai_file_proxy(raw: &str) -> Result<reqwest::Url, String> {
         Some(url::Host::Ipv6(ip)) => ip == Ipv6Addr::LOCALHOST,
         _ => false,
     };
+    // url::Url normalizes explicit HTTP :80 to no stored port, so inspect
+    // the original authority to distinguish :80 from an omitted port.
+    let explicit_port = raw
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split(['/', '?', '#']).next())
+        .and_then(|authority| authority.rsplit_once(':'))
+        .and_then(|(_, port)| port.parse::<u16>().ok());
     if proxy.scheme() != "http"
         || !loopback
-        || proxy.port().is_none()
+        || explicit_port.is_none()
         || !proxy.username().is_empty()
         || proxy.password().is_some()
         || proxy.path() != "/"
@@ -483,6 +490,14 @@ fn build_download_client(
     builder
         .build()
         .map_err(|_| "failed to build bounded import HTTP client".to_string())
+}
+
+#[cfg(test)]
+pub(crate) fn build_loopback_proxy_client_for_test(
+    endpoint: &str,
+) -> Result<reqwest::Client, String> {
+    let proxy = parse_loopback_openai_file_proxy(endpoint)?;
+    build_download_client(None, Some(&proxy))
 }
 
 async fn prepare_download_request(
@@ -1236,10 +1251,19 @@ mod tests {
 
     #[test]
     fn local_openai_file_proxy_accepts_only_explicit_loopback_http_endpoints() {
-        for good in ["http://127.0.0.1:10090", "http://[::1]:10090"] {
+        for (good, port) in [
+            ("http://127.0.0.1:10090", 10090),
+            ("http://[::1]:10090", 10090),
+            ("http://127.0.0.1:80", 80),
+            ("http://[::1]:80", 80),
+            ("http://127.0.0.1:80/", 80),
+        ] {
             let url = parse_loopback_openai_file_proxy(good).expect(good);
             assert_eq!(url.scheme(), "http");
-            assert_eq!(url.port(), Some(10090));
+            assert_eq!(url.port_or_known_default(), Some(port));
+            if port == 80 {
+                assert_eq!(url.port(), None, "the default port is normalized away");
+            }
         }
         for bad in [
             "https://127.0.0.1:10090",
@@ -1248,6 +1272,8 @@ mod tests {
             "http://127.0.0.2:10090",
             "http://198.18.0.42:10090",
             "http://127.0.0.1",
+            "http://[::1]",
+            "http://127.0.0.1/",
             "http://127.0.0.1:10090/path",
             "http://127.0.0.1:10090/?query=1",
             "http://user:pass@127.0.0.1:10090",
@@ -1258,49 +1284,6 @@ mod tests {
         let proxy = parse_loopback_openai_file_proxy("http://127.0.0.1:10090").unwrap();
         assert!(build_download_client(None, Some(&proxy)).is_ok());
         assert!(build_download_client(None, None).is_ok());
-    }
-
-    #[tokio::test]
-    async fn local_openai_file_proxy_client_performs_connect_via_loopback() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("local test listener");
-        let local_port = listener.local_addr().unwrap().port();
-        let proxy = parse_loopback_openai_file_proxy(&format!("http://127.0.0.1:{local_port}"))
-            .expect("valid local proxy");
-        let client = build_download_client(None, Some(&proxy))
-            .expect("client must accept explicit loopback proxy");
-        let probe = tokio::spawn(async move {
-            let (mut connection, _) = listener.accept().await.expect("CONNECT should arrive");
-            let mut buf = [0u8; 2048];
-            let count = connection
-                .read(&mut buf)
-                .await
-                .expect("read CONNECT request");
-            let request = String::from_utf8_lossy(&buf[..count]);
-            assert!(
-                request.starts_with("CONNECT files.oaiusercontent.com:443 HTTP/1.1"),
-                "unexpected CONNECT target"
-            );
-            connection
-                .write_all(
-                    b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n",
-                )
-                .await
-                .expect("reply to CONNECT");
-        });
-        let _ = tokio::time::timeout(
-            Duration::from_secs(5),
-            client.get("https://files.oaiusercontent.com/file").send(),
-        )
-        .await
-        .expect("the mocked proxy must respond promptly");
-        tokio::time::timeout(Duration::from_secs(5), probe)
-            .await
-            .expect("the local proxy was not contacted")
-            .expect("proxy probe failed");
     }
 
     #[test]

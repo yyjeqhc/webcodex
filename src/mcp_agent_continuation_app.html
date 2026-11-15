@@ -62,7 +62,17 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     "projection-wake-state-invalid", "projection-recovery-invalid", "host-binding-missing", "host-binding-invalid",
     "host-bound-not-true", "unexpected",
   ]);
-  const SAFE_HOST_FAILURE_KINDS = new Set(["bridge-error", "bridge-timeout", "bridge-cancelled", "malformed-result"]);
+  const SAFE_HOST_FAILURE_KINDS = new Set(["bridge-error", "bridge-timeout", "bridge-cancelled", "malformed-result", "host-rejected"]);
+  // Closed diagnostic labels only: never retain Host response bodies or a Wake payload.
+  const HOST_DISPATCH_ISSUES = Object.freeze({
+    host_rejected: "Host reported rejection",
+    timeout: "Host reply timed out",
+    cancelled: "Host cancelled the request",
+    invalid_response: "Host reply had an invalid shape",
+    unsupported: "Host does not recognize ui/message",
+    invalid_params: "Host rejected message parameters",
+    transport: "Host transport error",
+  });
   const CALL_TIMEOUT_MS = 10000;
   const MAX_BIND_ATTEMPTS = 3;
   const MAX_RECOVERY_REBINDS = 1;
@@ -95,6 +105,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let dispatchStarted = null;
   let prepareUncertain = null;
   let pendingFinish = null;
+  let lastHostDispatchIssue = null;
   let waitId = null;
   let waitLifecycle = null;
   let waitRevision = 0;
@@ -588,7 +599,10 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (projection.dispatch_observation === "continuation_consumed") {
       el("status").textContent = "Work resumed successfully";
     } else if (projection.dispatch_observation === "dispatch_unknown") {
-      el("status").textContent = "Host delivery unconfirmed · no automatic retry";
+      const issue = HOST_DISPATCH_ISSUES[lastHostDispatchIssue];
+      el("status").textContent = issue
+        ? `Host delivery unconfirmed · ${issue} · no automatic retry`
+        : "Host delivery unconfirmed · no automatic retry";
     } else if (projection.dispatch_observation === "dispatch_accepted") {
       el("status").textContent = "Host accepted follow-up · awaiting a fresh turn";
     } else if (document.hidden) {
@@ -749,6 +763,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     dispatchStarted = wake.attempt_id;
     const hostDispatchStartedAt = performance.now();
     let outcome = "delivery_unknown";
+    lastHostDispatchIssue = null;
     timing("host_dispatch_start");
     try {
       const hostMessageResult = await request("ui/message", {
@@ -757,6 +772,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       });
       // A Host can resolve ui/message with isError:true instead of rejecting.
       // Acceptance is not a new model turn and never licenses a blind retry.
+      if (hostMessageResult && typeof hostMessageResult === "object" && !Array.isArray(hostMessageResult)
+        && hostMessageResult.isError === true) throw hostFailure("host-rejected");
       if (!hostMessageResult || typeof hostMessageResult !== "object" || Array.isArray(hostMessageResult)
         || ![undefined, false].includes(hostMessageResult.isError)) {
         throw hostFailure("malformed-result");
@@ -764,11 +781,18 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       outcome = "dispatch_accepted";
       timing("host_dispatch_complete", { outcome, duration_ms: performance.now() - hostDispatchStartedAt });
     } catch (error) {
-      // Closed labels only: never retain the automatic message, tokens or raw error.
+      // Preserve only a closed cause category in this live View; never capture
+      // raw Host errors, message bodies, Wake tokens or principal identifiers.
       const failureKind = tornDown ? "bridge-cancelled"
         : SAFE_HOST_FAILURE_KINDS.has(error && error.hostFailureKind) ? error.hostFailureKind : "bridge-error";
+      lastHostDispatchIssue = failureKind === "host-rejected" ? "host_rejected"
+        : failureKind === "bridge-timeout" ? "timeout"
+        : failureKind === "bridge-cancelled" ? "cancelled"
+        : failureKind === "malformed-result" ? "invalid_response"
+        : error && error.rpcCode === -32601 ? "unsupported"
+        : error && error.rpcCode === -32602 ? "invalid_params" : "transport";
       timing("host_dispatch_error", { outcome, failure_kind: failureKind, duration_ms: performance.now() - hostDispatchStartedAt });
-      // After prepare, Host rejection/timeout/response loss is conservatively unknown.
+      // Post-fence failure is always delivery_unknown: no automatic resend.
     }
     // Observation only: acceptance is not proof of a new turn or Wake consumption.
     // Do not log the prepared message, private Attempt ids, or Host errors.

@@ -12,6 +12,47 @@ import unittest
 BUILD_SCRIPT = Path(__file__).resolve().parents[2] / "crates/webcodex-build-info/build.rs"
 
 
+def run_fixture_build(package, env):
+    """Return the fixture's result and persisted build-script stdout path.
+
+    Cargo 1.100 changed the internal build cache layout. Resolve the run unit
+    from Cargo's build-script-executed OUT_DIR instead of matching a hardcoded
+    target/debug/build directory name.
+    """
+    completed = subprocess.run(
+        ["cargo", "run", "--offline", "--message-format=json"],
+        cwd=package, env=env, check=True, capture_output=True, text=True, timeout=60,
+    )
+    out_dirs = []
+    program_lines = []
+    for line in completed.stdout.splitlines():
+        if line.startswith("{"):
+            message = json.loads(line)
+            if message.get("reason") == "build-script-executed":
+                out_dirs.append(Path(message["out_dir"]))
+        elif line:
+            program_lines.append(line)
+    if len(out_dirs) != 1 or len(program_lines) != 1:
+        raise AssertionError(
+            f"expected one build script and one program result, "
+            f"got {len(out_dirs)} and {program_lines!r}"
+        )
+    # Cargo <=1.99 uses output; Cargo >=1.100 uses run/stdout.
+    script_outputs = [
+        path for path in (
+            out_dirs[0].parent / "output",
+            out_dirs[0].parent / "run" / "stdout",
+        )
+        if path.is_file()
+    ]
+    if len(script_outputs) != 1:
+        raise AssertionError(
+            f"expected one build-script stdout near {out_dirs[0]}, "
+            f"found {script_outputs!r}"
+        )
+    return program_lines[0], script_outputs[0]
+
+
 class BuildIdentityTests(unittest.TestCase):
     def test_packed_branch_without_reflog_refreshes_and_then_stays_cached(self):
         for linked_worktree in (False, True):
@@ -59,11 +100,14 @@ class BuildIdentityTests(unittest.TestCase):
                 head_log = Path(run(repo, "git", "rev-parse", "--git-path", "logs/HEAD"))
                 self.assertFalse((repo / head_log).exists())
 
+                outputs = []
+
                 def build():
-                    return run(package, "cargo", "run", "--offline", "--quiet")
+                    result, script_output = run_fixture_build(package, env)
+                    outputs[:] = [script_output]
+                    return result
 
                 before = build()
-                outputs = list((root / "target/debug/build").glob("identity-fixture-*/output"))
                 self.assertEqual(len(outputs), 1)
                 stamp = outputs[0].stat().st_mtime_ns
                 self.assertEqual(build(), before)
@@ -120,15 +164,18 @@ class BuildIdentityTests(unittest.TestCase):
                     repo = checkout
                     package = repo / "crates/fixture"
 
+                outputs = []
+
                 def build():
-                    return run(package, "cargo", "run", "--offline", "--quiet")
+                    result, script_output = run_fixture_build(package, env)
+                    outputs[:] = [script_output]
+                    return result
 
                 head = run(repo, "git", "rev-parse", "HEAD")
                 self.assertEqual(build(), "false")
                 (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
                 self.assertEqual(run(repo, "git", "rev-parse", "HEAD"), head)
                 self.assertEqual(build(), "true")
-                outputs = list((root / "target/debug/build").glob("identity-fixture-*/output"))
                 self.assertEqual(len(outputs), 1)
                 dirty_stamp = outputs[0].stat().st_mtime_ns
                 (repo / "other.txt").write_text("also dirty\n", encoding="utf-8")
@@ -152,7 +199,6 @@ class BuildIdentityTests(unittest.TestCase):
 
                 env["WEBCODEX_GIT_DIRTY"] = "false"
                 self.assertEqual(build(), "false")
-                outputs = list((root / "target/debug/build").glob("identity-fixture-*/output"))
                 self.assertEqual(len(outputs), 1)
                 stamp = outputs[0].stat().st_mtime_ns
                 (repo / "tracked.txt").write_text("dirty with pinned identity\n", encoding="utf-8")

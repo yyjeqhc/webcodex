@@ -5247,3 +5247,201 @@ fn endpoint_continuation_consumed_wake_stays_consumed_after_task_completion_but_
         Some(AgentTaskExecutionStatus::Terminal)
     );
 }
+
+#[test]
+fn expired_uncertain_task_wake_fences_old_token_and_allows_new_host_takeover() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("expired-unknown-task-wake.db");
+    let db = Database::open(&path).unwrap();
+    let owner = principal('b');
+    let start_at = wall_now_ms();
+    let fixture =
+        prepared_endpoint_takeover_fixture(&db, &owner, "unknown-task-recovery", start_at);
+    db.mark_agent_wake_delivery_unknown_at(
+        &owner,
+        &fixture.assignee,
+        &fixture.endpoint_id,
+        fixture.endpoint_controller_generation,
+        &fixture.wake_id,
+        &fixture.wake_attempt_id,
+        &fixture.wake_claim_fence,
+        start_at + 2,
+    )
+    .unwrap();
+    assert_eq!(
+        db.agent_wake(&fixture.wake_id).unwrap().unwrap().state,
+        AgentWakeState::DeliveryUnknown,
+    );
+
+    // Even if an uncertain Host dispatch looks old, the source execution
+    // remains authoritative until its own Attempt lease actually expires.
+    let stale_at = wall_now_ms() - super::agent_wake::STALE_TASK_DELIVERY_UNKNOWN_MS - 1_000;
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_wakes SET updated_at_unix_ms = ?2 WHERE wake_id = ?1",
+            rusqlite::params![fixture.wake_id, stale_at],
+        )
+        .unwrap();
+    assert!(db
+        .bootstrap_agent_conversation(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            None,
+            Some(&fixture.wake_id),
+        )
+        .unwrap()
+        .wake
+        .is_some());
+    assert!(db
+        .claim_next_agent_wake(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        db.agent_wake(&fixture.wake_id).unwrap().unwrap().state,
+        AgentWakeState::DeliveryUnknown,
+    );
+
+    // Model a lost Host turn whose 5-minute one-shot dispatch grace has
+    // expired. This does not assert that an unknown dispatch was delivered.
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_task_attempts
+             SET lease_expires_at_unix_ms = ?2
+             WHERE attempt_id = ?1 AND state = 'active'",
+            rusqlite::params![fixture.task_attempt_id, wall_now_ms() - 1],
+        )
+        .unwrap();
+    // The read-only Host bootstrap must stop showing the obsolete Wake even
+    // before the canonical claim path performs transactional retirement.
+    assert!(db
+        .bootstrap_agent_conversation(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            None,
+            Some(&fixture.wake_id),
+        )
+        .unwrap()
+        .wake
+        .is_none());
+    assert!(db
+        .bootstrap_agent_conversation(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            None,
+            None,
+        )
+        .unwrap()
+        .wake
+        .is_none());
+    assert!(db
+        .claim_next_agent_wake(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .is_none());
+
+    assert_eq!(
+        db.agent_wake(&fixture.wake_id).unwrap().unwrap().state,
+        AgentWakeState::Retired,
+    );
+    assert_eq!(
+        db.agent_wake_attempts(&fixture.wake_id).unwrap()[0].state,
+        super::agent_wake::AgentWakeAttemptState::Revoked,
+    );
+    assert_eq!(
+        db.read_agent_task(&owner, &fixture.task_id)
+            .unwrap()
+            .summary
+            .state,
+        AgentTaskState::Ready,
+    );
+    // Retired exact Host tokens must never ACK or revive an expired Attempt.
+    assert!(db
+        .consume_agent_wake(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            &fixture.wake_id,
+            &fixture.consume_token,
+        )
+        .is_err());
+
+    // A new, separately fenced Attempt can now be delivered and exactly
+    // consumed; this is not a replay of the old outcome-unknown Host message.
+    let next = start(
+        &db,
+        &owner,
+        &fixture.task_id,
+        &fixture.assignee,
+        "unknown-task-recovery-successor",
+        wall_now_ms(),
+    );
+    assert_eq!(next.attempt.attempt_number, 2);
+    let execution = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &fixture.task_id,
+            &next.attempt.attempt_id,
+            &fixture.assignee,
+            &next.attempt_fence,
+            next.attempt.attempt_controller_generation,
+            wall_now_ms(),
+        )
+        .unwrap();
+    let claim = db
+        .claim_next_agent_wake(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .expect("new Task Wake must no longer be starved");
+    assert_eq!(claim.wake.wake_id, execution.execution.wake_id);
+    db.prepare_agent_wake_dispatch(
+        &owner,
+        &fixture.assignee,
+        &fixture.endpoint_id,
+        fixture.endpoint_controller_generation,
+        &claim.wake.wake_id,
+        &claim.attempt.attempt_id,
+        &claim.claim_fence,
+        &claim.consume_token,
+    )
+    .unwrap();
+    db.consume_agent_wake(
+        &owner,
+        &fixture.assignee,
+        &fixture.endpoint_id,
+        fixture.endpoint_controller_generation,
+        &claim.wake.wake_id,
+        &claim.consume_token,
+    )
+    .unwrap();
+    assert_eq!(
+        db.agent_wake(&claim.wake.wake_id).unwrap().unwrap().state,
+        AgentWakeState::Consumed,
+    );
+    assert_eq!(
+        db.agent_wake(&fixture.wake_id).unwrap().unwrap().state,
+        AgentWakeState::Retired,
+    );
+}

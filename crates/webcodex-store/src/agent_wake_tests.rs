@@ -580,6 +580,63 @@ fn old_unknown_inbox_dispatch_cannot_starve_new_endpoint_agent_task_after_grace(
             now_unix_ms(),
         )
         .unwrap();
+    // The old Host dispatch is outcome-unknown: no successor model turn may
+    // start, but the successor must survive its 60-second default lease.
+    let queued_lease: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT lease_expires_at_unix_ms FROM wc_agent_task_attempts WHERE attempt_id = ?1",
+            [&started.attempt.attempt_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        queued_lease >= now_unix_ms() + STALE_INBOX_DELIVERY_UNKNOWN_MS + 5 * 60_000,
+        "queued Task Wake must outlive the predecessor's Host uncertainty window"
+    );
+    assert!(
+        db.claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app"
+        )
+        .unwrap()
+        .is_none(),
+        "the predecessor still owns exclusive Host dispatch"
+    );
+    assert_eq!(
+        db.agent_wake(&execution.execution.wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::Pending
+    );
+    let replay = db
+        .start_agent_task_endpoint_continuation_at(
+            &fixture.owner,
+            &task,
+            &started.attempt.attempt_id,
+            &fixture.receiver_agent_id,
+            &started.attempt_fence,
+            1,
+            now_unix_ms() + 90_000,
+        )
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(
+        queued_lease,
+        db.conn_for_tests()
+            .query_row(
+                "SELECT lease_expires_at_unix_ms FROM wc_agent_task_attempts WHERE attempt_id = ?1",
+                [&started.attempt.attempt_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        "exact queue replay must never slide its one-shot deadline"
+    );
+
     db.conn_for_tests()
         .execute(
             "UPDATE wc_agent_wakes SET updated_at_unix_ms = ?2 WHERE wake_id = ?1",
@@ -601,6 +658,22 @@ fn old_unknown_inbox_dispatch_cannot_starve_new_endpoint_agent_task_after_grace(
         .expect("new executable Task Wake must outrank abandoned Inbox delivery");
     assert_eq!(recovered.wake.wake_id, execution.execution.wake_id);
     assert_eq!(recovered.wake.trigger_kind, "agent_task_attempt");
+    let dispatch_lease: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT lease_expires_at_unix_ms FROM wc_agent_task_attempts WHERE attempt_id = ?1",
+            [&started.attempt.attempt_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        dispatch_lease < queued_lease,
+        "claim must drop the long queue-only lease"
+    );
+    assert!(
+        dispatch_lease >= now_unix_ms() + 4 * 60_000,
+        "claim retains the ordinary bounded Host dispatch window"
+    );
     assert_eq!(
         db.agent_wake(&old.wake.wake_id).unwrap().unwrap().state,
         AgentWakeState::Retired,
@@ -629,6 +702,29 @@ fn old_unknown_inbox_dispatch_cannot_starve_new_endpoint_agent_task_after_grace(
         &recovered.consume_token,
     )
     .expect("new Task's Host continuation can consume its own exact Wake");
+    assert!(
+        db.conn_for_tests()
+            .query_row(
+                "SELECT lease_expires_at_unix_ms FROM wc_agent_task_attempts WHERE attempt_id = ?1",
+                [&started.attempt.attempt_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > now_unix_ms() + 29 * 60_000,
+        "only exact consume promotes the Attempt to the active model-turn lease"
+    );
+    assert!(
+        db.consume_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &old.wake.wake_id,
+            &old.consume_token
+        )
+        .is_err(),
+        "retired old Host token must never execute again"
+    );
 }
 
 #[test]

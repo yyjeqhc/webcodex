@@ -850,8 +850,10 @@ A4b intentionally separates a short pre-takeover lease from renewable bounded ac
 ```text
 TaskAttempt start
   -> short 60-second setup/pre-dispatch lease
-Endpoint carrier claim / prepare
-  -> still short pre-dispatch semantics
+Endpoint continuation created while older Wake is still post-dispatch
+  -> one bounded 21-minute queue-only reservation (no Host execution authority)
+older Wake safely retires or is exactly consumed; new Wake claims Host carrier
+  -> long queue lease reduced to at most 5-minute pre-consume dispatch window
 first durable Host dispatch outcome (dispatch_accepted | delivery_unknown)
   -> bounded 5-minute Host scheduling grace
 exact model turn bootstrap + first exact consume during that grace
@@ -867,6 +869,8 @@ abnormal/stalled model turn
   -> takeover lease eventually expires -> old Attempt permanently stale
   -> a new Attempt requires an explicit authorized start
 ```
+
+The 21-minute queue-only lease is created **once**, during the exact Endpoint-continuation start, only when an older `prepared`, `delivered`, or `delivery_unknown` Wake already owns the Agent's single Host dispatch slot. It covers the 15-minute conservative retirement window, a possible 5-minute predecessor scheduling grace, and 60 seconds for the successor; without a blocker the default 60-second lease is unchanged. Exact start replay cannot slide the reservation. Acquiring the successor Wake in a serializable Store transaction shortens any longer queue lease to at most `now + 5 minutes` before dispatch; this is not an actual model turn, does not extend the older Wake, and cannot promote to the 30-minute active-turn lease. Safety retirement and old-token revocation are unchanged. A blocked queue with no available Host or a predecessor that has not reached safe retirement is not claimed or redispatched; its bounded reservation eventually expires and requires a fresh authorized Attempt. This bounded mitigation is not a guarantee of real-time Host delivery.
 
 Crossing the durable Host dispatch fence now creates a separate scheduling reservation only for an exact Task-origin Wake. The first `prepared -> dispatch_accepted | delivery_unknown` transition atomically rechecks the owned latest active/unexpired Attempt, exact assignee, exact Wake, and exact bound Endpoint/generation, then uses `max(existing_lease, now + 5 minutes)`. Delivery uncertainty gets the same reservation because the Host may already have accepted the message and exactly-once delivery forbids a blind resend. Same-generation process-local Host-binding loss or Server takeover that conservatively records an already-prepared Wake as `delivery_unknown` establishes that same one-shot grace before carrier capability is cleared; durable Endpoint replacement/expiry/detach fences the old generation instead and grants it no new grace. Dispatch replay, `delivery_unknown -> delivered` reconciliation, stale Endpoint generations, wrong Wakes, non-Task Wakes, polling, Endpoint heartbeat, and ClientWindow activity do not slide this reservation. A dispatch outcome arriving after the Attempt already expired or was superseded is still durable Wake evidence but never revives that Attempt.
 

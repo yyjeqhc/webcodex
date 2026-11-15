@@ -5445,3 +5445,142 @@ fn expired_uncertain_task_wake_fences_old_token_and_allows_new_host_takeover() {
         AgentWakeState::Retired,
     );
 }
+
+/// A stale uncertain Task dispatch cannot consume the next Attempt's 60s
+/// lease while it owns the single-flight Host slot. Exact old consume is
+/// revoked after its source Attempt expires and the safety window elapses.
+#[test]
+fn queued_task_attempt_survives_older_uncertain_task_wake_then_consumes_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("queued-behind-task-unknown.db")).unwrap();
+    let owner = principal('f');
+    let now = wall_now_ms();
+    let old = prepared_endpoint_takeover_fixture(&db, &owner, "old-task-slot", now);
+    db.mark_agent_wake_delivery_unknown_at(
+        &owner,
+        &old.assignee,
+        &old.endpoint_id,
+        old.endpoint_controller_generation,
+        &old.wake_id,
+        &old.wake_attempt_id,
+        &old.wake_claim_fence,
+        now + 2,
+    )
+    .unwrap();
+
+    let task_id = create_assigned_task(&db, &owner, &old.assignee, "next-task-after-unknown");
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &old.assignee,
+        "next-task-queued",
+        now + 3,
+    );
+    let next = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &old.assignee,
+            &started.attempt_fence,
+            started.attempt.attempt_controller_generation,
+            now + 4,
+        )
+        .unwrap();
+    let queued_lease = attempt_lease_expires_at(&db, &started.attempt.attempt_id);
+    assert!(queued_lease > now + 20 * 60_000);
+    assert!(db
+        .claim_next_agent_wake(
+            &owner,
+            &old.assignee,
+            &old.endpoint_id,
+            old.endpoint_controller_generation,
+            "mcp_app"
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        db.agent_wake(&next.execution.wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::Pending
+    );
+
+    // Existing execution is terminal before safety retirement, not
+    // silently promoted by this successor or a fabricated Host ACK.
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_task_attempts SET lease_expires_at_unix_ms = ?2
+         WHERE attempt_id = ?1 AND state = 'active'",
+            params![old.task_attempt_id, now - 1],
+        )
+        .unwrap();
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_wakes SET updated_at_unix_ms = ?2 WHERE wake_id = ?1",
+            params![
+                old.wake_id,
+                now - super::agent_wake::STALE_TASK_DELIVERY_UNKNOWN_MS - 1_000
+            ],
+        )
+        .unwrap();
+    let claimed = db
+        .claim_next_agent_wake(
+            &owner,
+            &old.assignee,
+            &old.endpoint_id,
+            old.endpoint_controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .expect("new valid Task Wake must take over after safe retirement");
+    assert_eq!(claimed.wake.wake_id, next.execution.wake_id);
+    assert_eq!(
+        db.agent_wake(&old.wake_id).unwrap().unwrap().state,
+        AgentWakeState::Retired
+    );
+    assert!(
+        db.consume_agent_wake(
+            &owner,
+            &old.assignee,
+            &old.endpoint_id,
+            old.endpoint_controller_generation,
+            &old.wake_id,
+            &old.consume_token
+        )
+        .is_err(),
+        "late old uncertain Host turn cannot consume the revoked fence"
+    );
+    let dispatch_lease = attempt_lease_expires_at(&db, &started.attempt.attempt_id);
+    assert!(dispatch_lease < queued_lease);
+    assert!(dispatch_lease > wall_now_ms() + 4 * 60_000);
+    db.prepare_agent_wake_dispatch(
+        &owner,
+        &old.assignee,
+        &old.endpoint_id,
+        old.endpoint_controller_generation,
+        &claimed.wake.wake_id,
+        &claimed.attempt.attempt_id,
+        &claimed.claim_fence,
+        &claimed.consume_token,
+    )
+    .unwrap();
+    db.consume_agent_wake(
+        &owner,
+        &old.assignee,
+        &old.endpoint_id,
+        old.endpoint_controller_generation,
+        &claimed.wake.wake_id,
+        &claimed.consume_token,
+    )
+    .unwrap();
+    assert_eq!(
+        db.agent_wake(&claimed.wake.wake_id).unwrap().unwrap().state,
+        AgentWakeState::Consumed
+    );
+    assert!(
+        attempt_lease_expires_at(&db, &started.attempt.attempt_id) > wall_now_ms() + 29 * 60_000
+    );
+}

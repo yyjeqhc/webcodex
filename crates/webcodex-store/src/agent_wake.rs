@@ -2364,6 +2364,21 @@ fn bind_agent_task_wake_carrier(
         attempt_controller_generation,
     )?;
     replace_agent_task_attempt_controller_in_transaction(transaction, principal, authority, now)?;
+    // This pending Wake has claimed the single-flight Host carrier. Drop
+    // its long queue-only reservation to the ordinary pre-consume dispatch
+    // window; only the exact new model-turn consume grants active-turn time.
+    transaction
+        .execute(
+            "UPDATE wc_agent_task_attempts
+             SET lease_expires_at_unix_ms = MIN(lease_expires_at_unix_ms, ?3)
+             WHERE attempt_id = ?1 AND task_id = ?2 AND state = 'active'",
+            params![
+                task_attempt_id,
+                task_id,
+                now.saturating_add(AGENT_TASK_ENDPOINT_DISPATCH_GRACE_MS),
+            ],
+        )
+        .map_err(store_error)?;
     let changed = transaction
         .execute(
             "UPDATE wc_agent_task_endpoint_executions

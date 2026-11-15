@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn absent_status_is_bounded_private_and_creates_nothing() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let data = temp.path().join("desktop");
     let environment = temp.path().join("environment");
     let manager = UpdateManager::with_environment_root(data.clone(), environment.clone());
@@ -65,7 +65,7 @@ fn component_projection_rejects_custom_identifiers_without_exposing_probe_canari
 
 #[tokio::test]
 async fn active_download_projection_keeps_live_progress_without_saved_state_mutation() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let data = temp.path().join("desktop");
     let manager =
         UpdateManager::with_environment_root(data.clone(), temp.path().join("environment"));
@@ -85,7 +85,7 @@ async fn active_download_projection_keeps_live_progress_without_saved_state_muta
 
 #[test]
 fn verified_runtime_target_projects_three_components_without_inference() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let data = temp.path().join("desktop");
     let manager =
         UpdateManager::with_environment_root(data.clone(), temp.path().join("environment"));

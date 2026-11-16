@@ -142,7 +142,8 @@ fn cloudflare_server_tunnel_uses_only_a_private_runtime_binding() {
 #[tokio::test]
 async fn machine_tunnel_rejects_provider_mismatch_before_contacting_server() {
     use std::os::unix::fs::PermissionsExt;
-    let tmp = tempfile::tempdir().unwrap();
+    // The runtime binding is read with the no-symlink path policy
+    let tmp = crate::webcodex_cli::test_support::canonical_test_tempdir();
     let directory = tmp.path().join("quick");
     std::fs::create_dir(&directory).unwrap();
     std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();

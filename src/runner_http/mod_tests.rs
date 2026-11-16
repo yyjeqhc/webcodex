@@ -1,7 +1,5 @@
 use super::*;
-use crate::runner_protocol::{
-    RunnerCapabilities, RunnerPollRequest, RunnerProjectSummary, RunnerRegisterRequest,
-};
+use crate::runner_protocol::{RunnerCapabilities, RunnerProjectSummary, RunnerRegisterRequest};
 use crate::runner_protocol::{
     RUNNER_ENVELOPE_MAX_BYTES, RUNNER_PROTOCOL_GENERATION_V2,
     RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,

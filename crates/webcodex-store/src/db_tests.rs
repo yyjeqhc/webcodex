@@ -2269,7 +2269,7 @@ fn batched_purge_is_bounded_per_table_and_never_touches_live_rows() {
             revoked_at,
             last_used_at: None,
         };
-    let api_key = |id: &str, hash: &str, revoked_at: Option<i64>| ApiKeyRecord {
+    let api_key = |id: &str, revoked_at: Option<i64>| ApiKeyRecord {
         id: id.to_string(),
         user_id: "u-batch".to_string(),
         name: id.to_string(),
@@ -2293,15 +2293,11 @@ fn batched_purge_is_bounded_per_table_and_never_touches_live_rows() {
         ))
         .unwrap();
     }
-    db.insert_api_key(&api_key("k-live", "hash-live", None), "hash-live")
+    db.insert_api_key(&api_key("k-live", None), "hash-live")
         .unwrap();
     for index in 0..2 {
         db.insert_api_key(
-            &api_key(
-                &format!("k-rev-{index}"),
-                &format!("hash-rev-{index}"),
-                Some(now - 1),
-            ),
+            &api_key(&format!("k-rev-{index}"), Some(now - 1)),
             &format!("hash-rev-{index}"),
         )
         .unwrap();

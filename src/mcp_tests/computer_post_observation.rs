@@ -82,22 +82,6 @@ async fn poll(runtime: &ToolRuntime) -> Option<crate::runner_protocol::RunnerReq
         .unwrap()
 }
 
-/// Admission happens after the asynchronous auth hop, so the runner's first
-/// poll may legitimately race it. Wait (bounded) for the single admitted
-/// action instead of assuming it is queued synchronously.
-async fn wait_for_admitted_action(runtime: &ToolRuntime) -> crate::runner_protocol::RunnerRequest {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if let Some(request) = poll(runtime).await {
-                return request;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for the admitted computer action")
-}
-
 async fn finish_action(runtime: &ToolRuntime, action: &str, request_id: String) {
     let mut output = json!({"platform":"windows","surface_id":"surface_test",
         "element_id":"element_test","success":true});

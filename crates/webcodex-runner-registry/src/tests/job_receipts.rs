@@ -30,7 +30,7 @@ impl JobReceiptStore for MemoryReceipts {
         if self.fail
             || self
                 .failures_remaining
-                .fetch_update(
+                .try_update(
                     std::sync::atomic::Ordering::SeqCst,
                     std::sync::atomic::Ordering::SeqCst,
                     |n| n.checked_sub(1),

@@ -839,12 +839,9 @@ struct RuntimeConsoleProject {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum RuntimeConsoleProjectLineage {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Retained Console wire variant; the current inventory projection omits lineage"
-        )
+    #[expect(
+        dead_code,
+        reason = "Retained Console wire variant; the current inventory projection omits lineage"
     )]
     ManagedWorktreeSource {
         source_project_id: String,

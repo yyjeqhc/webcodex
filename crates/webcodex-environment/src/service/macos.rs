@@ -332,6 +332,7 @@ pub(super) fn install(
         return Ok(status);
     }
     check_install_files(spec)?;
+    ensure_service_log_file_private();
     let path = plist_path(spec)?;
     if spec.scope == ServiceScope::User {
         scope::ensure_user_service_directory(
@@ -491,6 +492,24 @@ fn service_io_path_from(value: Option<&str>) -> Result<String, ServiceError> {
 fn service_io_path() -> Result<String, ServiceError> {
     let value = std::env::var("WEBCODEX_SERVICE_LOG_PATH").ok();
     service_io_path_from(value.as_deref())
+}
+
+/// Create the configured private service log before launchd opens it, so the
+/// file starts owner-only instead of the default umask-derived mode.
+fn ensure_service_log_file_private() {
+    let Ok(path) = std::env::var("WEBCODEX_SERVICE_LOG_PATH") else {
+        return;
+    };
+    if path.is_empty() || !std::path::Path::new(&path).is_absolute() {
+        return;
+    }
+    let path = std::path::Path::new(&path);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.set_permissions(fs::Permissions::from_mode(0o600));
+    }
 }
 
 pub(super) fn render_plist(spec: &ServiceSpec) -> Result<String, ServiceError> {

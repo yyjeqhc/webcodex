@@ -192,7 +192,7 @@ pub(crate) struct TracingRuntimeMetrics;
 impl RuntimeMetrics for TracingRuntimeMetrics {
     fn observe_tool_call(&self, record: &ModelErgonomicsRecord) {
         let outcome_class = record.outcome_class();
-        tracing::info!(
+        tracing::debug!(
             metric = "tool_runtime_duration_seconds",
             value = record.duration_ms as f64 / 1000.0,
             tool = record.tool_name,
@@ -201,7 +201,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             outcome_class,
             "runtime_metric"
         );
-        tracing::info!(
+        tracing::debug!(
             metric = "tool_outcomes_total",
             value = 1_u64,
             tool = record.tool_name,
@@ -211,7 +211,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             "runtime_metric"
         );
         if let Some(bytes) = record.serialized_result_bytes {
-            tracing::info!(
+            tracing::debug!(
                 metric = "tool_result_bytes",
                 value = bytes,
                 tool = record.tool_name,
@@ -230,7 +230,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             "nonstreaming"
         };
         if observation.ordinary_completed_response() {
-            tracing::info!(
+            tracing::debug!(
                 metric = "mcp_call_duration_seconds",
                 value = observation.elapsed_ms as f64 / 1000.0,
                 transport = "mcp",
@@ -240,7 +240,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
                 "runtime_metric"
             );
             if observation.meaningful {
-                tracing::info!(
+                tracing::debug!(
                     metric = "window_meaningful_calls_total",
                     value = 1_u64,
                     transport = "mcp",
@@ -253,7 +253,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
     }
 
     fn observe_job_observation(&self, observation: JobObservationMetricObservation) {
-        tracing::info!(
+        tracing::debug!(
             metric = "job_observation_wait_seconds",
             value = observation.elapsed_ms as f64 / 1000.0,
             wake_on = observation.wake_on,
@@ -261,14 +261,14 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             effective_wait_secs = ?observation.effective_wait_secs,
             "runtime_metric"
         );
-        tracing::info!(
+        tracing::debug!(
             metric = "job_observation_wakes_total",
             value = 1_u64,
             wake_on = observation.wake_on,
             wake_reason = observation.wake_reason,
             "runtime_metric"
         );
-        tracing::info!(
+        tracing::debug!(
             metric = "job_observation_items_total",
             value = observation.item_count,
             wake_on = observation.wake_on,
@@ -286,7 +286,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
         let source = observation.source.as_str();
         let operation = observation.operation.as_str();
         let outcome_class = observation.outcome_class.as_str();
-        tracing::info!(
+        tracing::debug!(
             metric = "skill_source_requests_total",
             value = 1_u64,
             source,
@@ -294,7 +294,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             outcome_class,
             "runtime_metric"
         );
-        tracing::info!(
+        tracing::debug!(
             metric = "skill_source_request_duration_seconds",
             value = observation.elapsed_ms as f64 / 1000.0,
             source,
@@ -303,7 +303,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             "runtime_metric"
         );
         if let Some(duration_ms) = observation.runner_duration_ms {
-            tracing::info!(
+            tracing::debug!(
                 metric = "skill_source_runner_duration_seconds",
                 value = duration_ms as f64 / 1000.0,
                 source,
@@ -313,7 +313,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             );
         }
         if let Some(response_bytes) = observation.response_bytes {
-            tracing::info!(
+            tracing::debug!(
                 metric = "skill_source_response_bytes",
                 value = response_bytes,
                 source,
@@ -323,7 +323,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             );
         }
         if let Some(item_count) = observation.item_count {
-            tracing::info!(
+            tracing::debug!(
                 metric = "skill_source_returned_items",
                 value = item_count,
                 source,
@@ -335,7 +335,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
     }
 
     fn observe_instruction_read_after_complete_bootstrap(&self, target: InstructionReadTarget) {
-        tracing::info!(
+        tracing::debug!(
             metric = "instruction_read_after_complete_bootstrap_total",
             value = 1_u64,
             target = target.as_str(),
@@ -347,7 +347,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
 
     fn observe_window_transition(&self, transition: WindowLoopTransition) {
         match transition {
-            WindowLoopTransition::Serial { gap_ms } => tracing::info!(
+            WindowLoopTransition::Serial { gap_ms } => tracing::debug!(
                 metric = "window_inter_call_gap_seconds",
                 value = gap_ms as f64 / 1000.0,
                 transport = "mcp",
@@ -355,7 +355,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
                 relation = "serial",
                 "runtime_metric"
             ),
-            WindowLoopTransition::Overlap => tracing::info!(
+            WindowLoopTransition::Overlap => tracing::debug!(
                 metric = "window_overlapping_calls_total",
                 value = 1_u64,
                 transport = "mcp",
@@ -398,7 +398,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
                 observation.nested_raw_result_bytes_total as u64,
             ),
         ] {
-            tracing::info!(
+            tracing::debug!(
                 metric,
                 value,
                 tool = "execute_code_mode",
@@ -406,21 +406,21 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
                 "runtime_metric"
             );
         }
-        tracing::info!(
+        tracing::debug!(
             metric = "code_mode_runtime_duration_seconds",
             value = observation.duration_ms as f64 / 1000.0,
             tool = "execute_code_mode",
             surface = "runtime",
             "runtime_metric"
         );
-        tracing::info!(
+        tracing::debug!(
             metric = "code_mode_slot_wait_seconds",
             value = observation.slot_wait_ms as f64 / 1000.0,
             tool = "execute_code_mode",
             surface = "runtime",
             "runtime_metric"
         );
-        tracing::info!(
+        tracing::debug!(
             metric = "code_mode_input_bytes",
             value = observation.input_bytes as u64,
             tool = "execute_code_mode",
@@ -428,7 +428,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             "runtime_metric"
         );
         for (nested_tool, value) in &observation.nested_tool_counts {
-            tracing::info!(
+            tracing::debug!(
                 metric = "code_mode_nested_tool_calls_total",
                 value = *value as u64,
                 tool = "execute_code_mode",

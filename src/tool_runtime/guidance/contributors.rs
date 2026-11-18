@@ -83,7 +83,7 @@ pub(super) static HOST_CONTINUATION: GuidanceContributor = GuidanceContributor {
         "Return to the model for semantic choice, ambiguous result, new user decision, authority/permission change, outcome_unknown, competing recovery, unresolved mutation intent or effect uncertainty. Child-call completion alone is not a boundary. Cell return is not turn completion.",
         "Exact stale-source reread may be mechanical. reread_required=true or direct_retry_safe=false stops effectful replay; recovery is not mutation retry authority. Keep full ToolResults in the Host cell; preserve exact pending continuations, observation_ref/read_revision, and failure/recovery fields.",
         "execution_state=pending: retain exact Job identity/continuation as fallback. Run currently-ready independent calls. Ready work exhausted: wait_for_job_readiness join barrier on the entire exact blocked set. any when one terminal Job can unlock a useful branch; all only when every blocked dependency is required.",
-        "Choose wait_secs as the largest safe value from the remaining Host activation budget, up to the 45s maximum; do not prefer fixed 10/15/20s slices. Deadline: recompute ready work and the blocked set; do not mechanically repeat the same-set wait. Final validation: freeze covered source; edits invalidate evidence.",
+        "Choose wait_secs from the remaining Host activation budget, preferring short 5-15s slices that return promptly; do not occupy the whole turn with one long wait. Deadline: recompute ready work and the blocked set; do not mechanically repeat the same-set wait. Final validation: freeze covered source; edits invalidate evidence.",
     ],
 };
 

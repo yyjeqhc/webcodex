@@ -14,7 +14,7 @@ fn observe_runtime_metric_fail_open(observe: impl FnOnce()) {
 
 macro_rules! runtime_metric_info {
     ($($fields:tt)*) => {
-        observe_runtime_metric_fail_open(|| tracing::info!($($fields)*))
+        observe_runtime_metric_fail_open(|| tracing::debug!($($fields)*))
     };
 }
 

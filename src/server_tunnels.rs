@@ -169,6 +169,11 @@ async fn run_profile(
         return;
     }
     let failed = |code: &str| {
+        tracing::warn!(
+            profile = %profile.profile_id,
+            diagnostic = code,
+            "embedded Tunnel profile failed"
+        );
         status.update(index, |state| {
             state.state = TunnelState::Failed;
             state.tunnel_ready = false;
@@ -269,6 +274,7 @@ async fn run_profile(
     });
     let _ = persist_status(&profile, &status, index);
     let clean = tunnel.stop_with_outcome().await.is_ok();
+    let outcome_for_log = outcome.clone();
     status.update(index, |state| {
         state.state = if clean && outcome.is_none() {
             TunnelState::Stopped
@@ -281,6 +287,14 @@ async fn run_profile(
         state.diagnostic = outcome.or_else(|| (!clean).then(|| "tunnel_restart_uncertain".into()));
     });
     let _ = persist_status(&profile, &status, index);
+    if outcome_for_log.is_some() || !clean {
+        tracing::warn!(
+            profile = %profile.profile_id,
+            clean_shutdown = clean,
+            outcome = ?outcome_for_log,
+            "Server-owned Tunnel stopped with a failure outcome"
+        );
+    }
     tracing::info!(profile = %profile.profile_id, clean_shutdown = clean, "Server-owned Tunnel stopped");
 }
 

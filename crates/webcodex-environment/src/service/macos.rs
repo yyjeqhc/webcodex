@@ -17,6 +17,18 @@ const LAUNCHCTL_OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
 #[cfg(test)]
 mod scope_tests {
     use super::*;
+
+    #[test]
+    fn service_log_path_defaults_to_dev_null_and_requires_absolute_paths() {
+        assert_eq!(service_io_path_from(None).unwrap(), "/dev/null");
+        assert_eq!(service_io_path_from(Some("")).unwrap(), "/dev/null");
+        assert!(service_io_path_from(Some("relative.log")).is_err());
+        assert_eq!(
+            service_io_path_from(Some("/tmp/webcodex-service.log")).unwrap(),
+            "/tmp/webcodex-service.log"
+        );
+    }
+
     #[test]
     fn user_launch_agent_keeps_owner_domain_separate_from_system_daemon() {
         let mut spec = crate::service::tests::sample_spec();
@@ -458,6 +470,29 @@ fn xml(value: &str) -> Result<String, ServiceError> {
         .replace('\'', "&apos;"))
 }
 
+/// Optional managed-service stdout/stderr destination. `/dev/null` remains the
+/// default because runtime output may contain credentials or request data; an
+/// operator must opt in to a private, absolute file path explicitly.
+fn service_io_path_from(value: Option<&str>) -> Result<String, ServiceError> {
+    match value {
+        Some(path) if !path.is_empty() => {
+            if !std::path::Path::new(path).is_absolute() {
+                return Err(ServiceError::new(
+                    ServiceErrorCode::InvalidSpec,
+                    "service log path must be absolute",
+                ));
+            }
+            xml(path)
+        }
+        _ => Ok("/dev/null".to_string()),
+    }
+}
+
+fn service_io_path() -> Result<String, ServiceError> {
+    let value = std::env::var("WEBCODEX_SERVICE_LOG_PATH").ok();
+    service_io_path_from(value.as_deref())
+}
+
 pub(super) fn render_plist(spec: &ServiceSpec) -> Result<String, ServiceError> {
     let ServiceAccount::SystemUser {
         name, group, home, ..
@@ -502,9 +537,14 @@ pub(super) fn render_plist(spec: &ServiceSpec) -> Result<String, ServiceError> {
     for arg in &spec.args {
         out.push_str(&format!("<string>{}</string>\n", xml(arg)?));
     }
-    // Runtime stdout can contain Tunnel IDs or request data. The managed
-    // service writes only fixed lifecycle events to its private bounded log.
-    out.push_str("</array>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>StandardOutPath</key><string>/dev/null</string>\n<key>StandardErrorPath</key><string>/dev/null</string>\n");
+    // Runtime stdout/stderr can contain Tunnel IDs or request data. Keep the
+    // secure default (/dev/null); an operator can explicitly opt into a private
+    // log file with WEBCODEX_SERVICE_LOG_PATH. The managed service still writes
+    // only fixed lifecycle events to its own private bounded log.
+    let io_path = service_io_path()?;
+    out.push_str(&format!(
+        "</array>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>StandardOutPath</key><string>{io_path}</string>\n<key>StandardErrorPath</key><string>{io_path}</string>\n"
+    ));
     if home.is_some() || !spec.environment.is_empty() {
         out.push_str("<key>EnvironmentVariables</key><dict>\n");
         if let Some(home) = home {

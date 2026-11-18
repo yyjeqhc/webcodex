@@ -271,7 +271,8 @@ pub async fn run_server_with_shutdown(
     };
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,webcodex_openai_tunnel=debug")),
         )
         .init();
     for load in &env_loads {

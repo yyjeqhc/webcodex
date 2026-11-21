@@ -2,6 +2,7 @@ use super::agent_attention::{
     attention_events_for_attempt, AGENT_ATTENTION_EVENT_KIND_AGENT_TASK_TERMINAL,
 };
 use super::agent_task::{AgentTaskState, NewAgentTask};
+use super::agent_wake::STALE_ATTENTION_DELIVERY_UNKNOWN_MS;
 use super::agent_wake::{AgentWakeState, WAKE_TRIGGER_ATTENTION_EVENT};
 use super::communication::{NewAgentEndpoint, NewAgentIdentity};
 use super::goal::{GoalCorrelationKind, GoalLifecycle, GoalPatch, NewGoal, MAX_GOAL_CORRELATIONS};
@@ -1192,4 +1193,290 @@ fn goal_workflow_attention_reopen_preserves_task_fact_and_exact_wake_carrier() {
             .state,
         AgentWakeState::Consumed
     );
+}
+
+#[test]
+fn stale_unknown_attention_cannot_hold_a_fresh_agent_task_or_reuse_its_token() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("stale-attention-fence.db")).unwrap();
+    let owner = principal('d');
+    let worker = create_agent(&db, &owner, "stale-attention-worker");
+    let controller = create_agent(&db, &owner, "stale-attention-controller");
+    let (task_id, attempt_id, fence) =
+        create_task_and_attempt(&db, &owner, &worker, "stale-attention", T0);
+    create_goal_and_link_with_controller(
+        &db,
+        &owner,
+        &task_id,
+        Some(&controller),
+        "stale-attention",
+        T0 + 2,
+    );
+    db.complete_agent_task_attempt_at(
+        &owner,
+        &task_id,
+        &attempt_id,
+        &worker,
+        &fence,
+        1,
+        AgentTaskState::Succeeded,
+        Some("terminal notification"),
+        None,
+        "stale-attention-complete",
+        T0 + 4,
+    )
+    .unwrap();
+    let old_wake_id = wake_id_for_event(&db, &events(&db, &attempt_id)[0].event_id);
+    let endpoint = db
+        .attach_agent_endpoint(
+            &owner,
+            NewAgentEndpoint {
+                agent_id: controller.clone(),
+                host: "ChatGPT".to_string(),
+                client_attachment_id: Some("stale-attention-window".to_string()),
+                wake_capable: true,
+                idempotency_key: "stale-attention-endpoint".to_string(),
+            },
+        )
+        .unwrap()
+        .endpoint;
+    let old = db
+        .claim_next_agent_wake(
+            &owner,
+            &controller,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(old.wake.wake_id, old_wake_id);
+    db.prepare_agent_wake_dispatch(
+        &owner,
+        &controller,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &old_wake_id,
+        &old.attempt.attempt_id,
+        &old.claim_fence,
+        &old.consume_token,
+    )
+    .unwrap();
+    db.mark_agent_wake_delivery_unknown(
+        &owner,
+        &controller,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &old_wake_id,
+        &old.attempt.attempt_id,
+        &old.claim_fence,
+    )
+    .unwrap();
+
+    assert!(
+        db.bootstrap_agent_conversation(
+            &owner,
+            &controller,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            None,
+            Some(&old_wake_id),
+        )
+        .unwrap()
+        .wake
+        .is_some(),
+        "fresh unknown Wake must remain visible and fenced"
+    );
+
+    // A second historical notification remains pending. A time-sensitive
+    // AgentTask should take priority without discarding that notification.
+    let (notice_task, notice_attempt, notice_fence) =
+        create_task_and_attempt(&db, &owner, &worker, "queued-attention", T0 + 100);
+    create_goal_and_link_with_controller(
+        &db,
+        &owner,
+        &notice_task,
+        Some(&controller),
+        "queued-attention",
+        T0 + 102,
+    );
+    db.complete_agent_task_attempt_at(
+        &owner,
+        &notice_task,
+        &notice_attempt,
+        &worker,
+        &notice_fence,
+        1,
+        AgentTaskState::Succeeded,
+        Some("second notification"),
+        None,
+        "queued-attention-complete",
+        T0 + 104,
+    )
+    .unwrap();
+    let queued_notification = wake_id_for_event(&db, &events(&db, &notice_attempt)[0].event_id);
+
+    // The next real Task gets a new, independent Wake while the Host's
+    // previous notification is uncertain. Do not claim either too early.
+    let active_task = db
+        .create_agent_task(
+            &owner,
+            NewAgentTask {
+                title: "Continue real Action Registry work".to_string(),
+                instruction: "Use the current Goal checkpoint".to_string(),
+                assignee_agent_id: Some(controller.clone()),
+                source_conversation_id: None,
+                source_message_id: None,
+                referenced_project_id: None,
+                idempotency_key: "after-stale-attention-task".to_string(),
+            },
+        )
+        .unwrap()
+        .task
+        .summary
+        .task_id;
+    let started = db
+        .start_agent_task_attempt(
+            &owner,
+            &active_task,
+            &controller,
+            "after-stale-attention-attempt",
+        )
+        .unwrap();
+    let execution = db
+        .start_agent_task_endpoint_continuation(
+            &owner,
+            &active_task,
+            &started.attempt.attempt_id,
+            &controller,
+            &started.attempt_fence,
+            started.attempt.attempt_controller_generation,
+        )
+        .unwrap();
+    let new_wake_id = execution.execution.wake_id;
+    assert!(db
+        .claim_next_agent_wake(
+            &owner,
+            &controller,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .is_none());
+
+    // Test the timer boundary without sleeping or relying on a machine clock.
+    // Only the *same* uncertain notification and its exact dispatch attempt
+    // are aged in this isolated database.
+    let expired_at =
+        super::store_primitives::now_unix_ms() - STALE_ATTENTION_DELIVERY_UNKNOWN_MS - 1;
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_wakes SET updated_at_unix_ms = ?2 WHERE wake_id = ?1",
+            params![old_wake_id, expired_at],
+        )
+        .unwrap();
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_wake_attempts
+             SET delivery_unknown_at_unix_ms = ?2 WHERE wake_id = ?1",
+            params![old_wake_id, expired_at],
+        )
+        .unwrap();
+
+    // The Model-facing bootstrap is read-only but must not keep a cached
+    // MCP App controller pinned to an abandoned exact notification. The
+    // subsequent claim performs the atomic retirement and Task selection.
+    assert!(db
+        .bootstrap_agent_conversation(
+            &owner,
+            &controller,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            None,
+            Some(&old_wake_id),
+        )
+        .unwrap()
+        .wake
+        .is_none());
+    assert_eq!(
+        db.bootstrap_agent_conversation(
+            &owner,
+            &controller,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            None,
+            None,
+        )
+        .unwrap()
+        .wake
+        .unwrap()
+        .wake_id,
+        new_wake_id
+    );
+
+    let next = db
+        .claim_next_agent_wake(
+            &owner,
+            &controller,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.wake.wake_id, new_wake_id);
+    assert_eq!(
+        db.agent_wake(&old_wake_id).unwrap().unwrap().state,
+        AgentWakeState::Retired
+    );
+    assert_eq!(
+        db.agent_wake_attempts(&old_wake_id).unwrap()[0].state,
+        super::agent_wake::AgentWakeAttemptState::Revoked,
+    );
+    // A delayed Host turn cannot use the abandoned notification's token.
+    assert!(db
+        .consume_agent_wake(
+            &owner,
+            &controller,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &old_wake_id,
+            &old.consume_token,
+        )
+        .is_err());
+
+    db.prepare_agent_wake_dispatch(
+        &owner,
+        &controller,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &new_wake_id,
+        &next.attempt.attempt_id,
+        &next.claim_fence,
+        &next.consume_token,
+    )
+    .unwrap();
+    let consumed = db
+        .consume_agent_wake(
+            &owner,
+            &controller,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &new_wake_id,
+            &next.consume_token,
+        )
+        .unwrap();
+    assert_eq!(consumed.state, AgentWakeState::Consumed);
+    assert_eq!(
+        db.agent_wake(&queued_notification).unwrap().unwrap().state,
+        AgentWakeState::Pending,
+        "the older pending notification must remain durable, not vanish",
+    );
+    assert!(db
+        .agent_wake(&old_wake_id)
+        .unwrap()
+        .unwrap()
+        .consumed_at_unix_ms
+        .is_none());
 }

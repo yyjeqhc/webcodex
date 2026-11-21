@@ -1028,6 +1028,33 @@ for (const hostReply of [
   });
 }
 
+for (const { label, reply, error, expectedIssue } of [
+  { label: "explicit isError rejection", reply: { isError: true }, expectedIssue: "Host reported rejection" },
+  { label: "unsupported ui/message", error: { code: -32601, message: "PRIVATE_HOST_ERROR" }, expectedIssue: "Host does not recognize ui/message" },
+  { label: "unknown RPC transport error", error: { code: -32000, message: "PRIVATE_HOST_ERROR" }, expectedIssue: "Host transport error" },
+]) {
+  test(`unknown dispatch shows only a closed diagnostic for ${label}, never resending`, async () => {
+    const view = await boundView();
+    await view.reply(view.calls("get_agent_continuation_state").at(-1), toolResult({ agent_continuation: projection }));
+    await view.reply(view.calls("acquire_agent_continuation_wake").at(-1), toolResult({ wake }));
+    await view.reply(view.calls("prepare_agent_continuation_wake").at(-1), prepared(wake, "PRIVATE_WAKE_MESSAGE"));
+    const hostCall = hostMessages(view)[0];
+    if (error) await view.reject(hostCall, error);
+    else await view.reply(hostCall, reply);
+    const finish = view.calls("finish_agent_continuation_wake").at(-1);
+    assert.equal(finish.params.arguments.outcome, "delivery_unknown");
+    await view.reply(finish, toolResult({}));
+    await view.fireTimers(3000);
+    await view.reply(view.calls("get_agent_continuation_state").at(-1),
+      toolResult({ agent_continuation: { ...projection, dispatch_observation: "dispatch_unknown" } }));
+    assert.ok(view.nodes.status.textContent.includes(expectedIssue));
+    assert.ok(view.nodes.status.textContent.includes("no automatic retry"));
+    assert.ok(!view.nodes.status.textContent.includes("PRIVATE_"));
+    assert.ok(!view.nodes.status.textContent.includes(wake.wake_id));
+    assert.equal(hostMessages(view).length, 1);
+  });
+}
+
 test("Host acceptance and uncertain delivery are distinct, without duplicate follow-up", async () => {
   const view = await boundView();
   await view.reply(view.calls("get_agent_continuation_state").at(-1), toolResult({ agent_continuation: projection }));

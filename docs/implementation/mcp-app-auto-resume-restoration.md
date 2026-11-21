@@ -61,9 +61,16 @@ its exact durable terminal wait and present that still-waiting wait. Handle a
 Job that already terminated in the current turn instead of presenting it.
 
 After the presentation tool result, output a normal assistant final response
-and ensure the original turn has finished. Do not click, send another user
-message or use a current-turn wait to manufacture the later turn. Leave the
-conversation visible for foreground cases; switch away for background cases.
+and ensure the original turn has finished **before creating the test Wake**.
+Do not create a Task Attempt and call `start_agent_task_endpoint_continuation`
+in the still-streaming setup turn: the App can prepare and issue `ui/message`
+before the Host is ready to accept a new chat turn, producing an inconclusive
+post-fence `delivery_unknown`. This is a suspected Host scheduling race, not
+proof of the particular cause without a redacted Host result. Trigger test
+work from a genuinely delayed, independent event, never a self-sent in-turn
+message. Do not click or send another user message to manufacture the next
+turn. Leave the conversation visible for foreground cases; switch away for
+background cases.
 
 | Card | Delay | Visibility | Required observation |
 | --- | --- | --- | --- |

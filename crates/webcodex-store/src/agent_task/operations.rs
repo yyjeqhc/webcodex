@@ -900,6 +900,34 @@ impl Database {
             ));
         }
 
+        // A new TaskAttempt's usual 60-second lease must not expire merely
+        // because an older uncertain Host Wake occupies the dispatch slot.
+        // Grant a one-shot bounded queue reservation in the same transaction
+        // as the new pending Wake. Exact replay cannot refresh this deadline.
+        let predecessor_blocks_dispatch: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM wc_agent_wakes
+                 WHERE target_agent_id = ?1
+                   AND state IN ('prepared', 'delivered', 'delivery_unknown'))",
+                params![assignee_agent_id],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        if predecessor_blocks_dispatch {
+            transaction
+                .execute(
+                    "UPDATE wc_agent_task_attempts
+                     SET lease_expires_at_unix_ms = MAX(lease_expires_at_unix_ms, ?3)
+                     WHERE attempt_id = ?1 AND task_id = ?2 AND state = 'active'",
+                    params![
+                        attempt_id,
+                        task_id,
+                        now.saturating_add(AGENT_TASK_ENDPOINT_QUEUED_WAKE_LEASE_MS),
+                    ],
+                )
+                .map_err(store_error)?;
+        }
+
         let wake_id = allocate_identity(
             &transaction,
             AGENT_WAKE_ID_PREFIX,

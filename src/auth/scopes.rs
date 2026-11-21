@@ -283,6 +283,7 @@ mod tests {
             ("GET", "/.well-known/oauth-protected-resource"),
             ("GET", "/.well-known/oauth-authorization-server"),
             ("POST", "/oauth/token"),
+            ("POST", "/oauth/register"),
             ("POST", "/oauth/revoke"),
             ("POST", "/oauth/authorize/login"),
             ("POST", "/oauth/authorize/consent"),

@@ -328,6 +328,7 @@ fn seed_oauth_client_record(
     let record = crate::models::OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: crate::auth::hash_token(&plaintext_secret),
         name: name.to_string(),
         owner_user_id: Some(user.id.clone()),

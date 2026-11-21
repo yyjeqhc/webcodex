@@ -24,6 +24,7 @@ mod managed_authorize;
 mod metadata;
 mod project_share;
 mod protocol_errors;
+mod registration;
 mod revoke;
 mod scopes;
 mod shared_key_bridge;

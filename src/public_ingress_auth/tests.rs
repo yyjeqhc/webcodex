@@ -95,11 +95,7 @@ fn service(
                     .get(echo)
                     .post(echo),
             )
-            .push(
-                Router::with_path("oauth/token")
-                    .hoop(ClientIngressGate::ClientId)
-                    .post(crate::oauth_http::oauth_token),
-            )
+            .push(Router::with_path("oauth/token").post(crate::oauth_http::oauth_token))
             .push(
                 Router::with_path("oauth/authorize")
                     .hoop(ClientIngressGate::ClientId)

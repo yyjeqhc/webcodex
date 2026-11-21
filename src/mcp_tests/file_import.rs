@@ -244,6 +244,7 @@ fn seed_mcp_import_client(
     let record = crate::models::OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: crate::auth::hash_token("test-client-secret"),
         name: name.to_string(),
         owner_user_id: Some(user.id.clone()),
@@ -716,6 +717,31 @@ fn mcp_file_import_trust_decision_reports_exact_failure_stage() {
         "Reprovisioned ChatGPT WebCodex",
         MCP_IMPORT_TRUSTED_REDIRECT,
     );
+    let dynamic = crate::models::OAuthClientRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: Some(crate::models::DynamicClientRegistration {
+            issuer: "https://issuer.example".into(),
+            auth_method: crate::models::DynamicClientAuth::Post,
+            refresh: true,
+        }),
+        ..client.clone()
+    };
+    assert_eq!(
+        db.register_dynamic_oauth_client(&dynamic).unwrap(),
+        webcodex_store::DynamicRegistrationOutcome::Created
+    );
+    let untrusted = mcp_host_file_import_trust_decision_from_state(
+        &config,
+        &db,
+        Some(&mcp_import_oauth_auth(&dynamic.client_id)),
+    );
+    assert_eq!(untrusted.trust, HostFileImportTrust::Untrusted);
+    assert_eq!(
+        untrusted.reason,
+        HostFileImportTrustReason::DynamicClientNotTrusted
+    );
+
     let tier2 = mcp_host_file_import_trust_decision_from_state(
         &config,
         &db,

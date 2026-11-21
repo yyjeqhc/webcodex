@@ -230,7 +230,8 @@ impl Database {
         let Some(entry) = active_entry_for_fence(&tx, fence)? else {
             return Ok(false);
         };
-        if record.owner_user_id.as_deref() != Some(&entry.owner_user_id)
+        if record.dynamic_registration.is_some()
+            || record.owner_user_id.as_deref() != Some(&entry.owner_user_id)
             || record.owner_project_grant_id.is_some()
             || record.owner_shared_key_hash.is_some()
             || record.revoked_at.is_some()
@@ -494,7 +495,7 @@ impl Database {
 }
 
 fn client_owner_matches(conn: &Connection, client_id: &str, owner: &str) -> anyhow::Result<bool> {
-    Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM oauth_clients c JOIN users u ON u.id=c.owner_user_id WHERE c.client_id=?1 AND c.owner_user_id=?2 AND c.revoked_at IS NULL AND u.disabled=0)", params![client_id,owner], |row| row.get(0))?)
+    Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM oauth_clients c JOIN users u ON u.id=c.owner_user_id WHERE c.client_id=?1 AND c.dynamic_registration IS NULL AND c.owner_user_id=?2 AND c.revoked_at IS NULL AND u.disabled=0)", params![client_id,owner], |row| row.get(0))?)
 }
 pub(crate) fn client_entry_id(
     conn: &Connection,

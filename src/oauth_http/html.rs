@@ -83,12 +83,18 @@ pub(super) fn authorize_login_html(return_to: &str, error: Option<&str>) -> Stri
 /// parameters are carried as hidden fields and revalidated on POST.
 pub(super) fn authorize_consent_html(
     client_name: &str,
+    self_registered: bool,
     client_id: &str,
     redirect_uri: &str,
     scopes: &[String],
     resource: Option<&str>,
     original_query: &str,
 ) -> String {
+    let client_label = if self_registered {
+        "Self-registered client"
+    } else {
+        "Client"
+    };
     let scope_items = scopes
         .iter()
         .map(|s| format!("<li>{}</li>", html_escape(s)))
@@ -108,7 +114,7 @@ pub(super) fn authorize_consent_html(
 </head>
 <body>
 <h1>Authorize WebCodex client</h1>
-<p>Client: <strong>{client_name}</strong> ({client_id})</p>
+<p>{client_label}: <strong>{client_name}</strong> ({client_id})</p>
 <p>Redirect URI: <code>{redirect_uri}</code></p>
 {resource_html}
 <p>The application is requesting the following scopes:</p>

@@ -355,6 +355,25 @@ impl ApiKeyRecord {
 // OAuth2 models — Phase 2a
 // ---------------------------------------------------------------------------
 
+/// Authentication negotiated through RFC 7591. Manually provisioned clients
+/// have no dynamic registration and retain their form-secret contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DynamicClientAuth {
+    #[serde(rename = "client_secret_basic")]
+    Basic,
+    #[serde(rename = "client_secret_post")]
+    Post,
+    #[serde(rename = "none")]
+    Public,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynamicClientRegistration {
+    pub issuer: String,
+    pub auth_method: DynamicClientAuth,
+    pub refresh: bool,
+}
+
 /// OAuth2 registered client. The `client_secret` plaintext is returned only at
 /// creation time; only `client_secret_hash` is stored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,6 +383,8 @@ pub struct OAuthClientRecord {
     pub client_id: String,
     /// SHA-256 hash of the client secret. The plaintext is never stored.
     pub client_secret_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dynamic_registration: Option<DynamicClientRegistration>,
     pub name: String,
     /// Managed-user owner for ordinary managed OAuth clients. Exactly one
     /// OAuth client owner field is present.

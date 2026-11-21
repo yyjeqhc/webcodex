@@ -473,6 +473,7 @@ fn seed_subject_oauth(
     let client = crate::models::OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: crate::auth::hash_token(&crate::auth::generate_oauth_client_secret()),
         name: "window-subject-fixture".into(),
         owner_user_id: None,

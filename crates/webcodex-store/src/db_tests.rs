@@ -38,8 +38,25 @@ fn v043_database_opens_with_current_table_and_column_sets() {
         .unwrap()
         .execute_batch(include_str!("test_fixtures/database_v0_4_3.sql"))
         .unwrap();
+    rusqlite::Connection::open(&old)
+        .unwrap()
+        .execute_batch(
+            "
+        INSERT INTO users(id,username,created_at) VALUES('legacy-owner','owner',0);
+        INSERT INTO oauth_clients(id,client_id,client_secret_hash,name,owner_user_id,created_at)
+        VALUES('legacy-row','legacy-client','fixture','existing integration','legacy-owner',0);
+    ",
+        )
+        .unwrap();
     let before = columns(&old);
-    drop(Database::open(&old).unwrap());
+    let migrated = Database::open(&old).unwrap();
+    let client = migrated
+        .get_oauth_client_by_client_id("legacy-client")
+        .unwrap()
+        .unwrap();
+    assert!(client.dynamic_registration.is_none());
+    assert_eq!(client.owner_user_id.as_deref(), Some("legacy-owner"));
+    drop(migrated);
     drop(Database::open(&fresh).unwrap());
     let expected = columns(&fresh);
     assert_ne!(before, expected, "fixture must exercise schema migration");
@@ -429,6 +446,7 @@ fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
     let client = OAuthClientRecord {
         id: "oc-1".to_string(),
         client_id: "wc_client_test".to_string(),
+        dynamic_registration: None,
         client_secret_hash: "secret-hash".to_string(),
         name: "test".to_string(),
         owner_user_id: Some("u-1".to_string()),
@@ -1082,6 +1100,7 @@ fn oauth_seed_client(db: &Database, user: &UserRecord, name: &str) -> (OAuthClie
     let record = OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id,
+        dynamic_registration: None,
         client_secret_hash: oauth_fixture_hash(&plaintext_secret),
         name: name.to_string(),
         owner_user_id: Some(user.id.clone()),
@@ -2157,6 +2176,7 @@ fn last_used_at_updates_are_floored_to_one_write_per_window() {
     db.insert_oauth_client(&OAuthClientRecord {
         id: "oc-last".to_string(),
         client_id: "wc_client_last".to_string(),
+        dynamic_registration: None,
         client_secret_hash: "secret-hash".to_string(),
         name: "last".to_string(),
         owner_user_id: Some("u-last".to_string()),
@@ -2240,6 +2260,7 @@ fn batched_purge_is_bounded_per_table_and_never_touches_live_rows() {
     db.insert_oauth_client(&OAuthClientRecord {
         id: "oc-batch".to_string(),
         client_id: "wc_client_batch".to_string(),
+        dynamic_registration: None,
         client_secret_hash: "secret-hash".to_string(),
         name: "batch".to_string(),
         owner_user_id: Some("u-batch".to_string()),

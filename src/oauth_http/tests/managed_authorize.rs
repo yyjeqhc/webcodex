@@ -10,6 +10,7 @@ fn oauth_consent_input_isolation_excludes_query_controls_from_all_forms() {
     let pages = [
         super::super::html::authorize_consent_html(
             "client",
+            false,
             "id",
             "https://example.com/callback",
             &scopes,

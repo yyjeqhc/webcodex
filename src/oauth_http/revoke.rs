@@ -22,15 +22,17 @@ pub(crate) async fn oauth_revoke(
     depot: &mut Depot,
     res: &mut Response,
 ) -> Result<(), OAuthTokenError> {
-    let _config = enabled_token_config(depot)?;
+    let config = enabled_token_config(depot)?;
     let form: RevokeRequest = parse_token_form(req).await?;
     let plaintext_token = required_token_parameter(form.token.as_deref(), "token")?;
-    let (db, _) = authenticate_token_client(
+    let (db, client) = authenticate_token_client(
+        req,
         depot,
+        &config,
         form.client_id.as_deref(),
         form.client_secret.as_deref(),
     )?;
-    let client_id = form.client_id.as_deref().expect("authenticated client_id");
+    let client_id = client.client_id.as_str();
 
     // --- Revoke ---
     let token_hash = hash_token(plaintext_token);

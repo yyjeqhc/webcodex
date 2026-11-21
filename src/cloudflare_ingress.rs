@@ -973,6 +973,7 @@ impl CloudflareControl {
         let client = crate::models::OAuthClientRecord {
             id: uuid::Uuid::new_v4().to_string(),
             client_id: crate::auth::generate_oauth_client_id(),
+            dynamic_registration: None,
             client_secret_hash: crate::auth::hash_token(&secret),
             name: profile.profile_id,
             owner_user_id: Some(user.id),
@@ -1194,14 +1195,12 @@ impl CloudflareOwner {
                         Router::with_path(crate::route_metadata::root_path(
                             crate::route_metadata::RouteId::OAuthToken,
                         ))
-                        .hoop(ClientIngressGate::ClientId)
                         .post(crate::oauth_http::oauth_token),
                     )
                     .push(
                         Router::with_path(crate::route_metadata::root_path(
                             crate::route_metadata::RouteId::OAuthRevoke,
                         ))
-                        .hoop(ClientIngressGate::ClientId)
                         .post(crate::oauth_http::oauth_revoke),
                     ),
             );

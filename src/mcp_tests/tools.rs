@@ -1097,6 +1097,7 @@ fn mcp_file_import_trust_distinguishes_exact_tier1_from_active_oauth_tier2() {
     let make_client = |name: &str, redirect_uris: &str| crate::models::OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: crate::auth::hash_token("test-secret"),
         name: name.to_string(),
         owner_user_id: Some(user.id.clone()),

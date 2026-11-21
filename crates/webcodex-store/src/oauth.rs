@@ -124,32 +124,73 @@ fn validate_oauth_subjects_match(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum DynamicRegistrationOutcome {
+    Created,
+    OwnerUnavailable,
+    AtCapacity,
+}
+
 impl Database {
     // --- OAuth clients ---
 
     pub fn insert_oauth_client(&self, record: &OAuthClientRecord) -> anyhow::Result<()> {
         validate_oauth_client_owner(record)?;
         let conn = self.lock_connection(crate::StoreDomain::OAuth);
-        conn.execute(
-            "INSERT INTO oauth_clients (
-                id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
-                owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                record.id,
-                record.client_id,
-                record.client_secret_hash,
-                record.name,
-                record.owner_user_id,
-                record.owner_project_grant_id,
-                record.owner_shared_key_hash,
-                record.redirect_uris,
-                record.allowed_scopes,
-                record.created_at,
-                record.revoked_at,
-            ],
+        anyhow::ensure!(
+            record.dynamic_registration.is_none(),
+            "dynamic clients require bounded registration"
+        );
+        insert_client(&conn, record)
+    }
+
+    /// Check capacity and insert under one writer transaction, including when
+    /// another process opens the same SQLite database.
+    pub fn register_dynamic_oauth_client(
+        &self,
+        record: &OAuthClientRecord,
+    ) -> anyhow::Result<DynamicRegistrationOutcome> {
+        const MAX_DYNAMIC_CLIENTS: i64 = 128;
+        validate_oauth_client_owner(record)?;
+        anyhow::ensure!(
+            record.dynamic_registration.is_some() && record.is_managed_user_owned(),
+            "invalid dynamic client"
+        );
+        let mut conn = self.lock_connection(crate::StoreDomain::OAuth);
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let enabled: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND disabled=0)",
+            [&record.owner_user_id],
+            |row| row.get(0),
         )?;
-        Ok(())
+        if !enabled {
+            return Ok(DynamicRegistrationOutcome::OwnerUnavailable);
+        }
+        let count: i64 = tx.query_row(
+            "SELECT count(*) FROM oauth_clients WHERE dynamic_registration IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        if count >= MAX_DYNAMIC_CLIENTS {
+            // Reclaim one idle registration only under pressure. Grant FKs,
+            // including spent codes retained until normal cleanup, take priority.
+            let reclaimed = tx.execute(
+                "DELETE FROM oauth_clients WHERE id = (
+                SELECT c.id FROM oauth_clients c WHERE dynamic_registration IS NOT NULL
+                AND (c.created_at <= ?1 OR c.revoked_at IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM oauth_authorization_codes WHERE client_id=c.client_id)
+                AND NOT EXISTS (SELECT 1 FROM oauth_access_tokens WHERE client_id=c.client_id)
+                AND NOT EXISTS (SELECT 1 FROM oauth_refresh_tokens WHERE client_id=c.client_id)
+                ORDER BY c.created_at LIMIT 1)",
+                [record.created_at.saturating_sub(86_400)],
+            )?;
+            if reclaimed == 0 {
+                return Ok(DynamicRegistrationOutcome::AtCapacity);
+            }
+        }
+        insert_client(&tx, record)?;
+        tx.commit()?;
+        Ok(DynamicRegistrationOutcome::Created)
     }
 
     pub fn get_oauth_client_by_client_id(
@@ -159,7 +200,7 @@ impl Database {
         let conn = self.lock_connection(crate::StoreDomain::OAuth);
         let mut stmt = conn.prepare(
             "SELECT id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
-                    owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at
+                    owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at, dynamic_registration
              FROM oauth_clients WHERE client_id = ?1 AND revoked_at IS NULL",
         )?;
         let mut rows = stmt.query_map(params![client_id], row_to_oauth_client)?;
@@ -188,7 +229,7 @@ impl Database {
         let conn = self.lock_connection(crate::StoreDomain::OAuth);
         let mut stmt = conn.prepare(
             "SELECT id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
-                    owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at
+                    owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at, dynamic_registration
              FROM oauth_clients WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], row_to_oauth_client)?;
@@ -213,7 +254,7 @@ impl Database {
         let conn = self.lock_connection(crate::StoreDomain::OAuth);
         let mut stmt = conn.prepare(
             "SELECT id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
-                    owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at
+                    owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at, dynamic_registration
              FROM oauth_clients ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], row_to_oauth_client)?;
@@ -229,7 +270,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT c.id, c.client_id, c.client_secret_hash, c.name, c.owner_user_id,
                     c.owner_project_grant_id, c.owner_shared_key_hash, c.redirect_uris,
-                    c.allowed_scopes, c.created_at, c.revoked_at
+                    c.allowed_scopes, c.created_at, c.revoked_at, c.dynamic_registration
              FROM oauth_clients c JOIN oauth_public_ingress_clients b ON b.client_id=c.client_id
              WHERE b.entry_id=?1 AND c.revoked_at IS NULL ORDER BY c.created_at DESC",
         )?;
@@ -530,21 +571,24 @@ impl Database {
     /// Pre-condition: client authentication must be verified before calling
     /// this method. Post-condition: client_id / redirect_uri / PKCE checks
     /// are **not** performed here — the caller must validate them after.
-    pub fn exchange_oauth_authorization_code_for_tokens(
+    pub fn exchange_oauth_authorization_code_for_tokens<'a>(
         &self,
         code_hash: &str,
         now: i64,
         access_token_record: &OAuthAccessTokenRecord,
-        refresh_token_record: &OAuthRefreshTokenRecord,
+        refresh_token_record: impl Into<Option<&'a OAuthRefreshTokenRecord>>,
     ) -> anyhow::Result<Option<OAuthAuthorizationCodeRecord>> {
         validate_oauth_access_token_subject(access_token_record)?;
-        validate_oauth_refresh_token_subject(refresh_token_record)?;
-        validate_oauth_subjects_match(
-            &access_token_record.subject_kind,
-            &access_token_record.subject_id,
-            &refresh_token_record.subject_kind,
-            &refresh_token_record.subject_id,
-        )?;
+        let refresh_token_record = refresh_token_record.into();
+        if let Some(refresh_token_record) = refresh_token_record {
+            validate_oauth_refresh_token_subject(refresh_token_record)?;
+            validate_oauth_subjects_match(
+                &access_token_record.subject_kind,
+                &access_token_record.subject_id,
+                &refresh_token_record.subject_kind,
+                &refresh_token_record.subject_id,
+            )?;
+        }
         // Scope the transaction so the MutexGuard is dropped after commit,
         // allowing get_oauth_authorization_code_by_hash_for_consume to
         // re-acquire the lock.
@@ -584,7 +628,8 @@ impl Database {
             };
             validate_oauth_authorization_code_subject(&code_record)?;
             if access_token_record.admin_authority != code_record.admin_authority
-                || refresh_token_record.admin_authority != code_record.admin_authority
+                || refresh_token_record
+                    .is_some_and(|r| r.admin_authority != code_record.admin_authority)
             {
                 anyhow::bail!("OAuth exchange authority mismatch");
             }
@@ -634,31 +679,32 @@ impl Database {
                 ],
             )?;
 
-            // 3. Insert refresh token.
-            tx.execute(
-                "INSERT INTO oauth_refresh_tokens (
+            if let Some(refresh_token_record) = refresh_token_record {
+                tx.execute(
+                    "INSERT INTO oauth_refresh_tokens (
                     id, token_hash, client_id, subject_kind, subject_id, user_id,
                     scopes, resource, shared_key_hash, created_at, expires_at,
                     revoked_at, last_used_at, rotated_from_id, admin_authority
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-                params![
-                    refresh_token_record.id,
-                    refresh_token_record.token_hash,
-                    refresh_token_record.client_id,
-                    refresh_token_record.subject_kind,
-                    refresh_token_record.subject_id,
-                    refresh_token_record.user_id,
-                    refresh_token_record.scopes,
-                    refresh_token_record.resource,
-                    refresh_token_record.shared_key_hash,
-                    refresh_token_record.created_at,
-                    refresh_token_record.expires_at,
-                    refresh_token_record.revoked_at,
-                    refresh_token_record.last_used_at,
-                    refresh_token_record.rotated_from_id,
-                    refresh_token_record.admin_authority,
-                ],
-            )?;
+                    params![
+                        refresh_token_record.id,
+                        refresh_token_record.token_hash,
+                        refresh_token_record.client_id,
+                        refresh_token_record.subject_kind,
+                        refresh_token_record.subject_id,
+                        refresh_token_record.user_id,
+                        refresh_token_record.scopes,
+                        refresh_token_record.resource,
+                        refresh_token_record.shared_key_hash,
+                        refresh_token_record.created_at,
+                        refresh_token_record.expires_at,
+                        refresh_token_record.revoked_at,
+                        refresh_token_record.last_used_at,
+                        refresh_token_record.rotated_from_id,
+                        refresh_token_record.admin_authority,
+                    ],
+                )?;
+            }
 
             if let Some(binding) = &binding {
                 public_ingress::insert_binding(
@@ -667,12 +713,14 @@ impl Database {
                     &access_token_record.id,
                     binding,
                 )?;
-                public_ingress::insert_binding(
-                    &tx,
-                    "oauth_public_ingress_refresh",
-                    &refresh_token_record.id,
-                    binding,
-                )?;
+                if let Some(refresh_token_record) = refresh_token_record {
+                    public_ingress::insert_binding(
+                        &tx,
+                        "oauth_public_ingress_refresh",
+                        &refresh_token_record.id,
+                        binding,
+                    )?;
+                }
             }
             tx.commit()?;
         } // MutexGuard dropped here.
@@ -984,7 +1032,7 @@ impl Database {
                 old.user_id.as_deref(),
                 old.resource.as_deref(),
                 access_token_record,
-                new_refresh_token_record,
+                Some(new_refresh_token_record),
             )? {
                 return Ok(RotateResult::Revoked);
             }
@@ -1096,11 +1144,47 @@ pub enum RotateResult {
     ClientMismatch,
 }
 
+fn insert_client(conn: &Connection, record: &OAuthClientRecord) -> anyhow::Result<()> {
+    conn.execute(
+            "INSERT INTO oauth_clients (
+                id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
+                owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at, dynamic_registration
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                record.id,
+                record.client_id,
+                record.client_secret_hash,
+                record.name,
+                record.owner_user_id,
+                record.owner_project_grant_id,
+                record.owner_shared_key_hash,
+                record.redirect_uris,
+                record.allowed_scopes,
+                record.created_at,
+                record.revoked_at,
+                record.dynamic_registration.as_ref().map(serde_json::to_string).transpose()?,
+            ],
+        )?;
+    Ok(())
+}
+
 fn row_to_oauth_client(row: &rusqlite::Row) -> rusqlite::Result<OAuthClientRecord> {
     Ok(OAuthClientRecord {
         id: row.get(0)?,
         client_id: row.get(1)?,
         client_secret_hash: row.get(2)?,
+        dynamic_registration: row
+            .get::<_, Option<String>>(11)?
+            .map(|json| {
+                serde_json::from_str(&json).map_err(|err| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        11,
+                        rusqlite::types::Type::Text,
+                        Box::new(err),
+                    )
+                })
+            })
+            .transpose()?,
         name: row.get(3)?,
         owner_user_id: row.get(4)?,
         owner_project_grant_id: row.get(5)?,
@@ -1216,15 +1300,19 @@ fn validate_issuance_binding(
     source_user_id: Option<&str>,
     source_resource: Option<&str>,
     access: &OAuthAccessTokenRecord,
-    refresh: &OAuthRefreshTokenRecord,
+    refresh: Option<&OAuthRefreshTokenRecord>,
 ) -> anyhow::Result<bool> {
     let Some(binding) = binding else {
         public_ingress::require_unbound_client(conn, source_client_id)?;
         public_ingress::require_unbound_client(conn, &access.client_id)?;
-        public_ingress::require_unbound_client(conn, &refresh.client_id)?;
+        if let Some(refresh) = refresh {
+            public_ingress::require_unbound_client(conn, &refresh.client_id)?;
+        }
         return Ok(true);
     };
-    if access.client_id != source_client_id || refresh.client_id != source_client_id {
+    if access.client_id != source_client_id
+        || refresh.is_some_and(|r| r.client_id != source_client_id)
+    {
         return Ok(false);
     }
     // Check the canonical epoch even when the OAuth resource parameter is
@@ -1241,11 +1329,14 @@ fn validate_issuance_binding(
         &access.client_id,
         access.user_id.as_deref(),
         access.resource.as_deref(),
-    )? && public_ingress::binding_is_current(
-        conn,
-        binding,
-        &refresh.client_id,
-        refresh.user_id.as_deref(),
-        refresh.resource.as_deref(),
-    )?)
+    )? && match refresh {
+        Some(refresh) => public_ingress::binding_is_current(
+            conn,
+            binding,
+            &refresh.client_id,
+            refresh.user_id.as_deref(),
+            refresh.resource.as_deref(),
+        )?,
+        None => true,
+    })
 }

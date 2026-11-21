@@ -33,6 +33,7 @@ impl Fixture {
         let client = OAuthClientRecord {
             id: "client-row".into(),
             client_id: "client".into(),
+            dynamic_registration: None,
             client_secret_hash: "hashed-secret".into(),
             name: "app".into(),
             owner_user_id: Some("owner".into()),

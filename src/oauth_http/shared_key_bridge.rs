@@ -477,6 +477,15 @@ pub(super) fn validate_bridge_authorize_request(
         }
     };
 
+    if client.dynamic_registration.is_some() {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "client is not registered for the shared-key bridge",
+        );
+        return None;
+    }
     if parsed.redirect_uri.is_empty() {
         oauth_authorize_direct_error(
             res,
@@ -944,6 +953,7 @@ pub(crate) async fn oauth_shared_key_client_provision(
     let record = crate::models::OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: hash_token(&plaintext_secret),
         name: "WebCodex hosted shared-key bridge".to_string(),
         owner_user_id: None,

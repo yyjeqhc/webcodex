@@ -88,6 +88,8 @@ WebCodex 验证该 credential 后只在内部保留所需的非 secret authoriza
 
 ## OAuth2
 
+通过动态注册接入的客户端绑定到配置的签发者和托管用户。即使用管理员 PAT 登录，授权也只包含委托的 scope。动态客户端需要显式配置信任其客户端 ID 才可使用宿主文件导入。[注册与部署](DEPLOYMENT.zh-CN.md#动态客户端注册)
+
 Authentication 确认用户身份；ownership 限制可管理谁的资源；credential scopes 承载实际 authority。`admin` 是 credential-level super-scope；`account:manage` 是受 ownership 限制的账户、token、pairing 与 OAuth client 窄管理能力，不等于 admin。Bootstrap 保持完整 authority。`user.role` 仅保留为 legacy metadata，不授予 runtime/admin authority。PAT、Runner token、OAuth、shared-key 与 Project Credential 的 kinds/audiences 继续严格隔离。
 
 OAuth 允许 MCP/GPT client 使用 authorization-code flow，而不是在 client 中长期保存 PAT。注册 client 实际要求的精确 callback URL，并按 `webcodex share --auth oauth` 或 `webcodex connect --auth oauth` 的输出完成连接。
@@ -108,7 +110,7 @@ Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时
 
 Managed-user OAuth 在 first-party PAT 授权时快照 credential authority。普通 requested scopes 必须同时满足全局 supported scopes、client allowed scopes 和 PAT 自身 authority（`admin` 满足全部普通 scope）。`offline_access` 只是 OAuth refresh capability，不要求 PAT 自身持有。浏览器登录只保存用户身份、credential scopes 与 expiry，不保存 PAT 明文或 hash。
 
-admin PAT 授权**自己拥有的** managed-user client 时，grant 还会获得内部 admin authority；授权其他用户的 client 时只委托普通 scopes。`admin` 不可作为 requestable OAuth scope，不可进入 client `allowed_scopes`，也不出现在 token response 的公开 `scope` 中。shared-key 与 project-share OAuth 均不继承 admin authority。
+admin PAT 授权**自己拥有且手动配置的** managed-user client 时，grant 还会获得内部 admin authority；授权其他用户的 client 时只委托普通 scopes。`admin` 不可作为 requestable OAuth scope，不可进入 client `allowed_scopes`，也不出现在 token response 的公开 `scope` 中。shared-key 与 project-share OAuth 均不继承 admin authority。
 
 签发后的 grant 是独立 credential：原 PAT 被撤销、过期或修改 scopes，不改变该 grant。Code exchange 和 refresh rotation 保留内部 authority；现有 OAuth 撤销和 disabled-user 检查继续生效。升级前的 grant 未记录当初 PAT authority，因此全部默认无 admin authority，不按 role 或现有 PAT 猜测。旧 ChatGPT/NewWebCodex connection 需要**用 admin PAT 对自己拥有的 managed client 重新授权一次**才能获得 admin authority；之后 refresh 持续保留，无须再次登录，直至正常失效或撤销。
 

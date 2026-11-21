@@ -1779,6 +1779,7 @@ pub(super) enum HostFileImportTrustReason {
     MissingAllowedClientId,
     OAuthDisabled,
     AuthenticatedOAuthOpenAiHostOnly,
+    DynamicClientNotTrusted,
     ClientRegistrationMissingOrRevoked,
     ClientRegistrationLookupFailed,
 }
@@ -1801,6 +1802,7 @@ impl HostFileImportTrustReason {
             Self::NotOAuthToken => "not_oauth_token",
             Self::MissingAllowedClientId => "missing_allowed_client_id",
             Self::OAuthDisabled => "oauth_disabled",
+            Self::DynamicClientNotTrusted => "dynamic_client_not_trusted",
             Self::AuthenticatedOAuthOpenAiHostOnly => "authenticated_oauth_openai_host_only",
             Self::ClientRegistrationMissingOrRevoked => "client_registration_missing_or_revoked",
             Self::ClientRegistrationLookupFailed => "client_registration_lookup_failed",
@@ -1952,6 +1954,13 @@ pub(super) fn mcp_host_file_import_trust_decision_from_state(
                     trust: HostFileImportTrust::TrustedMcpHostFile,
                     reason: HostFileImportTrustReason::Trusted,
                     client_id_configured: Some(true),
+                    active_client_registration_found: Some(true),
+                    ..base
+                }
+            } else if client.dynamic_registration.is_some() {
+                HostFileImportTrustDecision {
+                    reason: HostFileImportTrustReason::DynamicClientNotTrusted,
+                    client_id_configured: Some(false),
                     active_client_registration_found: Some(true),
                     ..base
                 }

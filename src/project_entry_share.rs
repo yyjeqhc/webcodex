@@ -552,6 +552,7 @@ fn prepare_share_oauth_client(
             db.insert_oauth_client(&crate::models::OAuthClientRecord {
                 id: uuid::Uuid::new_v4().to_string(),
                 client_id: client_id.clone(),
+                dynamic_registration: None,
                 client_secret_hash: crate::auth::hash_token(&client_secret),
                 name: format!("{} project share", config.project_name),
                 owner_user_id: None,
@@ -585,6 +586,7 @@ fn prepare_share_oauth_client(
     db.insert_oauth_client(&crate::models::OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: client_id.clone(),
+        dynamic_registration: None,
         client_secret_hash: crate::auth::hash_token(&client_secret),
         name: format!("{} project share", config.project_name),
         owner_user_id: None,

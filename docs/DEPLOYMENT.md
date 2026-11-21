@@ -501,7 +501,7 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
 
 `allowed_scopes` limits what an OAuth client may request. Existing clients are not silently widened when WebCodex adds new permissions. To change an existing client, submit the complete desired non-empty allow-list to `POST /api/oauth/clients/update_scopes`. A real change invalidates the client's old OAuth grants and requires reauthorization; submitting the same canonical list is a no-op. See [Authentication](AUTH_MODEL.md#oauth2) for the security model.
 
-ChatGPT MCP host-file import uses two trust tiers. An active authenticated OAuth client may import only from OpenAI attachment hosts: `files.oaiusercontent.com` and its subdomains, plus the narrowly matched Sediment Azure Blob accounts `oaisdmntpr<region>.blob.core.windows.net`; those URLs still require HTTPS, public DNS resolution with address pinning, port 443, no userinfo, no redirects, and the normal bounded download/write policy. Configure an exact server-generated OAuth client id in `WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS` only when that client must also import from arbitrary public HTTPS hosts under the same SSRF controls. Reprovisioning changes the client id but does not break ordinary OpenAI-host attachment import; update the setting to restore the broader Tier 1 trust. Client display names and redirect URIs never grant Tier 1 trust.
+ChatGPT MCP host-file import uses two trust tiers. An active manually provisioned OAuth client may import only from OpenAI attachment hosts: `files.oaiusercontent.com` and its subdomains, plus the narrowly matched Sediment Azure Blob accounts `oaisdmntpr<region>.blob.core.windows.net`; those URLs still require HTTPS, public DNS resolution with address pinning, port 443, no userinfo, no redirects, and the normal bounded download/write policy. Configure an exact server-generated OAuth client id in `WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS` only when that client must also import from arbitrary public HTTPS hosts under the same SSRF controls. Reprovisioning changes the client id but does not break ordinary OpenAI-host attachment import; update the setting to restore the broader Tier 1 trust. Client display names and redirect URIs never grant Tier 1 trust.
 
 A separate local-only exception exists for an operator-controlled Server that is
 bound to loopback and reached through OpenAI Secure Tunnel. Set
@@ -524,9 +524,17 @@ configured local TUN.
 
 List and revoke clients with `POST /api/oauth/clients/list` and
 `POST /api/oauth/clients/revoke`. OAuth uses the authorization-code flow;
-dynamic client registration, OIDC, and the device-code flow are not
+OIDC and the device-code flow are not
 implemented. Keep `offline_access` enabled when a host offers it — it is a
 protocol-level refresh-token scope and grants no extra WebCodex permission.
+
+### Dynamic client registration
+
+To let Gemini or another OAuth client register itself, configure the regular managed Server with `WEBCODEX_OAUTH2_ENABLED=true`, set `WEBCODEX_PUBLIC_URL` to the public HTTPS origin, and set `WEBCODEX_OAUTH2_DCR_OWNER_USER_ID` to the existing user's immutable `id` from `webcodex users list`. Apply the settings when starting the Server. The authorization server metadata at `/.well-known/oauth-authorization-server` then publishes `registration_endpoint`. The default leaves registration disabled.
+
+`POST /oauth/register` accepts RFC 7591 JSON with a nonempty `redirect_uris` array. Each registration gets a fresh client ID and exact callbacks. Confidential clients use `client_secret_basic` (default) or `client_secret_post`. Public clients request `none`. All three require an authorization code and S256 PKCE. Clients that need rotation must include `refresh_token` in `grant_types` alongside `authorization_code`. The registration scope defaults to the regular local-user profile and may request a subset. The designated user signs in to delegate scopes. Dynamic registrations never inherit internal admin authority. Removing the DCR setting or changing the owner or issuer blocks use of the old registration under the new configuration. Revoke a client permanently with `/api/oauth/clients/revoke`.
+
+The register request limit is 16 KiB. The Server retains up to 128 dynamic clients. At capacity it can reclaim a registration at least 24 hours old, or a revoked registration, once its grants have been cleaned up. Otherwise it returns HTTP 429. The Desktop-managed Cloudflare listener and temporary Project Share use their own provisioning flows. [Gemini setup](MCP.md#gemini-web-app)
 
 ## MCP integration
 

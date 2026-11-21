@@ -470,6 +470,8 @@ pub struct OAuth2Config {
     /// Whether PKCE (S256) is required for authorization code flows. Default
     /// `true`.
     pub require_pkce: bool,
+    /// Stable managed-user ID designated by the operator for open MCP client registration.
+    pub dcr_owner_user_id: Option<String>,
     /// Whether the public shared-key OAuth bridge authorize flow is enabled.
     /// Default `false`.
     pub shared_key_bridge_enabled: bool,
@@ -510,6 +512,7 @@ impl fmt::Debug for OAuth2Config {
                 "authorization_code_ttl_secs",
                 &self.authorization_code_ttl_secs,
             )
+            .field("dcr_owner_configured", &self.dcr_owner_user_id.is_some())
             .field("require_pkce", &self.require_pkce)
             .field("shared_key_bridge_enabled", &self.shared_key_bridge_enabled)
             .field(
@@ -542,6 +545,7 @@ impl Default for OAuth2Config {
             refresh_token_ttl_secs: 2_592_000,
             authorization_code_ttl_secs: 300,
             require_pkce: true,
+            dcr_owner_user_id: None,
             shared_key_bridge_enabled: false,
             trusted_mcp_file_client_ids: Vec::new(),
             trust_loopback_api_token_mcp_file_import: false,
@@ -566,6 +570,49 @@ fn normalize_trusted_mcp_file_client_id(value: &str) -> Option<String> {
 }
 
 impl OAuth2Config {
+    /// Return the RFC 9207 authorization-response issuer when the configured
+    /// public issuer is suitable for Internet OAuth interoperability. Local HTTP
+    /// development keeps legacy redirects and does not advertise issuer binding.
+    pub(crate) fn https_issuer(&self) -> Option<&str> {
+        let issuer = self.issuer.as_deref()?;
+        let parsed = url::Url::parse(issuer).ok()?;
+        if parsed.scheme() != "https"
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return None;
+        }
+        Some(issuer)
+    }
+
+    /// The configured owner and HTTPS issuer must both be present on this listener.
+    pub(crate) fn registration_target(&self, ingress: bool) -> Option<(&str, &str)> {
+        if ingress
+            || !self.enabled
+            || self.project_share_grant_id.is_some()
+            || self.project_share_session_id.is_some()
+        {
+            return None;
+        }
+        Some((self.dcr_owner_user_id.as_deref()?, self.https_issuer()?))
+    }
+
+    pub(crate) fn accepts_client_registration(
+        &self,
+        client: &crate::models::OAuthClientRecord,
+        ingress: bool,
+    ) -> bool {
+        client.dynamic_registration.as_ref().is_none_or(|d| {
+            self.registration_target(ingress)
+                .is_some_and(|(owner, issuer)| {
+                    client.owner_user_id.as_deref() == Some(owner) && d.issuer == issuer
+                })
+        })
+    }
+
     pub fn from_env() -> Self {
         let enabled = env_flag("WEBCODEX_OAUTH2_ENABLED").unwrap_or(false);
         // OAuth2-specific issuer takes precedence over the generic public URL.
@@ -637,6 +684,9 @@ impl OAuth2Config {
             refresh_token_ttl_secs,
             authorization_code_ttl_secs,
             require_pkce,
+            dcr_owner_user_id: std::env::var("WEBCODEX_OAUTH2_DCR_OWNER_USER_ID")
+                .ok()
+                .filter(|id| !id.trim().is_empty()),
             shared_key_bridge_enabled,
             trusted_mcp_file_client_ids,
             trust_loopback_api_token_mcp_file_import,
@@ -936,6 +986,7 @@ mod tests {
     fn oauth2_config_from_env_parses_overrides() {
         let mut env = crate::test_support::TestEnvGuard::new();
         env.set("WEBCODEX_OAUTH2_ENABLED", "true");
+        env.set("WEBCODEX_OAUTH2_DCR_OWNER_USER_ID", "test-owner-id");
         env.set("WEBCODEX_OAUTH2_ISSUER", "https://example.com");
         env.set("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS", "1800");
         env.set("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS", "86400");
@@ -955,6 +1006,7 @@ mod tests {
 
         let cfg = OAuth2Config::from_env();
         assert!(cfg.enabled);
+        assert_eq!(cfg.dcr_owner_user_id.as_deref(), Some("test-owner-id"));
         assert_eq!(cfg.issuer.as_deref(), Some("https://example.com"));
         assert_eq!(cfg.access_token_ttl_secs, 1800);
         assert_eq!(cfg.refresh_token_ttl_secs, 86400);
@@ -964,6 +1016,7 @@ mod tests {
         assert_eq!(cfg.trusted_mcp_file_client_ids, vec![trusted_a, trusted_b]);
         assert!(cfg.trust_loopback_api_token_mcp_file_import);
 
+        env.remove("WEBCODEX_OAUTH2_DCR_OWNER_USER_ID");
         env.remove("WEBCODEX_OAUTH2_ENABLED");
         env.remove("WEBCODEX_OAUTH2_ISSUER");
         env.remove("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS");

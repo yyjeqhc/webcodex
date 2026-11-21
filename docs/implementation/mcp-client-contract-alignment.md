@@ -71,9 +71,8 @@ to build a heuristic multi-format unwrap around every call.
 Standard MCP business failures continue to use `isError=true`. The existing
 explicit OpenAI adapter presentation keeps structured failures accessible as
 values and `success=false` remains authoritative. Compact `content.text` is not
-the data channel. Text-only integrations must explicitly enable the existing
-text-JSON compatibility mode instead of requiring all clients to receive the
-same object twice.
+the data channel. For clients that only expose text, see the MCP adapter’s
+[JSON text compatibility rules](../MCP.md#tool-result-framing).
 
 A successful edit consumes `changed` and returned file revisions; it must not
 require a removed duplicate `state_changed`. A dry-run or failure can still

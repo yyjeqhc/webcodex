@@ -23,10 +23,20 @@ async fn http_call(
     modern: bool,
 ) -> (StatusCode, Value) {
     params["_meta"] = meta;
-    let mut request = TestClient::post("http://localhost/mcp")
-        .bearer_auth("secret")
-        // Neither the User-Agent nor unrelated metadata selects presentation.
-        .add_header("user-agent", "openai-mcp", true);
+    http_request(service, "tools/call", params, Some("openai-mcp"), modern).await
+}
+
+async fn http_request(
+    service: &Service,
+    method: &str,
+    mut params: Value,
+    user_agent: Option<&str>,
+    modern: bool,
+) -> (StatusCode, Value) {
+    let mut request = TestClient::post("http://localhost/mcp").bearer_auth("secret");
+    if let Some(value) = user_agent {
+        request = request.add_header("user-agent", value, true);
+    }
     if modern {
         params["_meta"]["io.modelcontextprotocol/protocolVersion"] =
             json!(MCP_STATELESS_PROTOCOL_VERSION);
@@ -37,16 +47,19 @@ async fn http_call(
                 MCP_STATELESS_PROTOCOL_VERSION,
                 true,
             )
-            .add_header(MCP_METHOD_HEADER, "tools/call", true)
-            .add_header(
-                MCP_NAME_HEADER,
-                params["name"].as_str().unwrap_or("invalid"),
-                true,
-            );
+            .add_header(MCP_METHOD_HEADER, method, true);
+        let name = match method {
+            "tools/call" => Some(&params["name"]),
+            "resources/read" => Some(&params["uri"]),
+            _ => None,
+        };
+        if let Some(name) = name {
+            request = request.add_header(MCP_NAME_HEADER, name.as_str().unwrap_or("invalid"), true);
+        }
     }
     let mut response = request
         .json(&json!({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params,
+            "jsonrpc": "2.0", "id": 1, "method": method, "params": params,
         }))
         .send(service)
         .await;
@@ -54,6 +67,18 @@ async fn http_call(
         effective_status(&response),
         response.take_json().await.unwrap(),
     )
+}
+
+fn assert_success_text(result: &Value, json_text: bool) {
+    let structured = &result["structuredContent"];
+    assert_eq!(structured["success"], true, "{result}");
+    assert_eq!(result["isError"], false);
+    let text = result["content"][0]["text"].as_str().unwrap();
+    if json_text {
+        assert_eq!(serde_json::from_str::<Value>(text).unwrap(), *structured);
+    } else {
+        assert_eq!(text, "WebCodex tool completed successfully.");
+    }
 }
 
 fn assert_failure(body: &Value, is_error: bool) -> &Value {
@@ -585,7 +610,11 @@ async fn http_mcp_passthrough_preserves_mixed_image_and_resource_link_content() 
         is_error: false,
     };
 
-    for action in ["describe", "call"] {
+    for (action, ua) in [
+        ("describe", "openai-mcp/1.0.0"),
+        ("call", "openai-mcp/1.0.0"),
+        ("call", "Google"),
+    ] {
         let mut arguments = json!({"action": action, "server": "probe-provider", "tool": "probe"});
         if action == "call" {
             arguments["arguments"] = json!({});
@@ -643,13 +672,12 @@ async fn http_mcp_passthrough_preserves_mixed_image_and_resource_link_content() 
                 .await
                 .unwrap();
         };
+        let mut params = json!({"name": "mcp_tool", "arguments": arguments});
+        if ua == "openai-mcp/1.0.0" {
+            params["_meta"] = client_meta("openai-mcp", "1.0.0");
+        }
         let ((status, body), ()) = tokio::join!(
-            http_call(
-                &service,
-                json!({"name": "mcp_tool", "arguments": arguments}),
-                client_meta("openai-mcp", "2"),
-                false
-            ),
+            http_request(&service, "tools/call", params, Some(ua), false),
             complete,
         );
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -777,7 +805,11 @@ async fn http_edit_project_files_and_process_failures_preserve_canonical_output(
 
 #[tokio::test]
 async fn http_mcp_execution_compaction_keeps_sparse_serialization() {
-    for tool in ["run_process", "run_shell"] {
+    for (tool, ua) in [
+        ("run_process", "openai-mcp/1.0.0"),
+        ("run_shell", "openai-mcp/1.0.0"),
+        ("run_shell", "Google"),
+    ] {
         let (_tmp, db) = test_db();
         let runtime = Arc::new(test_runtime());
         register_failure_runner(&runtime).await;
@@ -813,26 +845,22 @@ async fn http_mcp_execution_compaction_keeps_sparse_serialization() {
                 .unwrap();
         };
         let ((status, body), ()) = tokio::join!(
-            http_call(
+            http_request(
                 &service,
+                "tools/call",
                 json!({"name":tool, "arguments": if tool == "run_process" {
                     json!({"project":"agent:failure-runner:probe", "executable":"probe", "args":[], "timeout_secs":30, "sync_wait_secs":30})
                 } else {
                     json!({"project":"agent:failure-runner:probe", "command":"printf witness", "timeout_secs":30, "sync_wait_secs":30})
                 }}),
-                client_meta("generic-test-client", "2"),
-                true,
+                Some(ua),
+                ua != "Google",
             ),
             runner
         );
         assert_eq!(status, StatusCode::OK, "{body}");
         let result = &body["result"]["structuredContent"];
-        assert_eq!(result["success"], true, "{body}");
-        assert_eq!(body["result"]["isError"], false);
-        assert_eq!(
-            body["result"]["content"][0]["text"],
-            "WebCodex tool completed successfully."
-        );
+        assert_success_text(&body["result"], ua == "Google");
         assert!(result["output"].get("execution_state").is_none());
         assert!(result["output"].get("command_completed").is_none());
         assert_eq!(result["output"]["stdout_tail"], "output witness");

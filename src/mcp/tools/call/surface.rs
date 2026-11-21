@@ -81,7 +81,7 @@ impl RuntimeSurface {
                     }
                     let mut result = mcp_runtime_tool_result_fallback(
                         ToolResult::ok(json!({"work_result": null})),
-                        runtime.runtime_info.mcp_text_json_compat_enabled,
+                        context.text_json_compat,
                         result_presentation,
                     );
                     attach_work_result_app_private_result(&mut result, None);

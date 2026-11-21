@@ -28,6 +28,13 @@ pub(super) fn resolve_surface(headers: &HeaderMap) -> Result<McpSurface, &'stati
     }
 }
 
+/// Gemini's observed User-Agent selects a text copy for this request only.
+pub(super) fn text_json_compat(headers: &HeaderMap, surface: McpSurface, force_json: bool) -> bool {
+    force_json
+        || (surface == McpSurface::Adaptive
+            && matches!(singleton(headers, "user-agent"), Ok(Some("Google"))))
+}
+
 pub(super) fn resolve_default_project(
     headers: &HeaderMap,
     surface: McpSurface,

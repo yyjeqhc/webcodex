@@ -704,6 +704,7 @@ async fn cli_scope_and_protocol_capability_checks_still_apply() {
                 None,
                 McpSurface::Cli,
                 None,
+                runtime.runtime_info.mcp_text_json_compat_enabled,
             )
             .await;
             assert!(

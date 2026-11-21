@@ -181,7 +181,7 @@ pub struct RuntimeInfo {
     /// Same startup-snapshot semantics as [`Self::mcp_compact_schemas`].
     pub mcp_apps_enabled: bool,
     pub(crate) mcp_tool_exposure: crate::mcp::tool_exposure::ToolExposureConfig,
-    /// Effective MCP text-JSON compatibility projection captured at Runtime
+    /// Deployment-wide MCP text-JSON compatibility override captured at Runtime
     /// construction. Ordinary tool-result framing must not re-read ambient env.
     pub mcp_text_json_compat_enabled: bool,
 }

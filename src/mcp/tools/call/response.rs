@@ -33,7 +33,6 @@ impl RuntimeResponse {
         } = self;
         let work_result_thread_panel = surface.work_result_thread_context.is_some();
         let work_result_thread_context = surface.work_result_thread_context;
-        let runtime = context.runtime;
         let stateless_2026 = context.stateless_2026;
         let app_enabled = context.app_enabled;
         let server_mcp_apps_enabled = context.server_mcp_apps_enabled;
@@ -145,7 +144,7 @@ impl RuntimeResponse {
             artifact_presentation,
             result,
             resource_tool_call,
-            runtime.runtime_info.mcp_text_json_compat_enabled,
+            context.text_json_compat,
             result_presentation,
         ) {
             resources::McpResourceToolResultAdaptation::Framed(value) => value,
@@ -155,7 +154,7 @@ impl RuntimeResponse {
                 // continuation protocol data out of ordinary model tool results.
                 mcp_runtime_tool_result_fallback(
                     result,
-                    runtime.runtime_info.mcp_text_json_compat_enabled,
+                    context.text_json_compat,
                     result_presentation,
                 )
             }

@@ -143,7 +143,7 @@ pub(super) async fn plugin(
 
             let result = mcp_runtime_tool_result_fallback(
                 result,
-                runtime.runtime_info.mcp_text_json_compat_enabled,
+                context.text_json_compat,
                 result_presentation,
             );
             return McpOutcome::Ok(rpc_result(
@@ -359,7 +359,7 @@ pub(super) async fn ssh_resource(
 
             let result = mcp_runtime_tool_result_fallback(
                 result,
-                runtime.runtime_info.mcp_text_json_compat_enabled,
+                context.text_json_compat,
                 result_presentation,
             );
             return McpOutcome::Ok(rpc_result(

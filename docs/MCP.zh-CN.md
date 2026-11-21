@@ -450,7 +450,9 @@ schema 详略，`WEBCODEX_MCP_APPS_ENABLED` 独立控制 App 准入，两者都�
 
 普通 client 保持标准 MCP `isError` 语义。对于 `_meta["io.modelcontextprotocol/clientInfo"].name` 精确等于 `openai-mcp`（不限版本）的请求，MCP adapter 会对 WebCodex-owned canonical `ToolResult` failure 应用 **OpenAI structured-failure compatibility projection**：presentation 使用 `isError=false`，但 `structuredContent.success=false` 仍是业务结果的 authoritative truth，完整 output/error 也继续保留。当前 OpenAI Host 会把 `isError=true` 提升成异常而不暴露 `structuredContent`；该兼容层用于保留 machine-actionable failure/recovery data，Host 行为修复后即可移除。JSON-RPC/protocol error 仍然是真错误，第三方 MCP/Plugin passthrough result 也继续保留 provider 自己的语义。
 
-部分 MCP host 不会把 `structuredContent` 暴露给模型；Claude Custom Connector 已观察到这种情况，即使 WebCodex 已成功执行工具并返回完整结构化结果。为这类 host 提供服务的 operator 可以显式设置 `WEBCODEX_MCP_TEXT_JSON_COMPAT=true`。开启后，普通 runtime tool result 仍以 `structuredContent` 为 canonical，同时把同一 JSON 值序列化到 `content[0].text`。该选项默认关闭，因为重复表示会增加 response/model-context 大小；protocol-native image/resource framing 与现有 App-only compatibility path 不受影响。
+Gemini 可能只向模型展示工具结果中的文本。在默认 Adaptive surface 上，当次 `tools/call` 请求的 HTTP 头为 `User-Agent: Google` 时，普通 WebCodex 工具会将完整的 `structuredContent` JSON 同时写入 `content[0].text`。即使请求没有 `_meta`，适配器也能按当次请求选择格式。该请求头仅用于文本呈现。ChatGPT、其他客户端及未发送 User-Agent 的请求默认收到简短文本。
+
+将 `WEBCODEX_MCP_TEXT_JSON_COMPAT` 留空（未设置）或设为 `false` 即可启用自动选择。设为 `true` 会强制为所有客户端的普通工具结果附加 JSON 文本副本，适用于隐藏结构化结果的 Claude Custom Connector 等场景。原生图片、资源链接、App 专用内容和第三方透传使用各自的封装。
 
 Result 中的 recovery 字段只描述下一次**显式**调用的安全建议，不授予 authority，也不会触发 hidden retry。尤其是 uncertain outcome，必须先 reconcile，再决定是否重复 effect。
 

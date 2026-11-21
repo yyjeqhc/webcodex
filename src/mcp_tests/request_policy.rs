@@ -16,6 +16,35 @@ fn deployment() -> McpHostRuntimePolicy {
 }
 
 #[test]
+fn json_text_auto_selection_requires_the_single_gemini_user_agent() {
+    use crate::mcp::request_policy::{text_json_compat, McpSurface};
+
+    for (values, gemini) in [
+        (vec![], false),
+        (vec!["Google"], true),
+        (vec!["Googlebot"], false),
+        (vec!["Google/1.0"], false),
+        (vec!["google"], false),
+        (vec!["openai-mcp/1.0.0"], false),
+        (vec!["Google", "other"], false),
+    ] {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append("user-agent", HeaderValue::from_static(value));
+        }
+        assert_eq!(
+            text_json_compat(&headers, McpSurface::Adaptive, false),
+            gemini
+        );
+        assert!(text_json_compat(&headers, McpSurface::Adaptive, true));
+        assert!(!text_json_compat(&headers, McpSurface::Cli, false));
+    }
+    let mut headers = HeaderMap::new();
+    headers.insert("user-agent", HeaderValue::from_bytes(&[0xff]).unwrap());
+    assert!(!text_json_compat(&headers, McpSurface::Adaptive, false));
+}
+
+#[test]
 fn request_policy_is_explicit_bounded_and_never_sticky() {
     let base = deployment();
     let mut headers = HeaderMap::new();

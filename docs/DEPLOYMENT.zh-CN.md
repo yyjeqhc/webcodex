@@ -469,6 +469,8 @@ refresh-token scope，不授予额外 WebCodex 权限。
 
 `POST /oauth/register` 接受 RFC 7591 JSON，要求提供非空的 `redirect_uris` 数组。每次注册均分配新的客户端 ID，授权时精确匹配回调地址。机密客户端使用 `client_secret_basic`（默认）或 `client_secret_post`，公共客户端可指定 `none`。三种方式都要求授权码和 S256 PKCE。需要轮换刷新令牌的客户端应在 `grant_types` 中同时申请 `authorization_code` 和 `refresh_token`。注册时默认采用本地用户的标准权限，也可申请其中的子集。指定用户登录后才能授予权限。动态注册的客户端不会继承内部管理员权限。移除 DCR 配置或更改所有者、签发者后，旧注册在新配置下无法使用。可通过 `/api/oauth/clients/revoke` 永久撤销客户端。
 
+部分 OAuth 宿主会请求授权服务器元数据公布的全部权限，即使动态注册时仅获准了更窄的范围。对于动态注册的客户端，WebCodex 只会在已知权限中取请求权限与注册允许权限的交集，并在 Token 响应中返回实际授予的权限；未知权限、没有任何可授予 WebCodex 权限的请求仍会被拒绝。此处理不会扩大客户端或用户权限；手动配置的客户端继续执行严格权限匹配。
+
 注册请求上限为 16 KiB。Server 最多保留 128 个动态客户端。达到上限时，如果某个注册已满 24 小时或已被撤销，且相关授权记录均已清理，Server 可回收它。否则返回 HTTP 429。Desktop 托管的 Cloudflare 入口和临时 Project Share 使用各自的客户端配置流程。[Gemini 接入说明](MCP.zh-CN.md#gemini-网页端)
 
 ## MCP 接入

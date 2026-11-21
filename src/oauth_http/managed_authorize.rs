@@ -5,7 +5,7 @@ use crate::auth::{generate_oauth_authorization_code, hash_token, AuthContext, Au
 use crate::models::OAuthAuthorizationCodeRecord;
 
 use super::html::{authorize_consent_html, authorize_login_html};
-use super::normalize_oauth_scopes;
+use super::scope_registry::normalize_authorize_scopes;
 use super::shared_key_bridge::{
     is_shared_key_bridge_query, render_bridge_authorize_form, validate_bridge_authorize_request,
 };
@@ -1227,7 +1227,7 @@ fn issue_managed_authorization_code(
         return;
     }
 
-    let scopes = match normalize_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes) {
+    let scopes = match normalize_authorize_scopes(parsed.scope.as_deref(), client) {
         Ok(scopes) => scopes,
         Err(_) => {
             redirect_with_oauth_error(
@@ -1376,7 +1376,7 @@ fn authorize_render_consent(
         return;
     }
 
-    let scopes = match normalize_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes) {
+    let scopes = match normalize_authorize_scopes(parsed.scope.as_deref(), &client) {
         Ok(s) => s.split_whitespace().map(str::to_string).collect::<Vec<_>>(),
         Err(_) => {
             res.status_code(StatusCode::BAD_REQUEST);

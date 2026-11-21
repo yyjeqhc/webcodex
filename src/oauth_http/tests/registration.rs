@@ -142,8 +142,12 @@ async fn registered_confidential_client_browser_consent_basic_exchange_refresh_a
     let owner = seed_user(&db, "owner");
     let config = dcr_config(&owner);
     let service = Service::new(build_router(config.clone(), db.clone()));
-    let reg = register(&service, json!({"redirect_uris":[CALLBACK], "client_name":"Gemini fixture",
-        "scope":"runtime:read offline_access", "grant_types":["authorization_code","refresh_token"]})).await;
+    let reg = register(
+        &service,
+        json!({"redirect_uris":[CALLBACK], "client_name":"Gemini fixture",
+        "grant_types":["authorization_code","refresh_token"]}),
+    )
+    .await;
     assert_eq!(reg["token_endpoint_auth_method"], "client_secret_basic");
     assert_eq!(reg["client_secret_expires_at"], 0);
     let id = reg["client_id"].as_str().unwrap();
@@ -154,11 +158,12 @@ async fn registered_confidential_client_browser_consent_basic_exchange_refresh_a
     assert_eq!(stored.owner_user_id, Some(owner.id.clone()));
     let verifier = "p".repeat(43);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let requested_scopes = oauth_discovery_scopes_supported().join(" ");
     let params = [
         ("client_id", id),
         ("response_type", "code"),
         ("redirect_uri", CALLBACK),
-        ("scope", "runtime:read offline_access"),
+        ("scope", &requested_scopes),
         ("resource", "https://webcodex.example/mcp"),
         ("code_challenge", &challenge),
         ("code_challenge_method", "S256"),
@@ -213,7 +218,13 @@ async fn registered_confidential_client_browser_consent_basic_exchange_refresh_a
         .unwrap()
         .1
         .into_owned();
-    assert!(!auth_code_by_plaintext(&db, &code).admin_authority);
+    let issued = auth_code_by_plaintext(&db, &code);
+    assert!(!issued.admin_authority);
+    let expected_scope = format!(
+        "{} offline_access",
+        webcodex_core::authority::profiles::LOCAL_USER.join(" ")
+    );
+    assert_eq!(issued.scopes, expected_scope);
     // All durable state needed for exchange survives a fresh database connection.
     drop(service);
     drop(db);
@@ -260,6 +271,7 @@ async fn registered_confidential_client_browser_consent_basic_exchange_refresh_a
         .await;
     assert_eq!(resp.status_code, Some(StatusCode::OK));
     let tokens: Value = resp.take_json().await.unwrap();
+    assert_eq!(tokens["scope"], expected_scope);
     let replay = post_form(TOKEN, exchange)
         .basic_auth(id, Some(secret))
         .send(&service)
@@ -286,6 +298,8 @@ async fn registered_confidential_client_browser_consent_basic_exchange_refresh_a
         .unwrap();
     assert!(auth.has_scope("runtime:read"));
     assert!(!auth.is_admin());
+    assert!(!auth.has_scope("account:manage"));
+    assert!(!auth.has_scope("computer:control"));
     let mut discovery = TestClient::post("http://localhost/mcp")
         .bearer_auth(access)
         .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}))

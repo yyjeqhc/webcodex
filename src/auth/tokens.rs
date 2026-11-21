@@ -281,6 +281,18 @@ impl OAuth2Verifier {
             }
         };
 
+        if !config
+            .oauth2
+            .accepts_client_registration(&client, ingress.is_some())
+            || (client.dynamic_registration.is_some()
+                && (at_record.subject_kind != "managed_user"
+                    || client.owner_user_id != at_record.user_id))
+        {
+            return Err(
+                "invalid dynamic OAuth2 registration for this subject or issuer".to_string(),
+            );
+        }
+
         if at_record
             .scopes_vec()
             .iter()
@@ -294,6 +306,7 @@ impl OAuth2Verifier {
         if at_record.admin_authority
             && (at_record.subject_kind != "managed_user"
                 || at_record.shared_key_hash.is_some()
+                || client.dynamic_registration.is_some()
                 || !client.is_managed_user_owned()
                 || client.owner_user_id != at_record.user_id
                 || at_record.user_id.as_deref() != Some(at_record.subject_id.as_str()))

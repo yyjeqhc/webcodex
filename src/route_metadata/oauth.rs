@@ -34,6 +34,15 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
         RouteAuth::Public,
     ),
     route(
+        OAuthRegister,
+        Post,
+        "/oauth/register",
+        Public,
+        OAuth,
+        Other,
+        RouteAuth::Public,
+    ),
+    route(
         OAuthToken,
         Post,
         "/oauth/token",

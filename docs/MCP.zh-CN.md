@@ -270,6 +270,12 @@ http_headers = { "X-WebCodex-MCP-Surface" = "cli", "X-WebCodex-MCP-Profile" = "d
 本地 shell/文件系统属于客户端机器，不一定是该 Project 所在的机器。
 ```
 
+## Gemini 网页端
+
+常规自托管 Server 有公网 HTTPS 地址后，管理员可以启用 [OAuth 动态客户端注册](DEPLOYMENT.zh-CN.md#动态客户端注册)。在 Gemini 打开 **设置 → Gemini Apps Developer Mode → Create new**，输入公网 `https://your-domain.example/mcp`，将高级设置中的客户端 ID 和密钥留空。跳转到 WebCodex 登录页后，在该页输入指定用户的 PAT，核对回调地址和申请的权限，再确认授权。Gemini 会在 **Available actions** 中显示发现的工具。[Google 自定义应用接入说明](https://developers.google.com/connected-apps/mcp/dev-mode/usage)
+
+Google 的服务器需要能够访问该地址。使用 Desktop 托管的 Cloudflare 配置或临时 OAuth Project Share 时，在 Gemini 的 **Additional settings** 中填写已配置的客户端 ID 和密钥。WebCodex 会轮换刷新令牌。Google 的可选 Persistent Linking 模式要求复用同一刷新令牌。[Google OAuth 指南](https://developers.google.com/connected-apps/mcp/oauth)
+
 ## Claude 与其他 MCP client
 
 使用同一份输出的 `/mcp` URL 与认证值。Claude 中添加 custom connector 并粘贴 MCP URL；

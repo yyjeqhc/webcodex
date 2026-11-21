@@ -132,6 +132,7 @@ pub(super) fn seed_client(
     let record = OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: secret_hash,
         name: name.to_string(),
         owner_user_id: Some(user.id.clone()),
@@ -158,6 +159,7 @@ pub(super) fn seed_client_with_redirects_and_scopes(
     let record = OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: secret_hash,
         name: "authorize-client".to_string(),
         owner_user_id: Some(user.id.clone()),
@@ -182,6 +184,7 @@ pub(super) fn seed_shared_key_bridge_client(
     let record = OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: hash_token(&plaintext_secret),
         name: "Shared-key Bridge App".to_string(),
         owner_user_id: None,
@@ -206,6 +209,7 @@ pub(super) fn seed_project_share_client(
     let record = OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: hash_token(&plaintext_secret),
         name: "project-share-client".to_string(),
         owner_user_id: None,
@@ -756,6 +760,7 @@ pub(super) fn build_router_with_session_and_registry(
         .hoop(salvo::prelude::affix_state::inject(db))
         .hoop(salvo::prelude::affix_state::inject(session_store))
         .hoop(salvo::prelude::affix_state::inject(registry))
+        .push(Router::with_path("oauth/register").post(oauth_register))
         .push(Router::with_path("oauth/token").post(oauth_token))
         .push(Router::with_path("oauth/revoke").post(oauth_revoke))
         .push(

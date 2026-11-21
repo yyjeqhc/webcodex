@@ -1,12 +1,13 @@
 //! OAuth2 authorization, token, revocation, and discovery endpoints.
 //!
+//! - `POST /oauth/register` — opt-in dynamic client registration (RFC 7591)
 //! - `POST /oauth/token` — token endpoint (authorization_code, refresh_token)
 //! - `POST /oauth/revoke` — token revocation endpoint (RFC 7009)
 //! - `GET /.well-known/oauth-protected-resource` — protected resource metadata
 //! - `GET /.well-known/oauth-authorization-server` — authorization server metadata
 //!
 //! Token and revocation are **public** endpoints (no `AuthMiddleware`); clients
-//! authenticate via `client_id` + `client_secret` in the form body. The
+//! use their registered token endpoint authentication method. The
 //! metadata endpoint is also public and requires no authentication.
 //!
 //! Security properties:
@@ -18,7 +19,7 @@
 //! - Revocation is idempotent: unknown, already-revoked, and other-client
 //!   tokens all return HTTP 200 without disclosing token state.
 //! - Client secret is verified with constant-time comparison.
-//! - Only `application/x-www-form-urlencoded` content type is accepted.
+//! - Registration uses JSON. Token exchange and revocation accept form bodies.
 //! - Request body size is bounded (16 KiB).
 //! - All responses include `Cache-Control: no-store` and `Pragma: no-cache`.
 //! - Plaintext tokens are returned **only once** in the response.
@@ -29,6 +30,7 @@ mod html;
 mod managed_authorize;
 mod metadata;
 mod project_share;
+mod registration;
 mod responses;
 mod revoke;
 mod scope_registry;
@@ -53,10 +55,10 @@ struct BridgePermissionView {
 #[cfg(test)]
 use managed_authorize::AUTHORIZE_SESSION_COOKIE;
 use managed_authorize::{
-    authorization_response_issuer, decoded_authorize_param, form_field,
-    is_authorize_identity_allowed, oauth_authorize_direct_error, parse_authorize_query,
-    parse_form_body, redirect_with_authorization_code, redirect_with_oauth_error,
-    validate_authorize_resource, OAuthAuthorizeError, OAuthAuthorizeRequest,
+    decoded_authorize_param, form_field, is_authorize_identity_allowed,
+    oauth_authorize_direct_error, parse_authorize_query, parse_form_body,
+    redirect_with_authorization_code, redirect_with_oauth_error, validate_authorize_resource,
+    OAuthAuthorizeError, OAuthAuthorizeRequest,
 };
 pub(crate) use managed_authorize::{
     oauth_authorize, oauth_authorize_consent, oauth_authorize_login, AuthorizeSessionStore,
@@ -67,6 +69,7 @@ pub(crate) use project_share::oauth_authorize_project;
 pub(crate) use project_share::{
     normalize_project_share_oauth_scopes, PROJECT_SHARE_OAUTH_INVALID_SCOPE_MESSAGE,
 };
+pub(crate) use registration::oauth_register;
 use responses::apply_oauth_no_store_headers;
 pub(crate) use revoke::oauth_revoke;
 pub(crate) use scope_registry::{

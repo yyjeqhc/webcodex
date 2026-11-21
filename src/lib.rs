@@ -686,17 +686,17 @@ explicitly allow remote shared-key auth."
         .push(health_router)
         .push(runtime_console_router)
         .push(admin_router)
-        // OAuth2 token, revocation, and discovery endpoints — public, no
-        // AuthMiddleware. Token/revoke clients authenticate via
-        // client_id + client_secret in the form body.
+        // Public OAuth endpoints enforce their own registration and client authentication policies.
+        .push(
+            Router::with_path(route_metadata::root_path(RouteId::OAuthRegister))
+                .post(oauth_http::oauth_register),
+        )
         .push(
             Router::with_path(route_metadata::root_path(RouteId::OAuthToken))
-                .hoop(public_ingress_auth::ClientIngressGate::ClientId)
                 .post(oauth_http::oauth_token),
         )
         .push(
             Router::with_path(route_metadata::root_path(RouteId::OAuthRevoke))
-                .hoop(public_ingress_auth::ClientIngressGate::ClientId)
                 .post(oauth_http::oauth_revoke),
         )
         // /oauth/authorize is NOT behind AuthMiddleware: the handler accepts

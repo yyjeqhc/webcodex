@@ -93,6 +93,15 @@ pub(crate) fn require_json_authority(
     Ok(())
 }
 
+pub(crate) fn client_allowed(db: &crate::Database, depot: &Depot, client_id: &str) -> bool {
+    match entry(depot) {
+        Some(entry) => db
+            .oauth_client_matches_public_ingress(client_id, &entry.fence())
+            .unwrap_or(false),
+        None => matches!(db.oauth_client_public_ingress_entry_id(client_id), Ok(None)),
+    }
+}
+
 /// Attached directly to matched OAuth routes on both listeners. Route matching
 /// owns path normalization, so URI aliases cannot skip the audience check.
 pub(crate) enum ClientIngressGate {
@@ -135,15 +144,8 @@ impl Handler for ClientIngressGate {
             }
         }
         if let Some(client_id) = client_id {
-            let allowed = crate::auth::get_db(depot).is_some_and(|db| match entry(depot) {
-                Some(entry) => db
-                    .oauth_client_matches_public_ingress(&client_id, &entry.fence())
-                    .unwrap_or(false),
-                None => matches!(
-                    db.oauth_client_public_ingress_entry_id(&client_id),
-                    Ok(None)
-                ),
-            });
+            let allowed =
+                crate::auth::get_db(depot).is_some_and(|db| client_allowed(&db, depot, &client_id));
             if !allowed {
                 res.status_code(StatusCode::BAD_REQUEST);
                 res.headers_mut().insert(

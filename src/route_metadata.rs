@@ -75,6 +75,7 @@ pub(crate) enum AuditClass {
 pub(crate) enum RouteId {
     WellKnownProtectedResource,
     WellKnownAuthorizationServer,
+    OAuthRegister,
     OAuthToken,
     OAuthRevoke,
     OAuthAuthorize,

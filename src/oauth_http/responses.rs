@@ -1,3 +1,5 @@
+use crate::models::DynamicClientAuth;
+use base64::Engine;
 use salvo::http::{header::CONTENT_TYPE, HeaderValue};
 use salvo::prelude::*;
 use salvo::writing::Scribe;
@@ -37,6 +39,7 @@ pub(crate) struct OAuthTokenError {
     status: StatusCode,
     error: &'static str,
     description: String,
+    challenge_basic: bool,
 }
 
 impl OAuthTokenError {
@@ -49,6 +52,7 @@ impl OAuthTokenError {
             status,
             error,
             description: description.into(),
+            challenge_basic: false,
         }
     }
 
@@ -79,6 +83,12 @@ impl OAuthTokenError {
 
 impl Scribe for OAuthTokenError {
     fn render(self, res: &mut Response) {
+        if self.challenge_basic {
+            res.headers_mut().insert(
+                salvo::http::header::WWW_AUTHENTICATE,
+                HeaderValue::from_static(r#"Basic realm="WebCodex""#),
+            );
+        }
         oauth_error(res, self.status, self.error, &self.description);
     }
 }
@@ -153,31 +163,108 @@ pub(super) fn required_token_parameter<'a>(
 /// Call only after endpoint-specific parameters have been checked: a missing
 /// grant/token must retain priority over client authentication and DB access.
 pub(super) fn authenticate_token_client(
+    req: &Request,
     depot: &Depot,
-    client_id: Option<&str>,
-    client_secret: Option<&str>,
+    config: &crate::Config,
+    form_id: Option<&str>,
+    form_secret: Option<&str>,
 ) -> Result<(Arc<crate::Database>, crate::models::OAuthClientRecord), OAuthTokenError> {
-    let client_id = required_token_parameter(client_id, "client_id")?;
-    let client_secret = client_secret
-        .filter(|secret| !secret.is_empty())
-        .ok_or_else(|| OAuthTokenError::invalid_client("missing client_secret"))?;
+    let unauthorized = || {
+        let mut error = OAuthTokenError::invalid_client("client authentication failed");
+        error.challenge_basic = req
+            .headers()
+            .contains_key(salvo::http::header::AUTHORIZATION);
+        error
+    };
+    let credentials = basic_client(req, form_id, form_secret).map_err(|_| unauthorized())?;
+    let (id, secret, method) = if let Some((id, secret)) = &credentials {
+        (id.as_str(), Some(secret.as_str()), DynamicClientAuth::Basic)
+    } else {
+        let id = required_token_parameter(form_id, "client_id")?;
+        let method = if form_secret.is_some() {
+            DynamicClientAuth::Post
+        } else {
+            DynamicClientAuth::Public
+        };
+        (id, form_secret, method)
+    };
+    let missing_secret = || OAuthTokenError::invalid_client("missing client_secret");
+    let ingress = crate::public_ingress_auth::entry(depot).is_some();
+    if secret == Some("")
+        || (method == DynamicClientAuth::Public
+            && config.oauth2.registration_target(ingress).is_none())
+    {
+        return Err(missing_secret());
+    }
     let db = crate::auth::get_db(depot)
         .ok_or_else(|| OAuthTokenError::server_error("DB not available"))?;
-    let secret_ok = crate::auth::verify_oauth_client_secret(&db, client_id, client_secret)
-        .map_err(|_| OAuthTokenError::server_error("internal error"))?;
-    if !secret_ok {
-        return Err(OAuthTokenError::invalid_client(
-            "client authentication failed",
+    let client = db
+        .get_oauth_client_by_client_id(id)
+        .map_err(|_| OAuthTokenError::server_error("internal error"))?
+        .ok_or_else(unauthorized)?;
+    if !config.oauth2.accepts_client_registration(&client, ingress) {
+        return Err(unauthorized());
+    }
+    let registered_method = client
+        .dynamic_registration
+        .as_ref()
+        .map(|d| d.auth_method)
+        .unwrap_or(DynamicClientAuth::Post);
+    if method != registered_method {
+        return Err(if method == DynamicClientAuth::Public {
+            missing_secret()
+        } else {
+            unauthorized()
+        });
+    }
+    if !crate::public_ingress_auth::client_allowed(&db, depot, id) {
+        return Err(OAuthTokenError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_client",
+            "client is not registered for this listener",
         ));
     }
-    // Recheck liveness after secret verification, retaining the existing
-    // invalid_client response if this second lookup fails or sees revocation.
-    let client = db
-        .get_oauth_client_by_client_id(client_id)
-        .ok()
-        .flatten()
-        .ok_or_else(|| OAuthTokenError::invalid_client("client authentication failed"))?;
+    if secret.is_some_and(|value| !crate::auth::oauth_client_secret_matches(&client, value)) {
+        return Err(unauthorized());
+    }
     Ok((db, client))
+}
+
+/// A form client_id may repeat the Basic identity. Two credential methods or
+/// different identities in the same request are ambiguous.
+fn basic_client(
+    req: &Request,
+    form_id: Option<&str>,
+    form_secret: Option<&str>,
+) -> Result<Option<(String, String)>, ()> {
+    let mut headers = req.headers().get_all("authorization").iter();
+    let Some(header) = headers.next() else {
+        return Ok(None);
+    };
+    if headers.next().is_some() || form_secret.is_some() {
+        return Err(());
+    }
+    let (scheme, encoded) = header
+        .to_str()
+        .ok()
+        .and_then(|v| v.split_once(' '))
+        .ok_or(())?;
+    if !scheme.eq_ignore_ascii_case("Basic") || encoded.len() > 2048 {
+        return Err(());
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| ())?;
+    let (id, secret) = std::str::from_utf8(&decoded)
+        .ok()
+        .and_then(|v| v.split_once(':'))
+        .ok_or(())?;
+    let id = urlencoding::decode(id).map_err(|_| ())?.into_owned();
+    let secret = urlencoding::decode(secret).map_err(|_| ())?.into_owned();
+    if id.is_empty() || secret.is_empty() || form_id.is_some_and(|form| form != id) {
+        return Err(());
+    }
+    Ok(Some((id, secret)))
 }
 
 /// Management routes retain their error/detail JSON, including which failures

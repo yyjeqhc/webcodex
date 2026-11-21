@@ -66,6 +66,12 @@ otherwise. If the Host refuses to dispatch `get_runtime_status`, that text is no
 WebCodex tool result. Verify the Server/Runner independently before changing
 credentials or Runner configuration; see [Troubleshooting](TROUBLESHOOTING.md).
 
+## Gemini web app
+
+On a regular self-hosted Server with a public HTTPS origin, an operator can enable [OAuth dynamic client registration](DEPLOYMENT.md#dynamic-client-registration). In Gemini, open **Settings → Gemini Apps Developer Mode → Create new**, enter the public `https://your-domain.example/mcp` URL, and leave the advanced client ID and secret fields empty. Continue to the WebCodex sign-in page, enter the designated user's PAT there, and review the callback and scopes before allowing access. Gemini displays the discovered tools under **Available actions**. [Google's custom app instructions](https://developers.google.com/connected-apps/mcp/dev-mode/usage)
+
+Gemini needs a URL reachable from Google's servers. For a Desktop-managed Cloudflare profile or a temporary OAuth Project Share, enter its provisioned client ID and secret in Gemini's **Additional settings**. WebCodex rotates refresh tokens. Google's optional Persistent Linking profile expects a reusable refresh token. [Google's OAuth guide](https://developers.google.com/connected-apps/mcp/oauth)
+
 ## Claude and other MCP clients
 
 Use the same printed `/mcp` URL and authentication values. In Claude, add a

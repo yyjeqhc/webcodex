@@ -5,7 +5,7 @@ use crate::auth::{generate_oauth_authorization_code, hash_token, AuthContext, Au
 use crate::models::OAuthAuthorizationCodeRecord;
 
 use super::html::{authorize_consent_html, authorize_login_html};
-use super::normalize_oauth_scopes;
+use super::scope_registry::normalize_authorize_scopes;
 use super::shared_key_bridge::{
     is_shared_key_bridge_query, render_bridge_authorize_form, validate_bridge_authorize_request,
 };
@@ -21,24 +21,6 @@ pub(super) fn oauth_authorize_direct_error(
         "error": error,
         "error_description": description,
     })));
-}
-
-/// Return the RFC 9207 authorization-response issuer when the configured
-/// public issuer is suitable for Internet OAuth interoperability. Local HTTP
-/// development keeps legacy redirects and does not advertise issuer binding.
-pub(super) fn authorization_response_issuer(config: &crate::Config) -> Option<&str> {
-    let issuer = config.oauth2.issuer.as_deref()?;
-    let parsed = url::Url::parse(issuer).ok()?;
-    if parsed.scheme() != "https"
-        || parsed.host_str().is_none()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-    {
-        return None;
-    }
-    Some(issuer)
 }
 
 pub(super) fn redirect_with_oauth_error(
@@ -78,7 +60,7 @@ fn redirect_with_authorize_parameter(
                 if let Some(state) = state {
                     query.append_pair("state", state);
                 }
-                if let Some(issuer) = authorization_response_issuer(config) {
+                if let Some(issuer) = config.oauth2.https_issuer() {
                     query.append_pair("iss", issuer);
                 }
             }
@@ -300,7 +282,8 @@ fn managed_admin_authority(
     user_id: &str,
     authority: &[String],
 ) -> bool {
-    client.is_managed_user_owned()
+    client.dynamic_registration.is_none()
+        && client.is_managed_user_owned()
         && client.owner_user_id.as_deref() == Some(user_id)
         && authority
             .iter()
@@ -760,6 +743,17 @@ pub(crate) async fn oauth_authorize_consent(
         return;
     }
 
+    if client.dynamic_registration.is_some()
+        && crate::auth::require_mcp_request_authority(req, &config).is_err()
+    {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::FORBIDDEN,
+            "access_denied",
+            "cross-origin consent",
+        );
+        return;
+    }
     if !is_allow {
         // Deny: redirect with error=access_denied.
         redirect_with_oauth_error(
@@ -1204,7 +1198,14 @@ fn issue_managed_authorization_code(
         return;
     }
 
-    if parsed.code_challenge.is_empty() {
+    if parsed.code_challenge.is_empty()
+        || (client.dynamic_registration.is_some()
+            && (parsed.code_challenge.len() != 43
+                || !parsed
+                    .code_challenge
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))))
+    {
         redirect_with_oauth_error(
             res,
             config,
@@ -1226,7 +1227,7 @@ fn issue_managed_authorization_code(
         return;
     }
 
-    let scopes = match normalize_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes) {
+    let scopes = match normalize_authorize_scopes(parsed.scope.as_deref(), client) {
         Ok(scopes) => scopes,
         Err(_) => {
             redirect_with_oauth_error(
@@ -1240,7 +1241,12 @@ fn issue_managed_authorization_code(
         }
     };
 
-    if !client.is_managed_user_owned()
+    if !config
+        .oauth2
+        .accepts_client_registration(client, ingress.is_some())
+        || !client.is_managed_user_owned()
+        || (client.dynamic_registration.is_some()
+            && client.owner_user_id.as_deref() != Some(user_id))
         || db
             .get_user_by_id(user_id)
             .ok()
@@ -1370,7 +1376,7 @@ fn authorize_render_consent(
         return;
     }
 
-    let scopes = match normalize_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes) {
+    let scopes = match normalize_authorize_scopes(parsed.scope.as_deref(), &client) {
         Ok(s) => s.split_whitespace().map(str::to_string).collect::<Vec<_>>(),
         Err(_) => {
             res.status_code(StatusCode::BAD_REQUEST);
@@ -1398,6 +1404,7 @@ fn authorize_render_consent(
 
     let html = authorize_consent_html(
         &client.name,
+        client.dynamic_registration.is_some(),
         &client.client_id,
         &parsed.redirect_uri,
         &scopes,

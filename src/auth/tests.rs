@@ -1084,6 +1084,7 @@ async fn oauth2_verifier_accepts_current_project_share_and_preserves_project_ide
     let client = crate::models::OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: hash_token(&secret),
         name: "project-share".to_string(),
         owner_user_id: None,
@@ -1150,6 +1151,7 @@ async fn oauth2_verifier_rejects_stale_project_share_session() {
     let client = crate::models::OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: hash_token(&generate_oauth_client_secret()),
         name: "project-share".to_string(),
         owner_user_id: None,

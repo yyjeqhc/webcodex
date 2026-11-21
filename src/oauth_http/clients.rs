@@ -5,7 +5,7 @@ use crate::auth::{hash_token, AuthContext};
 use super::responses::{parse_management_json, OAuthManagementError as ManagementError};
 use super::{apply_oauth_no_store_headers, is_authorize_identity_allowed, oauth_scopes_supported};
 
-const MAX_CLIENT_NAME_LEN: usize = 128;
+pub(super) const MAX_CLIENT_NAME_LEN: usize = 128;
 const MAX_CLIENT_REDIRECT_URIS: usize = 16;
 
 #[derive(Debug, serde::Deserialize)]
@@ -121,6 +121,31 @@ pub(crate) fn validate_redirect_uri(uri: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) fn registration_redirect_uris(redirect_uris: &[String]) -> Result<Vec<String>, String> {
+    if redirect_uris.is_empty() {
+        return Err("redirect_uris must be a non-empty array".into());
+    }
+    if redirect_uris.len() > MAX_CLIENT_REDIRECT_URIS {
+        return Err(format!(
+            "too many redirect_uris; maximum is {}",
+            MAX_CLIENT_REDIRECT_URIS
+        ));
+    }
+    // Trim each redirect URI, validate the trimmed value, and dedup the
+    // trimmed values so whitespace-padded duplicates collapse and the stored
+    // record contains no leading/trailing whitespace.
+    let mut seen = std::collections::HashSet::new();
+    let mut trimmed_uris: Vec<String> = Vec::new();
+    for uri in redirect_uris {
+        let trimmed = uri.trim().to_string();
+        validate_redirect_uri(&trimmed)?;
+        if seen.insert(trimmed.clone()) {
+            trimmed_uris.push(trimmed);
+        }
+    }
+    Ok(trimmed_uris)
+}
+
 /// Normalize an `allowed_scopes` input for client registration. When `input`
 /// is `None` or empty, returns the stable legacy default scope set.
 /// Otherwise every scope must be a member of the global OAuth scope registry.
@@ -222,29 +247,8 @@ pub(crate) async fn oauth_clients_create(
     }
 
     let redirect_uris: Vec<String> = body.redirect_uris.unwrap_or_default();
-    if redirect_uris.is_empty() {
-        return Err(ManagementError::bad_request(
-            "redirect_uris must be a non-empty array",
-        ));
-    }
-    if redirect_uris.len() > MAX_CLIENT_REDIRECT_URIS {
-        return Err(ManagementError::bad_request(format!(
-            "too many redirect_uris; maximum is {}",
-            MAX_CLIENT_REDIRECT_URIS
-        )));
-    }
-    // Trim each redirect URI, validate the trimmed value, and dedup the
-    // trimmed values so whitespace-padded duplicates collapse and the stored
-    // record contains no leading/trailing whitespace.
-    let mut seen = std::collections::HashSet::new();
-    let mut trimmed_uris: Vec<String> = Vec::new();
-    for uri in &redirect_uris {
-        let trimmed = uri.trim().to_string();
-        validate_redirect_uri(&trimmed).map_err(ManagementError::bad_request)?;
-        if seen.insert(trimmed.clone()) {
-            trimmed_uris.push(trimmed);
-        }
-    }
+    let trimmed_uris =
+        registration_redirect_uris(&redirect_uris).map_err(ManagementError::bad_request)?;
     let redirect_uris_str = trimmed_uris.join("\n");
 
     let allowed_scopes = normalize_client_allowed_scopes(body.allowed_scopes.as_deref())
@@ -273,6 +277,7 @@ pub(crate) async fn oauth_clients_create(
     let record = crate::models::OAuthClientRecord {
         id: uuid::Uuid::new_v4().to_string(),
         client_id: crate::auth::generate_oauth_client_id(),
+        dynamic_registration: None,
         client_secret_hash: secret_hash,
         name: name.clone(),
         owner_user_id: Some(owner_user_id),

@@ -112,3 +112,41 @@ pub(crate) fn normalize_oauth_scopes(
 
     Ok(normalized.join(" "))
 }
+
+/// For DCR clients, an OAuth host may send every scope from authorization-server
+/// discovery, even though the newly registered client has a narrower ceiling.
+/// OAuth 2.0 permits a narrower grant and requires the actual scopes in the
+/// token response. Never promote the client's stored allow-list or authority.
+/// Manually provisioned clients retain strict scope matching.
+pub(crate) fn normalize_authorize_scopes(
+    requested: Option<&str>,
+    client: &crate::models::OAuthClientRecord,
+) -> Result<String, OAuthAuthorizeError> {
+    if client.dynamic_registration.is_none() {
+        return normalize_oauth_scopes(requested, &client.allowed_scopes);
+    }
+    let Some(raw) = requested.filter(|value| value.split_ascii_whitespace().next().is_some())
+    else {
+        return normalize_oauth_scopes(requested, &client.allowed_scopes);
+    };
+    let allowed: std::collections::HashSet<&str> =
+        client.allowed_scopes.split_ascii_whitespace().collect();
+    let mut narrower = Vec::new();
+    for scope in raw.split_ascii_whitespace() {
+        if scope != OAUTH_OFFLINE_ACCESS_SCOPE && !oauth_scopes_supported().contains(&scope) {
+            return Err(OAuthAuthorizeError::InvalidScope("invalid scope"));
+        }
+        if scope == OAUTH_OFFLINE_ACCESS_SCOPE || allowed.contains(scope) {
+            narrower.push(scope);
+        }
+    }
+    // An authorization request for only disallowed permissions must not
+    // quietly become a default grant (or an offline_access-only token).
+    if !narrower
+        .iter()
+        .any(|scope| *scope != OAUTH_OFFLINE_ACCESS_SCOPE)
+    {
+        return Err(OAuthAuthorizeError::InvalidScope("empty scope"));
+    }
+    normalize_oauth_scopes(Some(&narrower.join(" ")), &client.allowed_scopes)
+}

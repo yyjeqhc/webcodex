@@ -96,3 +96,43 @@ fn normalize_oauth_scopes_treats_empty_requested_as_default() {
 
     assert_eq!(normalized, "runtime:read project:write");
 }
+
+#[test]
+fn dynamically_registered_clients_narrow_global_discovery_scopes_without_widening_authority() {
+    let (_tmp, db) = test_db();
+    let owner = seed_user(&db, "scope-owner");
+    let (mut client, _) = seed_client(&db, &owner, "manual");
+    let global = oauth_discovery_scopes_supported().join(" ");
+
+    // Existing manually registered clients keep strict allow-list semantics.
+    assert_eq!(
+        scope_registry::normalize_authorize_scopes(Some(&global), &client).unwrap_err(),
+        OAuthAuthorizeError::InvalidScope("invalid scope")
+    );
+
+    client.dynamic_registration = Some(crate::models::DynamicClientRegistration {
+        issuer: "https://example.test".to_string(),
+        auth_method: crate::models::DynamicClientAuth::Post,
+        refresh: true,
+    });
+    client.allowed_scopes = webcodex_core::authority::profiles::LOCAL_USER.join(" ");
+    let narrowed = scope_registry::normalize_authorize_scopes(Some(&global), &client).unwrap();
+    assert_eq!(
+        narrowed,
+        format!("{} offline_access", client.allowed_scopes)
+    );
+    assert!(!narrowed.contains("account:manage"));
+    assert!(!narrowed.contains("computer:control"));
+
+    // Unknown scopes and a request with no permitted WebCodex permission fail closed.
+    assert_eq!(
+        scope_registry::normalize_authorize_scopes(Some("runtime:read unknown"), &client)
+            .unwrap_err(),
+        OAuthAuthorizeError::InvalidScope("invalid scope")
+    );
+    assert_eq!(
+        scope_registry::normalize_authorize_scopes(Some("account:manage offline_access"), &client)
+            .unwrap_err(),
+        OAuthAuthorizeError::InvalidScope("empty scope")
+    );
+}

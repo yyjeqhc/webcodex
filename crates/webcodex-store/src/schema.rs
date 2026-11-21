@@ -500,6 +500,20 @@ impl Database {
                     tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN admin_authority INTEGER NOT NULL DEFAULT 0 CHECK(admin_authority IN (0, 1));"))?;
                 }
             }
+            if !table_columns(&tx, "oauth_clients")?
+                .iter()
+                .any(|name| name == "dynamic_registration")
+            {
+                tx.execute_batch(
+                    "ALTER TABLE oauth_clients ADD COLUMN dynamic_registration TEXT
+                    CHECK(dynamic_registration IS NULL OR
+                        owner_user_id IS NOT NULL);",
+                )?;
+            }
+            tx.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_oauth_clients_dynamic ON oauth_clients(created_at)
+                WHERE dynamic_registration IS NOT NULL;",
+            )?;
             if !table_columns(&tx, "pairing_codes")?
                 .iter()
                 .any(|column| column == "runner_capabilities")

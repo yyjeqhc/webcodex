@@ -129,11 +129,15 @@ pub(crate) fn verify_oauth_client_secret(
     let Some(client) = client else {
         return Ok(false);
     };
+    Ok(oauth_client_secret_matches(&client, plaintext_secret))
+}
+
+pub(crate) fn oauth_client_secret_matches(
+    client: &crate::models::OAuthClientRecord,
+    plaintext_secret: &str,
+) -> bool {
     let computed = pat::hash_token(plaintext_secret);
-    Ok(crate::config::constant_time_eq(
-        computed.as_bytes(),
-        client.client_secret_hash.as_bytes(),
-    ))
+    crate::config::constant_time_eq(computed.as_bytes(), client.client_secret_hash.as_bytes())
 }
 
 pub(crate) use tokens::{authenticate, is_oauth2_access_token};

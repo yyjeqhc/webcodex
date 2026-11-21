@@ -28,6 +28,7 @@ async fn open_panel(
         None,
         crate::mcp::request_policy::McpSurface::Adaptive,
         None,
+        runtime.runtime_info.mcp_text_json_compat_enabled,
     )
     .await
 }

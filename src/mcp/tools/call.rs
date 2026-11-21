@@ -13,6 +13,7 @@ struct CallContext<'a> {
     surface: crate::mcp::request_policy::McpSurface,
     exposure: crate::mcp::tool_exposure::ToolExposure,
     default_project: Option<&'a str>,
+    text_json_compat: bool,
     id: Option<Value>,
     auth: Option<&'a AuthContext>,
     stateless_2026: bool,
@@ -91,7 +92,7 @@ fn tool_scope_denied(
     // Hosts that hide structuredContent on errors still receive every failure fact in text.
     let result = mcp_runtime_tool_result_fallback(
         result,
-        context.runtime.runtime_info.mcp_text_json_compat_enabled,
+        context.text_json_compat,
         McpToolResultPresentation::Standard,
     );
     McpOutcome::Ok(rpc_result(
@@ -119,6 +120,7 @@ pub(in crate::mcp) async fn handle_call(
     correlation_out: Option<&mut crate::tool_runtime::ToolCallCorrelation>,
     surface: crate::mcp::request_policy::McpSurface,
     default_project: Option<&str>,
+    text_json_compat: bool,
 ) -> McpOutcome {
     if let Some(name) = request_params.get("name").and_then(Value::as_str) {
         if super::super::workbench::is_adapter_tool(name) {
@@ -162,6 +164,7 @@ pub(in crate::mcp) async fn handle_call(
             .mcp_tool_exposure
             .resolve(surface, auth),
         default_project,
+        text_json_compat,
         id,
         auth,
         stateless_2026,
@@ -206,7 +209,6 @@ impl ParsedCall {
         diagnostics: &mut CallDiagnostics<'_>,
         request_params: Value,
     ) -> Result<Self, McpOutcome> {
-        let runtime = context.runtime;
         let stateless_2026 = context.stateless_2026;
         let app_enabled = context.app_enabled;
         let id = context.id.clone();
@@ -376,7 +378,7 @@ impl ParsedCall {
                     }
                     let rendered = mcp_runtime_tool_result_fallback(
                         adaptive_runtime_gateway_unknown_target(&target),
-                        runtime.runtime_info.mcp_text_json_compat_enabled,
+                        context.text_json_compat,
                         result_presentation,
                     );
                     return Err(McpOutcome::Ok(rpc_result(

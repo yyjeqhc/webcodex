@@ -763,6 +763,11 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 return;
             }
         };
+    let text_json_compat = request_policy::text_json_compat(
+        req.headers(),
+        surface,
+        runtime.runtime_info.mcp_text_json_compat_enabled,
+    );
     let policy = policy_selection.effective;
     // Equal explicit profiles still have request-header provenance. Clone only
     // the lightweight view when policy or its diagnostic source differs; shared
@@ -980,6 +985,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                     Some(&mut tool_correlation),
                     surface,
                     default_project.as_deref(),
+                    text_json_compat,
                 )),
             ),
         ),
@@ -1389,6 +1395,7 @@ async fn handle_mcp_request_with_lifecycle(
         correlation_out,
         request_policy::McpSurface::Adaptive,
         None,
+        runtime.runtime_info.mcp_text_json_compat_enabled,
     )
     .await
 }
@@ -1407,6 +1414,7 @@ async fn handle_mcp_request_for_surface(
     correlation_out: Option<&mut crate::tool_runtime::ToolCallCorrelation>,
     surface: request_policy::McpSurface,
     default_project: Option<&str>,
+    text_json_compat: bool,
 ) -> McpOutcome {
     let server_mcp_apps_enabled =
         server_mcp_apps_enabled && surface != request_policy::McpSurface::Cli;
@@ -1573,6 +1581,7 @@ async fn handle_mcp_request_for_surface(
                 correlation_out,
                 surface,
                 default_project,
+                text_json_compat,
             )
             .await;
         }
@@ -1680,6 +1689,7 @@ pub(crate) async fn cli_call_with_model_for_test(
         None,
         request_policy::McpSurface::Cli,
         None,
+        runtime.runtime_info.mcp_text_json_compat_enabled,
     )
     .await;
     let McpOutcome::Ok(mut body) = outcome else {

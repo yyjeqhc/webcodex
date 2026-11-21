@@ -434,10 +434,9 @@ handled as unavailable rather than inferred authority. Durable DB, Workflow
 Session, and registry state is migrated or quarantined deterministically rather
 than silently reinterpreted. MCP `structuredContent` remains the canonical
 machine-readable `tools/call` result; `content.text` is the concise human
-fallback by default. A named host that cannot expose `structuredContent` may use
-the explicit `WEBCODEX_MCP_TEXT_JSON_COMPAT=true` compatibility projection to
-mirror that same canonical JSON into standard text content without changing the
-source of truth.
+fallback by default. Gemini's request-local text projection and the deployment-wide
+override both mirror the same structured JSON value. See [tool result
+framing](../MCP.md#tool-result-framing) for the selection rules.
 
 The product concept and public lifecycle namespace are **Runner**. The canonical
 local config filename is `runner.toml`. Through the 0.4.x line, persisted

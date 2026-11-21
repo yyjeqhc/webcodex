@@ -159,8 +159,8 @@ pub(super) fn mcp_runtime_tool_result_fallback_with_compat(
 ) -> Value {
     project_execution_failure_logs(&mut result);
     // `structuredContent` is the canonical machine-readable result. Repeating
-    // that full JSON object in `content.text` doubles model context, so the
-    // compatibility copy is explicit opt-in rather than the default.
+    // that full JSON object in `content.text` costs context, so emit the copy
+    // only when selected by the MCP adapter.
     let mut concise = if result.success {
         "WebCodex tool completed successfully.".to_string()
     } else {

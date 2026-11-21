@@ -39,6 +39,7 @@ async fn request(
         None,
         surface,
         None,
+        runtime.runtime_info.mcp_text_json_compat_enabled,
     )
     .await
 }

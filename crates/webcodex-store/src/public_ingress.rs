@@ -21,6 +21,8 @@ impl PublicIngressMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicIngressEntry {
+    #[serde(default)]
+    pub oauth_dynamic_registration_enabled: bool,
     pub entry_id: String,
     pub profile_id: String,
     pub mode: PublicIngressMode,
@@ -55,6 +57,7 @@ pub struct PublicIngressFence {
 
 #[derive(Debug, Clone)]
 pub struct PublicIngressEntrySpec {
+    pub oauth_dynamic_registration_enabled: bool,
     pub entry_id: String,
     pub profile_id: String,
     pub mode: PublicIngressMode,
@@ -110,11 +113,24 @@ pub(crate) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         );
     ",
     )?;
+    if !crate::schema::table_columns(&tx, "public_ingress_entries")?
+        .iter()
+        .any(|c| c == "oauth_dynamic_registration_enabled")
+    {
+        tx.execute_batch("ALTER TABLE public_ingress_entries ADD COLUMN oauth_dynamic_registration_enabled INTEGER NOT NULL DEFAULT 0 CHECK(oauth_dynamic_registration_enabled IN (0,1))")?;
+    }
+    if !crate::schema::table_columns(&tx, "oauth_public_ingress_clients")?
+        .iter()
+        .any(|c| c == "registration_epoch")
+    {
+        // Existing manual bindings retain their original lifecycle.
+        tx.execute_batch("ALTER TABLE oauth_public_ingress_clients ADD COLUMN registration_epoch INTEGER CHECK(registration_epoch IS NULL OR (typeof(registration_epoch) = 'integer' AND registration_epoch > 0))")?;
+    }
     tx.commit()?;
     Ok(())
 }
 
-const ENTRY_COLUMNS: &str = "entry_id,profile_id,mode,origin,owner_user_id,auth_epoch,runtime_revision,process_generation,server_instance_id,active,admission_open,attempt_closed";
+const ENTRY_COLUMNS: &str = "entry_id,profile_id,mode,origin,owner_user_id,auth_epoch,runtime_revision,process_generation,server_instance_id,active,admission_open,attempt_closed,oauth_dynamic_registration_enabled";
 fn entry_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PublicIngressEntry> {
     let mode: String = row.get(2)?;
     let mode = match mode.as_str() {
@@ -135,6 +151,7 @@ fn entry_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PublicIngressEntry> {
         active: row.get(9)?,
         admission_open: row.get(10)?,
         attempt_closed: row.get(11)?,
+        oauth_dynamic_registration_enabled: row.get(12)?,
     })
 }
 fn entry_by_id(conn: &Connection, id: &str) -> anyhow::Result<Option<PublicIngressEntry>> {
@@ -176,7 +193,7 @@ fn validate_spec(spec: &PublicIngressEntrySpec) -> anyhow::Result<()> {
     );
     Ok(())
 }
-fn owner_enabled(conn: &Connection, user_id: &str) -> anyhow::Result<bool> {
+pub(crate) fn owner_enabled(conn: &Connection, user_id: &str) -> anyhow::Result<bool> {
     Ok(conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND disabled=0)",
         [user_id],
@@ -238,7 +255,7 @@ impl Database {
         {
             return Ok(false);
         }
-        let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM oauth_public_ingress_clients b JOIN oauth_clients c ON c.client_id=b.client_id WHERE b.entry_id=?1 AND c.revoked_at IS NULL)", [&entry.entry_id], |row| row.get(0))?;
+        let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM oauth_public_ingress_clients b JOIN oauth_clients c ON c.client_id=b.client_id WHERE b.entry_id=?1 AND c.dynamic_registration IS NULL AND c.revoked_at IS NULL)", [&entry.entry_id], |row| row.get(0))?;
         if exists && !replace {
             return Ok(false);
         }
@@ -248,7 +265,7 @@ impl Database {
             params![record.client_id, entry.entry_id],
         )?;
         if replace {
-            tx.execute("UPDATE oauth_clients SET revoked_at=?3 WHERE revoked_at IS NULL AND client_id<>?2 AND client_id IN(SELECT client_id FROM oauth_public_ingress_clients WHERE entry_id=?1)", params![entry.entry_id, record.client_id, record.created_at])?;
+            tx.execute("UPDATE oauth_clients SET revoked_at=?3 WHERE dynamic_registration IS NULL AND revoked_at IS NULL AND client_id<>?2 AND client_id IN(SELECT client_id FROM oauth_public_ingress_clients WHERE entry_id=?1)", params![entry.entry_id, record.client_id, record.created_at])?;
         }
         tx.commit()?;
         Ok(true)
@@ -274,6 +291,7 @@ impl Database {
             return Ok(None);
         }
         validate_spec(&PublicIngressEntrySpec {
+            oauth_dynamic_registration_enabled: entry.oauth_dynamic_registration_enabled,
             entry_id: entry.entry_id.clone(),
             profile_id: entry.profile_id.clone(),
             mode: entry.mode,
@@ -345,10 +363,10 @@ impl Database {
         } else {
             (1, 1)
         };
-        tx.execute("INSERT INTO public_ingress_entries (entry_id,profile_id,mode,origin,owner_user_id,auth_epoch,runtime_revision,process_generation,server_instance_id,active,admission_open)
-            VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0,0)
-            ON CONFLICT(entry_id) DO UPDATE SET mode=excluded.mode,origin=excluded.origin,owner_user_id=excluded.owner_user_id,auth_epoch=excluded.auth_epoch,runtime_revision=excluded.runtime_revision,process_generation=excluded.process_generation,server_instance_id=excluded.server_instance_id,active=0,admission_open=0,attempt_closed=0",
-            params![spec.entry_id,spec.profile_id,spec.mode.as_str(),spec.origin,spec.owner_user_id,epoch,revision,spec.process_generation,spec.server_instance_id])?;
+        tx.execute("INSERT INTO public_ingress_entries (entry_id,profile_id,mode,origin,owner_user_id,auth_epoch,runtime_revision,process_generation,server_instance_id,active,admission_open,oauth_dynamic_registration_enabled)
+            VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0,0,?10)
+            ON CONFLICT(entry_id) DO UPDATE SET mode=excluded.mode,origin=excluded.origin,owner_user_id=excluded.owner_user_id,auth_epoch=excluded.auth_epoch,runtime_revision=excluded.runtime_revision,process_generation=excluded.process_generation,server_instance_id=excluded.server_instance_id,active=0,admission_open=0,attempt_closed=0,oauth_dynamic_registration_enabled=excluded.oauth_dynamic_registration_enabled",
+            params![spec.entry_id,spec.profile_id,spec.mode.as_str(),spec.origin,spec.owner_user_id,epoch,revision,spec.process_generation,spec.server_instance_id,spec.oauth_dynamic_registration_enabled])?;
         let entry = entry_by_id(&tx, &spec.entry_id)?;
         tx.commit()?;
         Ok(entry)
@@ -372,6 +390,16 @@ impl Database {
             return Ok(false);
         }
         if open {
+            // Only an admitted configuration can retire dynamic clients. A
+            // prepared but superseded attempt must not revoke Named grants.
+            if !entry.oauth_dynamic_registration_enabled {
+                tx.execute(
+                    "UPDATE oauth_clients SET revoked_at=unixepoch() WHERE revoked_at IS NULL
+                     AND client_id IN (SELECT client_id FROM oauth_public_ingress_clients
+                         WHERE entry_id=?1 AND registration_epoch IS NOT NULL)",
+                    [&entry.entry_id],
+                )?;
+            }
             tx.execute("UPDATE public_ingress_entries SET active=0,admission_open=0,attempt_closed=1,auth_epoch=auth_epoch+CASE WHEN mode='quick' THEN 1 ELSE 0 END WHERE active=1 AND entry_id<>?1", [&fence.entry_id])?;
             tx.execute(
                 "UPDATE public_ingress_entries SET active=1,admission_open=1 WHERE entry_id=?1",
@@ -416,7 +444,7 @@ impl Database {
         let Some(entry) = active_entry_for_fence(&tx, fence)? else {
             return Ok(false);
         };
-        if !client_owner_matches(&tx, client_id, &entry.owner_user_id)? {
+        if !manual_client_owner_matches(&tx, client_id, &entry.owner_user_id)? {
             return Ok(false);
         }
         let old = client_entry_id(&tx, client_id)?;
@@ -448,15 +476,23 @@ impl Database {
         client_id: &str,
         fence: &PublicIngressFence,
     ) -> anyhow::Result<bool> {
-        let conn = self.lock_connection(crate::StoreDomain::OAuth);
+        let mut connection = self.lock_connection(crate::StoreDomain::OAuth);
+        let conn = connection.transaction()?;
+        client_allowed_on_listener(&conn, client_id, Some(fence))
+    }
+
+    pub fn public_ingress_registration_available(
+        &self,
+        fence: &PublicIngressFence,
+    ) -> anyhow::Result<bool> {
+        let mut connection = self.lock_connection(crate::StoreDomain::OAuth);
+        let conn = connection.transaction()?;
         let Some(entry) = active_entry_for_fence(&conn, fence)? else {
             return Ok(false);
         };
-        Ok(
-            client_entry_id(&conn, client_id)?.as_deref() == Some(&entry.entry_id)
-                && client_owner_matches(&conn, client_id, &entry.owner_user_id)?,
-        )
+        Ok(entry.oauth_dynamic_registration_enabled && owner_enabled(&conn, &entry.owner_user_id)?)
     }
+
     /// `None` is the private audience and rejects every entry-bound token.
     /// A public audience rejects legacy unbound grants, even with a resource.
     pub fn oauth_access_token_matches_public_ingress(
@@ -464,7 +500,8 @@ impl Database {
         token_hash: &str,
         expected: Option<&PublicIngressFence>,
     ) -> anyhow::Result<bool> {
-        let conn = self.lock_connection(crate::StoreDomain::OAuth);
+        let mut connection = self.lock_connection(crate::StoreDomain::OAuth);
+        let conn = connection.transaction()?;
         let grant: Option<(String,String,Option<String>,Option<String>,i64)> = conn.query_row("SELECT id,client_id,user_id,resource,expires_at FROM oauth_access_tokens WHERE token_hash=?1 AND revoked_at IS NULL", [token_hash], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional()?;
         let Some((id, client_id, user_id, resource, expires_at)) = grant else {
             return Ok(false);
@@ -494,9 +531,42 @@ impl Database {
     }
 }
 
-fn client_owner_matches(conn: &Connection, client_id: &str, owner: &str) -> anyhow::Result<bool> {
+fn manual_client_owner_matches(
+    conn: &Connection,
+    client_id: &str,
+    owner: &str,
+) -> anyhow::Result<bool> {
     Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM oauth_clients c JOIN users u ON u.id=c.owner_user_id WHERE c.client_id=?1 AND c.dynamic_registration IS NULL AND c.owner_user_id=?2 AND c.revoked_at IS NULL AND u.disabled=0)", params![client_id,owner], |row| row.get(0))?)
 }
+/// Recheck the request listener under the same writer lock as the grant effect.
+pub(crate) fn client_allowed_on_listener(
+    conn: &Connection,
+    client_id: &str,
+    fence: Option<&PublicIngressFence>,
+) -> anyhow::Result<bool> {
+    match fence {
+        Some(fence) => match active_entry_for_fence(conn, fence)? {
+            Some(entry) => bound_client_is_current(conn, client_id, &entry),
+            None => Ok(false),
+        },
+        None => Ok(client_entry_id(conn, client_id)?.is_none()),
+    }
+}
+
+fn bound_client_is_current(
+    conn: &Connection,
+    client_id: &str,
+    entry: &PublicIngressEntry,
+) -> anyhow::Result<bool> {
+    Ok(conn.query_row("SELECT EXISTS(
+        SELECT 1 FROM oauth_public_ingress_clients b JOIN oauth_clients c USING(client_id)
+        JOIN users u ON u.id=c.owner_user_id
+        WHERE b.client_id=?1 AND b.entry_id=?2 AND u.id=?3 AND u.disabled=0 AND c.revoked_at IS NULL
+        AND ((c.dynamic_registration IS NULL AND b.registration_epoch IS NULL)
+          OR (?4 AND b.registration_epoch=?5 AND json_extract(c.dynamic_registration,'$.issuer')=?6)))",
+        params![client_id,entry.entry_id,entry.owner_user_id,entry.oauth_dynamic_registration_enabled,entry.auth_epoch,entry.origin], |row| row.get(0))?)
+}
+
 pub(crate) fn client_entry_id(
     conn: &Connection,
     client_id: &str,
@@ -565,8 +635,7 @@ pub(crate) fn binding_is_current(
         || !entry.admission_open
         || entry.auth_epoch != binding.auth_epoch
         || user_id != Some(&entry.owner_user_id)
-        || client_entry_id(conn, client_id)?.as_deref() != Some(&entry.entry_id)
-        || !client_owner_matches(conn, client_id, &entry.owner_user_id)?
+        || !bound_client_is_current(conn, client_id, &entry)?
     {
         return Ok(false);
     }

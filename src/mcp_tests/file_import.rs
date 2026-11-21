@@ -728,7 +728,7 @@ fn mcp_file_import_trust_decision_reports_exact_failure_stage() {
         ..client.clone()
     };
     assert_eq!(
-        db.register_dynamic_oauth_client(&dynamic).unwrap(),
+        db.register_dynamic_oauth_client(&dynamic, None).unwrap(),
         webcodex_store::DynamicRegistrationOutcome::Created
     );
     let untrusted = mcp_host_file_import_trust_decision_from_state(

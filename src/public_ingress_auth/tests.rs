@@ -21,10 +21,12 @@ fn public_entry(
     user: &UserRecord,
     mode: PublicIngressMode,
     origin: &str,
+    dcr: bool,
 ) -> PublicIngressEntry {
     let entry = db
         .prepare_public_ingress_entry(
             &PublicIngressEntrySpec {
+                oauth_dynamic_registration_enabled: dcr,
                 entry_id: id(),
                 profile_id: id(),
                 mode,
@@ -95,6 +97,8 @@ fn service(
                     .get(echo)
                     .post(echo),
             )
+            .push(Router::with_path("oauth/register").post(crate::oauth_http::oauth_register))
+            .push(Router::with_path("oauth/revoke").post(crate::oauth_http::oauth_revoke))
             .push(Router::with_path("oauth/token").post(crate::oauth_http::oauth_token))
             .push(
                 Router::with_path("oauth/authorize")
@@ -242,7 +246,7 @@ async fn public_ingress_authority_cannot_be_forged_by_request_headers() {
     let _env = AuthEnvGuard::auth_required();
     let (_tmp, db) = test_db();
     let user = seed_user(&db, "owner");
-    let entry = public_entry(&db, &user, PublicIngressMode::Named, ORIGIN);
+    let entry = public_entry(&db, &user, PublicIngressMode::Named, ORIGIN, false);
     let public = service(db.clone(), Some(entry), true, sessions());
     let private = service(db, None, true, sessions());
     let response = TestClient::get(&format!("{ORIGIN}/authority"))
@@ -305,7 +309,7 @@ async fn public_ingress_mcp_rejects_non_oauth_even_when_private_auth_is_open() {
     env.enable_open_anonymous();
     let (_tmp, db) = test_db();
     let user = seed_user(&db, "owner");
-    let public = public_entry(&db, &user, PublicIngressMode::Named, ORIGIN);
+    let public = public_entry(&db, &user, PublicIngressMode::Named, ORIGIN, false);
     let account = crate::auth::generate_account_credential();
     db.insert_account_credential(
         &crate::models::AccountCredentialRecord {
@@ -364,7 +368,7 @@ async fn oauth_route_aliases_preserve_listener_audience_without_consuming_grants
     let _env = AuthEnvGuard::auth_required();
     let (_tmp, db) = test_db();
     let user = seed_user(&db, "alias-owner");
-    let entry = public_entry(&db, &user, PublicIngressMode::Named, ORIGIN);
+    let entry = public_entry(&db, &user, PublicIngressMode::Named, ORIGIN, false);
     let (bound, bound_secret) = bound_client(&db, &user, &entry);
     let (unbound, unbound_secret) = seed_oauth_client_named(&db, &user, "private alias client");
     let public = service(db.clone(), Some(entry.clone()), true, sessions());
@@ -461,7 +465,7 @@ async fn entry_bound_code_exchange_and_tokens_cannot_cross_private_listener() {
     let _env = AuthEnvGuard::auth_required();
     let (_tmp, db) = test_db();
     let user = seed_user(&db, "owner");
-    let entry = public_entry(&db, &user, PublicIngressMode::Named, ORIGIN);
+    let entry = public_entry(&db, &user, PublicIngressMode::Named, ORIGIN, false);
     let (client, secret) = bound_client(&db, &user, &entry);
     let authorization_code = code(&db, &user, &client, Some(&entry));
     let public = service(db.clone(), Some(entry.clone()), true, sessions());
@@ -492,15 +496,12 @@ async fn entry_bound_code_exchange_and_tokens_cannot_cross_private_listener() {
     let refresh = tokens["refresh_token"].as_str().unwrap();
     assert_eq!(tokens["scope"], "runtime:read project:read");
     let public_config = config(Some(&entry), true);
-    assert!(OAuth2Verifier::verify_for_ingress(
-        &public_config,
-        Some(&db),
-        access,
-        Some(&entry.fence())
-    )
-    .await
-    .unwrap()
-    .is_some());
+    assert!(
+        OAuth2Verifier::verify_for_ingress(&public_config, Some(&db), access, Some(&entry))
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert!(OAuth2Verifier
         .verify(&public_config, Some(&db), access)
         .await
@@ -585,7 +586,7 @@ async fn public_authorize_browser_session_is_bound_to_entry_and_epoch() {
     let _env = AuthEnvGuard::auth_required();
     let (_tmp, db) = test_db();
     let user = seed_user(&db, "owner");
-    let first = public_entry(&db, &user, PublicIngressMode::Quick, ORIGIN);
+    let first = public_entry(&db, &user, PublicIngressMode::Quick, ORIGIN, false);
     let (client, _) = bound_client(&db, &user, &first);
     let pat = mint_key(&db, &user, false);
     let sessions = sessions();
@@ -646,6 +647,7 @@ async fn public_authorize_browser_session_is_bound_to_entry_and_epoch() {
     let replacement = db
         .prepare_public_ingress_entry(
             &PublicIngressEntrySpec {
+                oauth_dynamic_registration_enabled: false,
                 entry_id: first.entry_id.clone(),
                 profile_id: first.profile_id.clone(),
                 mode: PublicIngressMode::Quick,
@@ -676,6 +678,7 @@ async fn public_authorize_browser_session_is_bound_to_entry_and_epoch() {
         &user,
         PublicIngressMode::Named,
         "https://other.example.test",
+        false,
     );
     let (other_client, _) = bound_client(&db, &user, &other);
     let other_service = service(db, Some(other), true, sessions);
@@ -687,4 +690,126 @@ async fn public_authorize_browser_session_is_bound_to_entry_and_epoch() {
     .send(&other_service)
     .await;
     assert_eq!(response.status_code, Some(StatusCode::UNAUTHORIZED));
+}
+
+#[tokio::test]
+async fn same_owner_and_issuer_do_not_share_dcr_clients_codes_refresh_or_access() {
+    let _env = AuthEnvGuard::auth_required();
+    let (_tmp, db) = test_db();
+    let owner = seed_user(&db, "owner");
+    let first = public_entry(&db, &owner, PublicIngressMode::Named, ORIGIN, true);
+    let original = service(db.clone(), Some(first.clone()), true, sessions());
+    let register = || {
+        TestClient::post(&format!("{ORIGIN}/oauth/register")).json(&serde_json::json!({
+        "redirect_uris":[REDIRECT],"scope":"runtime:read project:read","grant_types":["authorization_code","refresh_token"],
+        "token_endpoint_auth_method":"client_secret_post"
+    }))
+    };
+    let registration = register()
+        .send(&original)
+        .await
+        .take_json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let client = db
+        .get_oauth_client_by_client_id(registration["client_id"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    let secret = registration["client_secret"].as_str().unwrap();
+    let tokens = exchange(
+        &original,
+        &format!("{ORIGIN}/oauth/token"),
+        &client,
+        secret,
+        &code(&db, &owner, &client, Some(&first)),
+    )
+    .await;
+    let pending = code(&db, &owner, &client, Some(&first));
+    let access = tokens["access_token"].as_str().unwrap();
+    let refresh = tokens["refresh_token"].as_str().unwrap();
+    let second = public_entry(&db, &owner, PublicIngressMode::Named, ORIGIN, true);
+    let other = service(db.clone(), Some(second.clone()), true, sessions());
+    let private = service(db.clone(), None, true, sessions());
+    for (listener, origin) in [(&other, ORIGIN), (&private, "http://localhost")] {
+        let resp = TestClient::get(&format!(
+            "{origin}/oauth/authorize?{}",
+            authorize_parameters(&client, None)
+        ))
+        .send(listener)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        assert_eq!(
+            TestClient::get(&format!("{origin}/mcp"))
+                .bearer_auth(access)
+                .send(listener)
+                .await
+                .status_code,
+            Some(StatusCode::UNAUTHORIZED)
+        );
+        let token_url = format!("{origin}/oauth/token");
+        for body in [
+            exchange_form(&client, secret, &pending),
+            form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", &client.client_id),
+                ("client_secret", secret),
+                ("refresh_token", refresh),
+            ]),
+        ] {
+            assert!(post_form(&token_url, body)
+                .send(listener)
+                .await
+                .status_code
+                .unwrap()
+                .is_client_error());
+        }
+    }
+    // Even an authenticated second client cannot burn the first entry's code
+    // on a mismatch or revoke its tokens.
+    let reg = register()
+        .send(&other)
+        .await
+        .take_json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let second_id = reg["client_id"].as_str().unwrap();
+    let second_secret = reg["client_secret"].as_str().unwrap();
+    let second_client = db
+        .get_oauth_client_by_client_id(second_id)
+        .unwrap()
+        .unwrap();
+    let resp = post_form(
+        &format!("{ORIGIN}/oauth/token"),
+        exchange_form(&second_client, second_secret, &pending),
+    )
+    .send(&other)
+    .await;
+    assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    assert!(db
+        .get_oauth_authorization_code_by_hash(&hash_token(&pending))
+        .unwrap()
+        .unwrap()
+        .used_at
+        .is_none());
+    for token in [access, refresh] {
+        let resp = post_form(
+            &format!("{ORIGIN}/oauth/revoke"),
+            form(&[
+                ("token", token),
+                ("client_id", second_id),
+                ("client_secret", second_secret),
+            ]),
+        )
+        .send(&other)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+    }
+    assert!(db
+        .get_oauth_access_token_by_hash(&hash_token(access))
+        .unwrap()
+        .is_some());
+    assert!(db
+        .get_oauth_refresh_token_by_hash(&hash_token(refresh))
+        .unwrap()
+        .is_some());
 }

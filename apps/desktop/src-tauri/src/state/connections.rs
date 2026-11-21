@@ -238,6 +238,8 @@ impl DesktopCore {
                 .configure_cloudflare_tunnel_profile(
                     &store,
                     &webcodex_environment::CloudflareTunnelProfileRequest {
+                        oauth_dynamic_registration_enabled: request
+                            .oauth_dynamic_registration_enabled,
                         profile_id: &profile_id,
                         name: Some(&request.name),
                         host_mode: request.host_mode,
@@ -252,7 +254,9 @@ impl DesktopCore {
                 .map_err(super::environment::desktop_error)?;
             return cancellation.check();
         }
-        if request.cloudflare_token.is_some() {
+        if request.cloudflare_token.is_some()
+            || request.oauth_dynamic_registration_enabled.is_some()
+        {
             return Err(connection_missing());
         }
         let tunnel_id = request.tunnel_id.trim();
@@ -774,6 +778,7 @@ fn persistent_connection_projection(
     let runtime = persistent_runtime_projection(&profile, observation);
     TunnelConnectionSnapshot {
         config: crate::tunnel_config::TunnelProfileConfigSnapshot {
+            oauth_dynamic_registration_enabled: profile.oauth_dynamic_registration_enabled,
             provider: profile.provider.clone(),
             configuration_id: profile.configuration_id.clone(),
             id: profile.profile_id,

@@ -19,6 +19,7 @@ export type ConnectionError = "start_failed" | "startup_timeout" | "process_exit
 export interface TunnelConnection {
   /** Missing on legacy native snapshots means OpenAI. */
   provider?: TunnelProvider;
+  oauth_dynamic_registration_enabled?: boolean;
   configuration_id?: string | null;
   id: string;
   name: string;
@@ -56,6 +57,7 @@ export interface ConnectionsSnapshot {
 }
 export interface TunnelProfileRequest {
   provider?: TunnelProvider;
+  oauth_dynamic_registration_enabled?: boolean;
   cloudflare_token?: string | null;
   id: string | null;
   name: string;

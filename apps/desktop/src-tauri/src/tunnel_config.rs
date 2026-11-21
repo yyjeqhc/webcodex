@@ -42,6 +42,8 @@ struct StoredProfiles {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TunnelProfileConfigSnapshot {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub oauth_dynamic_registration_enabled: bool,
     #[serde(default)]
     pub provider: webcodex_environment::TunnelProvider,
     #[serde(default)]
@@ -82,6 +84,7 @@ impl Default for TunnelConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TunnelProfileRequest {
+    pub oauth_dynamic_registration_enabled: Option<bool>,
     #[serde(default)]
     pub provider: webcodex_environment::TunnelProvider,
     #[serde(default)]
@@ -237,6 +240,7 @@ impl TunnelConfig {
                     return None;
                 }
                 Some(TunnelProfileConfigSnapshot {
+                    oauth_dynamic_registration_enabled: false,
                     provider: webcodex_environment::TunnelProvider::Openai,
                     configuration_id: None,
                     id: profile.id.to_string(),
@@ -290,6 +294,7 @@ impl TunnelConfig {
     ) -> DesktopResult<TunnelProfileId> {
         if request.provider != webcodex_environment::TunnelProvider::Openai
             || request.cloudflare_token.is_some()
+            || request.oauth_dynamic_registration_enabled.is_some()
         {
             return Err(DesktopError::new(
                 "cloudflare_environment_required",
@@ -441,6 +446,7 @@ impl TunnelConfig {
                 self.update_profile(
                     path,
                     TunnelProfileRequest {
+                        oauth_dynamic_registration_enabled: None,
                         provider: webcodex_environment::TunnelProvider::Openai,
                         cloudflare_token: None,
                         id: Some(TunnelProfileId::DEFAULT.to_string()),

@@ -46,6 +46,7 @@ impl Fixture {
         };
         db.insert_oauth_client(&client).unwrap();
         let spec = PublicIngressEntrySpec {
+            oauth_dynamic_registration_enabled: false,
             entry_id: "entry".into(),
             profile_id: "profile".into(),
             mode,
@@ -91,8 +92,16 @@ impl Fixture {
             user_id: Some("owner".into()),
             redirect_uri: "https://client.example/callback".into(),
             scopes: "runtime:read".into(),
-            code_challenge: None,
-            code_challenge_method: None,
+            code_challenge: self
+                .client
+                .dynamic_registration
+                .as_ref()
+                .map(|_| "x".repeat(43)),
+            code_challenge_method: self
+                .client
+                .dynamic_registration
+                .as_ref()
+                .map(|_| "S256".into()),
             resource: None,
             shared_key_hash: None,
             created_at: self.now,
@@ -152,6 +161,7 @@ impl Fixture {
         assert!(self
             .db
             .exchange_oauth_authorization_code_for_tokens(
+                Some(&entry.fence()),
                 &code.code_hash,
                 self.now,
                 &access,
@@ -205,6 +215,7 @@ fn public_ingress_named_restart_preserves_epoch_and_rotated_grant_binding_withou
     let (next_access, next_refresh) = f.tokens("rotated");
     assert!(matches!(
         f.db.rotate_oauth_refresh_token(
+            Some(&restarted.fence()),
             &refresh.token_hash,
             &f.client.client_id,
             f.now,
@@ -264,12 +275,25 @@ fn public_ingress_quick_stop_and_address_change_revoke_grants_but_retain_client(
     let (a, r) = f.tokens("closed");
     assert!(f
         .db
-        .exchange_oauth_authorization_code_for_tokens(&pending.code_hash, f.now, &a, &r)
+        .exchange_oauth_authorization_code_for_tokens(
+            Some(&entry.fence()),
+            &pending.code_hash,
+            f.now,
+            &a,
+            &r
+        )
         .unwrap()
         .is_none());
     assert!(matches!(
-        f.db.rotate_oauth_refresh_token(&refresh.token_hash, "client", f.now, &a, &r)
-            .unwrap(),
+        f.db.rotate_oauth_refresh_token(
+            Some(&entry.fence()),
+            &refresh.token_hash,
+            "client",
+            f.now,
+            &a,
+            &r
+        )
+        .unwrap(),
         RotateResult::Revoked
     ));
     f.spec.origin = "https://new-address.example".into();
@@ -299,12 +323,25 @@ fn public_ingress_quick_stop_and_address_change_revoke_grants_but_retain_client(
         .unwrap());
     assert!(f
         .db
-        .exchange_oauth_authorization_code_for_tokens(&pending.code_hash, f.now, &a, &r)
+        .exchange_oauth_authorization_code_for_tokens(
+            Some(&next.fence()),
+            &pending.code_hash,
+            f.now,
+            &a,
+            &r
+        )
         .unwrap()
         .is_none());
     assert!(matches!(
-        f.db.rotate_oauth_refresh_token(&refresh.token_hash, "client", f.now, &a, &r)
-            .unwrap(),
+        f.db.rotate_oauth_refresh_token(
+            Some(&next.fence()),
+            &refresh.token_hash,
+            "client",
+            f.now,
+            &a,
+            &r
+        )
+        .unwrap(),
         RotateResult::Revoked
     ));
     let (fresh, _) = f.issue(&next, "fresh");
@@ -367,6 +404,7 @@ fn public_ingress_single_active_and_stale_generation_cas() {
     let mut f = Fixture::new(PublicIngressMode::Quick);
     let first = f.activate();
     let second_spec = PublicIngressEntrySpec {
+        oauth_dynamic_registration_enabled: false,
         entry_id: "second".into(),
         profile_id: "second-profile".into(),
         ..f.spec.clone()
@@ -445,7 +483,13 @@ fn public_ingress_legacy_migration_keeps_private_grants_unbound() {
     let (access, refresh) = f.tokens("legacy");
     assert!(f
         .db
-        .exchange_oauth_authorization_code_for_tokens(&code.code_hash, f.now, &access, &refresh)
+        .exchange_oauth_authorization_code_for_tokens(
+            None,
+            &code.code_hash,
+            f.now,
+            &access,
+            &refresh
+        )
         .unwrap()
         .is_some());
     let path = f._dir.path().join("ingress.sqlite");
@@ -482,7 +526,7 @@ fn public_ingress_legacy_migration_keeps_private_grants_unbound() {
         .unwrap());
     let (a, r) = f.tokens("private-rotated");
     assert!(matches!(
-        f.db.rotate_oauth_refresh_token(&refresh.token_hash, "client", f.now, &a, &r)
+        f.db.rotate_oauth_refresh_token(None, &refresh.token_hash, "client", f.now, &a, &r)
             .unwrap(),
         RotateResult::Rotated(_)
     ));
@@ -519,7 +563,13 @@ fn public_ingress_bound_clients_reject_unbound_issuance_and_wrong_resource() {
     wrong_access.resource = Some("https://other.example/mcp".into());
     assert!(f
         .db
-        .exchange_oauth_authorization_code_for_tokens(&right.code_hash, f.now, &wrong_access, &r)
+        .exchange_oauth_authorization_code_for_tokens(
+            Some(&entry.fence()),
+            &right.code_hash,
+            f.now,
+            &wrong_access,
+            &r
+        )
         .unwrap()
         .is_none());
     assert!(f
@@ -531,7 +581,13 @@ fn public_ingress_bound_clients_reject_unbound_issuance_and_wrong_resource() {
         .is_none());
     assert!(f
         .db
-        .exchange_oauth_authorization_code_for_tokens(&right.code_hash, f.now, &a, &r)
+        .exchange_oauth_authorization_code_for_tokens(
+            Some(&entry.fence()),
+            &right.code_hash,
+            f.now,
+            &a,
+            &r
+        )
         .unwrap()
         .is_some());
     f.db.revoke_oauth_client_by_client_id("client", f.now)
@@ -567,9 +623,14 @@ fn public_ingress_concurrent_epoch_rotation_and_omitted_resource_exchange_fail_c
                 .unwrap()
         });
         barrier.wait();
-        let _issued = f
-            .db
-            .exchange_oauth_authorization_code_for_tokens(&code.code_hash, f.now, &access, &refresh)
+        let _issued =
+            f.db.exchange_oauth_authorization_code_for_tokens(
+                Some(&entry.fence()),
+                &code.code_hash,
+                f.now,
+                &access,
+                &refresh,
+            )
             .unwrap();
         handle.join().unwrap()
     });
@@ -583,13 +644,26 @@ fn public_ingress_concurrent_epoch_rotation_and_omitted_resource_exchange_fail_c
         .unwrap());
     let (a, r) = f.tokens("after-race");
     assert!(!matches!(
-        f.db.rotate_oauth_refresh_token(&refresh.token_hash, "client", f.now, &a, &r)
-            .unwrap(),
+        f.db.rotate_oauth_refresh_token(
+            Some(&next.fence()),
+            &refresh.token_hash,
+            "client",
+            f.now,
+            &a,
+            &r
+        )
+        .unwrap(),
         RotateResult::Rotated(_)
     ));
     assert!(f
         .db
-        .exchange_oauth_authorization_code_for_tokens(&code.code_hash, f.now, &a, &r)
+        .exchange_oauth_authorization_code_for_tokens(
+            Some(&next.fence()),
+            &code.code_hash,
+            f.now,
+            &a,
+            &r
+        )
         .unwrap()
         .is_none());
 }
@@ -1012,6 +1086,7 @@ fn public_ingress_configuration_recreation_rotates_named_grants_without_reviving
     let (next_access, next_refresh) = f.tokens("configuration-old-refresh");
     assert!(matches!(
         f.db.rotate_oauth_refresh_token(
+            Some(&restarted.fence()),
             &refresh.token_hash,
             "client",
             f.now,
@@ -1130,7 +1205,7 @@ fn ingress_client_lookup_excludes_revoked_unbound_and_other_entries() {
     assert_eq!(
         fixture
             .db
-            .list_oauth_clients_for_public_ingress(&first.entry_id)
+            .list_manual_oauth_clients_for_public_ingress(&first.entry_id)
             .unwrap()
             .len(),
         1
@@ -1154,7 +1229,7 @@ fn ingress_client_lookup_excludes_revoked_unbound_and_other_entries() {
         .unwrap();
     let clients = fixture
         .db
-        .list_oauth_clients_for_public_ingress(&first.entry_id)
+        .list_manual_oauth_clients_for_public_ingress(&first.entry_id)
         .unwrap();
     assert_eq!(clients.len(), 1);
     assert_eq!(clients[0].client_id, fixture.client.client_id);
@@ -1167,20 +1242,22 @@ fn ingress_client_lookup_excludes_revoked_unbound_and_other_entries() {
         .unwrap();
     assert!(fixture
         .db
-        .list_oauth_clients_for_public_ingress(&first.entry_id)
+        .list_manual_oauth_clients_for_public_ingress(&first.entry_id)
         .unwrap()
         .is_empty());
     assert_eq!(
         fixture
             .db
-            .list_oauth_clients_for_public_ingress(&second.entry_id)
+            .list_manual_oauth_clients_for_public_ingress(&second.entry_id)
             .unwrap()
             .len(),
         1
     );
     assert!(fixture
         .db
-        .list_oauth_clients_for_public_ingress("missing")
+        .list_manual_oauth_clients_for_public_ingress("missing")
         .unwrap()
         .is_empty());
 }
+
+mod registration;

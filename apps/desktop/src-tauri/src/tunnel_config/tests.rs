@@ -22,6 +22,7 @@ impl Drop for Fixture {
 }
 fn create(name: &str, tunnel_id: &str, key: &str) -> TunnelProfileRequest {
     TunnelProfileRequest {
+        oauth_dynamic_registration_enabled: None,
         provider: webcodex_environment::TunnelProvider::Openai,
         cloudflare_token: None,
         id: None,
@@ -40,6 +41,7 @@ fn edit(
     key: Option<&str>,
 ) -> TunnelProfileRequest {
     TunnelProfileRequest {
+        oauth_dynamic_registration_enabled: None,
         provider: webcodex_environment::TunnelProvider::Openai,
         cloudflare_token: None,
         id: Some(id.to_string()),
@@ -449,6 +451,7 @@ fn write_environment_profile_fixture(
     let records = profiles
         .iter()
         .map(|(profile_id, _, _)| webcodex_environment::TunnelRecord {
+            oauth_dynamic_registration_enabled: false,
             configuration_id: None,
             provider: webcodex_environment::TunnelProvider::Openai,
             profile_id: (*profile_id).to_owned(),
@@ -510,6 +513,7 @@ fn persistent_environment_reconciles_exact_legacy_claims_and_fails_closed_on_con
         .update_profile(
             &fixture.path(),
             TunnelProfileRequest {
+                oauth_dynamic_registration_enabled: None,
                 provider: webcodex_environment::TunnelProvider::Openai,
                 cloudflare_token: None,
                 id: Some(TunnelProfileId::DEFAULT.to_string()),

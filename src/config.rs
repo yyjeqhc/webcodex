@@ -569,6 +569,12 @@ fn normalize_trusted_mcp_file_client_id(value: &str) -> Option<String> {
     Some(value)
 }
 
+pub(crate) struct RegistrationTarget<'a> {
+    pub owner: &'a str,
+    pub issuer: &'a str,
+    pub fence: Option<webcodex_store::PublicIngressFence>,
+}
+
 impl OAuth2Config {
     /// Return the RFC 9207 authorization-response issuer when the configured
     /// public issuer is suitable for Internet OAuth interoperability. Local HTTP
@@ -588,28 +594,54 @@ impl OAuth2Config {
         Some(issuer)
     }
 
-    /// The configured owner and HTTPS issuer must both be present on this listener.
-    pub(crate) fn registration_target(&self, ingress: bool) -> Option<(&str, &str)> {
-        if ingress
-            || !self.enabled
+    /// On the dedicated listener only its admitted entry can supply registration
+    /// authority. The private Server's configured owner is never a fallback.
+    pub(crate) fn registration_target<'a>(
+        &'a self,
+        ingress: Option<&'a webcodex_store::PublicIngressEntry>,
+    ) -> Option<RegistrationTarget<'a>> {
+        if !self.enabled
             || self.project_share_grant_id.is_some()
             || self.project_share_session_id.is_some()
         {
             return None;
         }
-        Some((self.dcr_owner_user_id.as_deref()?, self.https_issuer()?))
+        let issuer = self.https_issuer()?;
+        match ingress {
+            Some(entry)
+                if entry.active
+                    && entry.admission_open
+                    && !entry.attempt_closed
+                    && entry.oauth_dynamic_registration_enabled
+                    && entry.origin == issuer =>
+            {
+                Some(RegistrationTarget {
+                    owner: &entry.owner_user_id,
+                    issuer,
+                    fence: Some(entry.fence()),
+                })
+            }
+            Some(_) => None,
+            None => Some(RegistrationTarget {
+                owner: self.dcr_owner_user_id.as_deref()?,
+                issuer,
+                fence: None,
+            }),
+        }
     }
 
     pub(crate) fn accepts_client_registration(
         &self,
         client: &crate::models::OAuthClientRecord,
-        ingress: bool,
+        ingress: Option<&webcodex_store::PublicIngressEntry>,
     ) -> bool {
         client.dynamic_registration.as_ref().is_none_or(|d| {
-            self.registration_target(ingress)
-                .is_some_and(|(owner, issuer)| {
-                    client.owner_user_id.as_deref() == Some(owner) && d.issuer == issuer
-                })
+            self.registration_target(ingress).is_some_and(|target| {
+                client.owner_user_id.as_deref() == Some(target.owner)
+                    && d.issuer == target.issuer
+                    && (ingress.is_none()
+                        || webcodex_store::valid_dynamic_client_scopes(&client.allowed_scopes))
+            })
         })
     }
 

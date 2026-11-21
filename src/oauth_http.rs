@@ -37,12 +37,12 @@ mod scope_registry;
 mod shared_key_bridge;
 mod token;
 
-pub(crate) use clients::validate_redirect_uri;
 pub(crate) use clients::{
     oauth_clients_add_redirect_uri, oauth_clients_create, oauth_clients_list,
     oauth_clients_remove_redirect_uri, oauth_clients_revoke, oauth_clients_update_scopes,
 };
 use html::authorize_bridge_html;
+pub(crate) use webcodex_store::validate_redirect_uri;
 
 #[derive(Debug, Clone)]
 struct BridgePermissionView {

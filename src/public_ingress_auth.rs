@@ -27,12 +27,20 @@ pub(crate) fn require_authority(
     };
     let origin = url::Url::parse(&entry.origin)
         .map_err(|_| (503, "ingress_unavailable", "public ingress unavailable"))?;
-    let host = req
-        .headers()
-        .get("host")
-        .and_then(|value| value.to_str().ok())
-        .or_else(|| req.uri().authority().map(|authority| authority.as_str()))
-        .ok_or((400, "invalid_request_authority", "invalid Host header"))?;
+    if req.headers().get_all("host").iter().count() > 1
+        || req.headers().get_all("origin").iter().count() > 1
+    {
+        return Err((
+            400,
+            "invalid_request_authority",
+            "ambiguous Host or Origin header",
+        ));
+    }
+    let invalid_host = (400, "invalid_request_authority", "invalid Host header");
+    let host = match req.headers().get("host") {
+        Some(value) => value.to_str().map_err(|_| invalid_host)?,
+        None => req.uri().authority().ok_or(invalid_host)?.as_str(),
+    };
     let requested = url::Url::parse(&format!("https://{host}"))
         .map_err(|_| (400, "invalid_request_authority", "invalid Host header"))?;
     if requested.origin() != origin.origin()
@@ -174,13 +182,13 @@ pub(crate) async fn authenticate_mcp(
     // connection. Failures (including a lost blocking task) reject.
     let config = config.clone();
     let db = db.cloned();
-    let fence = entry.fence();
+    let entry = entry.clone();
     tokio::task::spawn_blocking(move || {
         crate::auth::tokens::OAuth2Verifier::verify_for_ingress_sync(
             &config,
             db.as_ref(),
             &token,
-            Some(&fence),
+            Some(&entry),
         )
     })
     .await

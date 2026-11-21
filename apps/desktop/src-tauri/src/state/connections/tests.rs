@@ -29,6 +29,7 @@ fn native_connection_observations_survive_desktop_state_reads() {
     published.persistent_environment = Some("fixture-environment".into());
     published.connections.profiles = vec![TunnelConnectionSnapshot {
         config: TunnelProfileConfigSnapshot {
+            oauth_dynamic_registration_enabled: false,
             provider: webcodex_environment::TunnelProvider::Openai,
             configuration_id: None,
             id: TunnelProfileId::new().to_string(),
@@ -86,6 +87,7 @@ async fn connection_resume_uses_current_profile_preferences_without_enabling_sto
                 .update_profile(
                     &path,
                     TunnelProfileRequest {
+                        oauth_dynamic_registration_enabled: None,
                         provider: webcodex_environment::TunnelProvider::Openai,
                         cloudflare_token: None,
                         id: None,
@@ -145,6 +147,7 @@ fn environment_profile(
     autostart: bool,
 ) -> webcodex_environment::TunnelProfileSnapshot {
     webcodex_environment::TunnelProfileSnapshot {
+        oauth_dynamic_registration_enabled: false,
         configuration_id: None,
         provider: webcodex_environment::TunnelProvider::Openai,
         ingress_port: None,

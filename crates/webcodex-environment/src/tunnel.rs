@@ -29,6 +29,8 @@ fn default_revision() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TunnelRecord {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub oauth_dynamic_registration_enabled: bool,
     pub profile_id: String,
     #[serde(default)]
     pub provider: TunnelProvider,
@@ -81,6 +83,8 @@ impl TunnelRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TunnelProfileSnapshot {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub oauth_dynamic_registration_enabled: bool,
     pub profile_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configuration_id: Option<String>,
@@ -362,6 +366,7 @@ pub fn tunnel_profile_credentials(
 
 fn snapshot(record: &TunnelRecord, binding: &TunnelProfileBinding) -> TunnelProfileSnapshot {
     TunnelProfileSnapshot {
+        oauth_dynamic_registration_enabled: false,
         profile_id: record.profile_id.clone(),
         configuration_id: record.effective_configuration_id(),
         provider: record.provider.clone(),
@@ -972,6 +977,7 @@ impl NativeEnvironment {
         } else {
             runtime_changed = true;
             profiles.push(TunnelRecord {
+                oauth_dynamic_registration_enabled: false,
                 configuration_id: None,
                 provider: crate::TunnelProvider::Openai,
                 profile_id: profile_id.to_owned(),
@@ -1913,6 +1919,7 @@ mod tests {
 
     fn record(revision: u64) -> TunnelRecord {
         TunnelRecord {
+            oauth_dynamic_registration_enabled: false,
             configuration_id: None,
             provider: crate::TunnelProvider::Openai,
             profile_id: "work".into(),
@@ -2063,6 +2070,7 @@ mod tests {
             &store,
             "new-profile",
             &[TunnelRecord {
+                oauth_dynamic_registration_enabled: false,
                 configuration_id: None,
                 provider: crate::TunnelProvider::Openai,
                 profile_id: "new-profile".into(),

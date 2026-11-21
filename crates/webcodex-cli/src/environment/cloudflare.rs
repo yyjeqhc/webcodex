@@ -13,6 +13,7 @@ pub(super) fn validate_input(input: &Input) -> Result<(), String> {
         || input.tunnel_id.is_some()
         || input.name.is_some()
         || input.autostart.is_some()
+        || input.oauth_dynamic_registration_enabled.is_some()
         || input.ingress_port.is_some())
         && input.command != "configure-tunnel"
     {
@@ -102,6 +103,7 @@ pub(super) fn selected_provider(
         && (input.token_file.is_some()
             || input.public_origin.is_some()
             || input.tunnel_id.is_some()
+            || input.oauth_dynamic_registration_enabled.is_some()
             || input.ingress_port.is_some())
     {
         return Err("Cloudflare options require the selected Cloudflare provider; OpenAI credentials use --credentials-file".into());
@@ -193,6 +195,7 @@ pub(super) async fn configure(
         credentials.and_then(|file| file.token).map(Secret::new)
     };
     let request = CloudflareTunnelProfileRequest {
+        oauth_dynamic_registration_enabled: input.oauth_dynamic_registration_enabled,
         profile_id: id,
         name: input.name.as_deref(),
         provider,

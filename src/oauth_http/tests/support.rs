@@ -232,31 +232,6 @@ pub(super) fn seed_user_token(db: &crate::Database, user: &UserRecord) -> String
     )
 }
 
-pub(super) fn seed_user_token_with_scopes(
-    db: &crate::Database,
-    user: &UserRecord,
-    scopes: &str,
-) -> String {
-    let plaintext = generate_api_token();
-    let hash = hash_token(&plaintext);
-    let now = chrono::Utc::now().timestamp();
-    let record = ApiKeyRecord {
-        id: uuid::Uuid::new_v4().to_string(),
-        user_id: user.id.clone(),
-        name: "authorize-user-token".to_string(),
-        key_prefix: token_prefix(&plaintext),
-        created_at: now,
-        last_used_at: None,
-        revoked_at: None,
-        scopes: scopes.to_string(),
-        expires_at: None,
-        kind: TOKEN_KIND_USER.to_string(),
-        allowed_client_id: None,
-    };
-    db.insert_api_key(&record, &hash).unwrap();
-    plaintext
-}
-
 pub(super) fn seed_agent_token(db: &crate::Database, user: &UserRecord) -> String {
     let plaintext = generate_agent_token();
     let hash = hash_token(&plaintext);

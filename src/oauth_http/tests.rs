@@ -1,12 +1,11 @@
 use super::*;
 use crate::auth::{
-    generate_account_credential, generate_agent_token, generate_api_token,
-    generate_oauth_authorization_code, hash_token, shared_key_hash_of, token_prefix, AuthKind,
-    OAuth2Verifier, TokenVerifier,
+    generate_account_credential, generate_agent_token, generate_oauth_authorization_code,
+    hash_token, shared_key_hash_of, token_prefix, AuthKind, OAuth2Verifier, TokenVerifier,
 };
 use crate::models::{
     AccountCredentialRecord, ApiKeyRecord, OAuthAuthorizationCodeRecord, OAuthClientRecord,
-    UserRecord, TOKEN_KIND_AGENT, TOKEN_KIND_USER,
+    UserRecord, TOKEN_KIND_AGENT,
 };
 use crate::OAuth2Config;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -31,4 +30,5 @@ mod shared_key_bridge;
 mod support;
 mod token;
 
+use crate::test_support::seed_user_token_with_scopes;
 use support::*;

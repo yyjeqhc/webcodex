@@ -40,6 +40,7 @@ pub(crate) struct CloudflareStatus {
 }
 
 struct Attempt {
+    configuration_id: String,
     profile_id: String,
     revision: u64,
     runtime_revision: u64,
@@ -162,7 +163,7 @@ impl CloudflareControl {
             .map_err(|_| "ingress_store_unavailable")?;
         let oauth_configured = entry.as_ref().is_some_and(|entry| {
             self.db
-                .list_oauth_clients_for_public_ingress(&entry.entry_id)
+                .list_manual_oauth_clients_for_public_ingress(&entry.entry_id)
                 .is_ok_and(|clients| !clients.is_empty())
         });
         let observed_authorization = entry.as_ref().is_some_and(|entry| {
@@ -256,6 +257,7 @@ impl CloudflareControl {
             .get_public_ingress_entry_for_profile(id)
             .map_err(|_| "ingress_store_unavailable")?;
         let spec = PublicIngressEntrySpec {
+            oauth_dynamic_registration_enabled: profile.oauth_dynamic_registration_enabled,
             entry_id: prior.as_ref().map_or_else(
                 || uuid::Uuid::new_v4().to_string(),
                 |entry| entry.entry_id.clone(),
@@ -282,6 +284,7 @@ impl CloudflareControl {
             uuid::Uuid::new_v4().simple()
         );
         *guard = Some(Attempt {
+            configuration_id: profile.configuration_id,
             profile_id: id.to_owned(),
             revision,
             runtime_revision: profile.runtime_revision,
@@ -361,9 +364,19 @@ impl CloudflareControl {
                 attempt.profile_id == prepared.profile_id
                     && attempt.generation == prepared.process_generation
                     && attempt.lifecycle == "starting"
+                    && attempt.revision == revision
+                    && attempt.configuration_id == final_profile.configuration_id
             })
             .ok_or("cloudflare_stale_attempt")?;
         let mut entry = attempt.entry.clone().ok_or("cloudflare_stale_attempt")?;
+        if !self
+            .db
+            .get_user_by_username(&final_profile.owner_username)
+            .map_err(|_| "cloudflare_identity_unavailable")?
+            .is_some_and(|user| !user.is_disabled() && user.id == entry.owner_user_id)
+        {
+            return Err("cloudflare_owner_repair_required");
+        }
         if entry.origin != origin {
             entry = self
                 .db
@@ -949,7 +962,7 @@ impl CloudflareControl {
         }
         let clients = self
             .db
-            .list_oauth_clients_for_public_ingress(&entry.entry_id)
+            .list_manual_oauth_clients_for_public_ingress(&entry.entry_id)
             .map_err(|_| "ingress_store_unavailable")?;
         for client in &clients {
             if !replace {
@@ -1029,6 +1042,7 @@ impl Handler for PublicSnapshot {
         config.oauth2.enabled = true;
         config.oauth2.require_pkce = true;
         config.oauth2.issuer = Some(entry.origin.clone());
+        config.oauth2.dcr_owner_user_id = None;
         config.oauth2.shared_key_bridge_enabled = false;
         config.oauth2.project_share_grant_id = None;
         config.oauth2.project_share_session_id = None;
@@ -1128,10 +1142,46 @@ impl CloudflareOwner {
             db.set_public_ingress_admission(&entry.fence(), false)
                 .map_err(std::io::Error::other)?;
         }
-        let router = Router::new()
+        let router = Self::router(control.clone(), runtime, sessions, shutdown);
+        let server = Server::new(acceptor);
+        let handle = server.handle();
+        let listener_control = Arc::downgrade(&control);
+        let listener = OwnedTask(tokio::spawn(async move {
+            if server.try_serve(router).await.is_err() {
+                if let Some(control) = listener_control.upgrade() {
+                    let target = control.attempt.lock().ok().and_then(|guard| {
+                        guard
+                            .as_ref()
+                            .map(|attempt| (attempt.profile_id.clone(), attempt.generation))
+                    });
+                    if let Some((id, generation)) = target {
+                        let _ = control.stop(
+                            &id,
+                            &control.instance_id,
+                            generation,
+                            Some("cloudflare_listener_failed"),
+                        );
+                    }
+                }
+            }
+        }));
+        Ok(Some(Self {
+            control,
+            listener,
+            handle,
+        }))
+    }
+
+    fn router(
+        control: Arc<CloudflareControl>,
+        runtime: Arc<crate::tool_runtime::ToolRuntime>,
+        sessions: Arc<crate::oauth_http::AuthorizeSessionStore>,
+        shutdown: Arc<crate::server_shutdown::ShutdownCoordinator>,
+    ) -> Router {
+        Router::new()
             .hoop(crate::server_shutdown::DrainAdmission::new(shutdown))
             .hoop(affix_state::inject(control.clone()))
-            .hoop(affix_state::inject(db))
+            .hoop(affix_state::inject(control.db.clone()))
             .hoop(affix_state::inject(runtime))
             .hoop(affix_state::inject(sessions))
             .hoop(salvo::timeout::Timeout::new(Duration::from_secs(180)))
@@ -1172,6 +1222,12 @@ impl CloudflareOwner {
                     )
                     .push(
                         Router::with_path(crate::route_metadata::root_path(
+                            crate::route_metadata::RouteId::OAuthRegister,
+                        ))
+                        .post(crate::oauth_http::oauth_register),
+                    )
+                    .push(
+                        Router::with_path(crate::route_metadata::root_path(
                             crate::route_metadata::RouteId::OAuthAuthorize,
                         ))
                         .hoop(ClientIngressGate::ClientId)
@@ -1203,34 +1259,7 @@ impl CloudflareOwner {
                         ))
                         .post(crate::oauth_http::oauth_revoke),
                     ),
-            );
-        let server = Server::new(acceptor);
-        let handle = server.handle();
-        let listener_control = Arc::downgrade(&control);
-        let listener = OwnedTask(tokio::spawn(async move {
-            if server.try_serve(router).await.is_err() {
-                if let Some(control) = listener_control.upgrade() {
-                    let target = control.attempt.lock().ok().and_then(|guard| {
-                        guard
-                            .as_ref()
-                            .map(|attempt| (attempt.profile_id.clone(), attempt.generation))
-                    });
-                    if let Some((id, generation)) = target {
-                        let _ = control.stop(
-                            &id,
-                            &control.instance_id,
-                            generation,
-                            Some("cloudflare_listener_failed"),
-                        );
-                    }
-                }
-            }
-        }));
-        Ok(Some(Self {
-            control,
-            listener,
-            handle,
-        }))
+            )
     }
 
     pub(crate) fn control(&self) -> Arc<CloudflareControl> {

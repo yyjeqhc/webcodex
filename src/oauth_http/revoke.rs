@@ -38,23 +38,15 @@ pub(crate) async fn oauth_revoke(
     let token_hash = hash_token(plaintext_token);
     let now = chrono::Utc::now().timestamp();
 
-    let hint = form.token_type_hint.as_deref().unwrap_or("");
-
-    // Per RFC 7009: if hint is provided and recognized, try only that type.
-    // If hint is missing or unrecognized, try both.
-    match hint {
-        "access_token" => {
-            let _ = db.revoke_oauth_access_token_by_hash_for_client(&token_hash, client_id, now);
-        }
-        "refresh_token" => {
-            let _ = db.revoke_oauth_refresh_token_by_hash_for_client(&token_hash, client_id, now);
-        }
-        _ => {
-            // No hint or unrecognized hint — try both.
-            let _ = db.revoke_oauth_access_token_by_hash_for_client(&token_hash, client_id, now);
-            let _ = db.revoke_oauth_refresh_token_by_hash_for_client(&token_hash, client_id, now);
-        }
-    }
+    let fence = crate::public_ingress_auth::entry(depot).map(|entry| entry.fence());
+    db.revoke_oauth_token_for_client(
+        &token_hash,
+        client_id,
+        form.token_type_hint.as_deref(),
+        now,
+        fence.as_ref(),
+    )
+    .map_err(|_| OAuthTokenError::server_error("revocation unavailable"))?;
 
     // Always return 200 — idempotent, no token state disclosure.
     apply_oauth_no_store_headers(res);

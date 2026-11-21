@@ -471,7 +471,7 @@ refresh-token scope，不授予额外 WebCodex 权限。
 
 部分 OAuth 宿主会请求授权服务器元数据公布的全部权限，即使动态注册时仅获准了更窄的范围。对于动态注册的客户端，WebCodex 只会在已知权限中取请求权限与注册允许权限的交集，并在 Token 响应中返回实际授予的权限；未知权限、没有任何可授予 WebCodex 权限的请求仍会被拒绝。此处理不会扩大客户端或用户权限；手动配置的客户端继续执行严格权限匹配。
 
-注册请求上限为 16 KiB。Server 最多保留 128 个动态客户端。达到上限时，如果某个注册已满 24 小时或已被撤销，且相关授权记录均已清理，Server 可回收它。否则返回 HTTP 429。Desktop 托管的 Cloudflare 入口和临时 Project Share 使用各自的客户端配置流程。[Gemini 接入说明](MCP.zh-CN.md#gemini-网页端)
+注册请求上限为 16 KiB。Server 最多保留 128 个动态客户端。达到上限时，如果某个注册已满 24 小时或已被撤销，且相关授权记录均已清理，Server 可回收它。否则返回 HTTP 429。Desktop 托管的 Cloudflare 使用独立的 Profile 开关，默认关闭。临时 Project Share 使用自身的客户端配置流程。[Desktop Cloudflare 配置](MCP.zh-CN.md#desktop-cloudflare-配置)[Gemini 接入说明](MCP.zh-CN.md#gemini-网页端)
 
 ## MCP 接入
 

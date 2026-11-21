@@ -153,7 +153,11 @@ pub use self::memory::{
     validate_memory_summary, MAX_MEMORIES_PER_PROJECT, MEMORY_SCOPE_IDENTITY_ATTRIBUTED,
 };
 pub use self::model_reference::{ModelReferenceRecord, ModelReferenceStoreError};
-pub use self::oauth::{DynamicRegistrationOutcome, RotateResult};
+pub use self::oauth::registration::{
+    valid_dynamic_client_scopes, valid_s256_challenge, validate_redirect_uri,
+    DynamicRegistrationOutcome, MAX_CLIENT_REDIRECT_URIS,
+};
+pub use self::oauth::RotateResult;
 pub use self::peer_collaboration::{
     NewPeerMessage, PeerAttentionBatch, PeerMessageDelivery, PeerMessageDeliveryOutcome,
     PeerMessageRecord, PeerProjectionRollback, RecentProjectPeerRecord, MAX_PEER_DISCOVERY_LIMIT,

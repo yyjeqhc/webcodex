@@ -10,6 +10,7 @@ fn input(args: &[&str]) -> Result<Input, String> {
 }
 fn profile() -> CloudflareTunnelRuntimeProfile {
     CloudflareTunnelRuntimeProfile {
+        oauth_dynamic_registration_enabled: false,
         profile_id: "quick".into(),
         configuration_id: "00000000-0000-4000-8000-000000000001".into(),
         provider: TunnelProvider::CloudflareQuick,
@@ -49,6 +50,8 @@ fn cloudflare_configuration_is_explicit_and_credential_inputs_are_files() {
         "7",
         "--ingress-port",
         "34567",
+        "--oauth-dcr",
+        "true",
     ])
     .unwrap();
     assert_eq!(
@@ -56,6 +59,7 @@ fn cloudflare_configuration_is_explicit_and_credential_inputs_are_files() {
         Some(ServerTunnelProvider::CloudflareNamed)
     );
     assert_eq!(named.autostart, Some(false));
+    assert_eq!(named.oauth_dynamic_registration_enabled, Some(true));
     assert_eq!(named.expected_revision, Some(7));
     assert_eq!(named.ingress_port, Some(34567));
     for args in [
@@ -90,6 +94,8 @@ fn cloudflare_configuration_is_explicit_and_credential_inputs_are_files() {
             "token",
         ],
         vec!["configure-tunnel", "--ingress-port", "0"],
+        vec!["cloudflare-status", "quick", "--oauth-dcr", "true"],
+        vec!["configure-tunnel", "quick", "--oauth-dcr", "yes"],
         vec!["configure-tunnel", "--expected-revision", "0"],
         vec!["status", "--provider", "cloudflare_named"],
         vec!["cloudflare-oauth", "quick"],

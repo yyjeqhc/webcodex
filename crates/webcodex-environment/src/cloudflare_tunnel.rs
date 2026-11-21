@@ -21,6 +21,8 @@ pub enum TunnelProvider {
 
 /// Write-only credentials. None retains this exact profile's saved token.
 pub struct CloudflareTunnelProfileRequest<'a> {
+    /// Omit on edit to preserve the saved policy. New profiles default to disabled.
+    pub oauth_dynamic_registration_enabled: Option<bool>,
     pub profile_id: &'a str,
     pub name: Option<&'a str>,
     pub host_mode: TunnelHostMode,
@@ -33,6 +35,7 @@ pub struct CloudflareTunnelProfileRequest<'a> {
 
 /// Private launch input, deliberately neither serializable nor Debug-printable.
 pub struct CloudflareTunnelRuntimeProfile {
+    pub oauth_dynamic_registration_enabled: bool,
     pub profile_id: String,
     pub configuration_id: String,
     pub provider: TunnelProvider,
@@ -535,6 +538,7 @@ pub(crate) fn snapshot(
         )
     })?;
     Ok(TunnelProfileSnapshot {
+        oauth_dynamic_registration_enabled: profile.oauth_dynamic_registration_enabled,
         profile_id: profile.profile_id.clone(),
         configuration_id: profile.effective_configuration_id(),
         provider: profile.provider.clone(),
@@ -597,6 +601,7 @@ pub fn cloudflare_tunnel_profile(
         .effective_configuration_id()
         .expect("Cloudflare configuration identity");
     Ok(CloudflareTunnelRuntimeProfile {
+        oauth_dynamic_registration_enabled: profile.oauth_dynamic_registration_enabled,
         local_target: format!("http://127.0.0.1:{ingress_port}"),
         local_server_url,
         bootstrap_token,
@@ -634,6 +639,8 @@ pub fn cloudflare_tunnel_profiles(
 // SCM read only its dedicated work directory rather than the user's catalog.
 #[derive(Serialize, Deserialize)]
 struct RuntimeBinding {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    oauth_dynamic_registration_enabled: bool,
     profile_id: String,
     #[serde(default)]
     configuration_id: String,
@@ -661,6 +668,7 @@ pub fn materialize_cloudflare_tunnel_profiles(
     let mut ids = Vec::new();
     for profile in profiles {
         let binding = RuntimeBinding {
+            oauth_dynamic_registration_enabled: profile.oauth_dynamic_registration_enabled,
             profile_id: profile.profile_id.clone(),
             configuration_id: profile.configuration_id,
             provider: profile.provider,
@@ -845,6 +853,7 @@ pub fn load_cloudflare_tunnel_materialization(
         }
     };
     Ok(CloudflareTunnelRuntimeProfile {
+        oauth_dynamic_registration_enabled: binding.oauth_dynamic_registration_enabled,
         profile_id: binding.profile_id,
         configuration_id: binding.configuration_id,
         provider: binding.provider,
@@ -1039,11 +1048,19 @@ fn updated_record(
     name: String,
     token_changed: bool,
 ) -> SetupResultValue<(TunnelRecord, bool)> {
+    let oauth_dynamic_registration_enabled = request
+        .oauth_dynamic_registration_enabled
+        .unwrap_or_else(|| {
+            existing.is_some_and(|profile| profile.oauth_dynamic_registration_enabled)
+        });
     let runtime_changed = existing.is_none_or(|profile| {
-        profile.autostart != request.autostart || profile.provider != request.provider
+        profile.oauth_dynamic_registration_enabled != oauth_dynamic_registration_enabled
+            || profile.autostart != request.autostart
+            || profile.provider != request.provider
     }) || token_changed;
     let profile = match existing {
         Some(saved) => TunnelRecord {
+            oauth_dynamic_registration_enabled,
             configuration_id: saved.configuration_id.clone(),
             profile_id: saved.profile_id.clone(),
             provider: request.provider.clone(),
@@ -1064,6 +1081,7 @@ fn updated_record(
             started: saved.started,
         },
         None => TunnelRecord {
+            oauth_dynamic_registration_enabled,
             configuration_id: Some(uuid::Uuid::new_v4().to_string()),
             profile_id: request.profile_id.to_owned(),
             provider: request.provider.clone(),

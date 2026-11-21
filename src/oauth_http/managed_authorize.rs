@@ -744,7 +744,7 @@ pub(crate) async fn oauth_authorize_consent(
     }
 
     if client.dynamic_registration.is_some()
-        && crate::auth::require_mcp_request_authority(req, &config).is_err()
+        && crate::public_ingress_auth::require_authority(req, depot, &config).is_err()
     {
         oauth_authorize_direct_error(
             res,
@@ -1200,11 +1200,7 @@ fn issue_managed_authorization_code(
 
     if parsed.code_challenge.is_empty()
         || (client.dynamic_registration.is_some()
-            && (parsed.code_challenge.len() != 43
-                || !parsed
-                    .code_challenge
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))))
+            && !webcodex_store::valid_s256_challenge(&parsed.code_challenge))
     {
         redirect_with_oauth_error(
             res,
@@ -1241,9 +1237,7 @@ fn issue_managed_authorization_code(
         }
     };
 
-    if !config
-        .oauth2
-        .accepts_client_registration(client, ingress.is_some())
+    if !config.oauth2.accepts_client_registration(client, ingress)
         || !client.is_managed_user_owned()
         || (client.dynamic_registration.is_some()
             && client.owner_user_id.as_deref() != Some(user_id))

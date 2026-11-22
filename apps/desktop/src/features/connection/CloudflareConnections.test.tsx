@@ -43,12 +43,12 @@ describe("Cloudflare connection configuration",()=>{
     await waitFor(()=>expect(saved?.provider).toEqual({kind:"cloudflare_quick"}));
     expect(saved).toMatchObject({cloudflare_token:null,api_key:null,tunnel_id:"",oauth_dynamic_registration_enabled:false});
   });
-  it("routes legacy setup through Runtime repair and never creates a parallel Cloudflare store",()=>{
+  it("routes legacy setup through Connect Gemini and never creates a parallel Cloudflare store",()=>{
     const onSetup=vi.fn(),onClose=vi.fn();
     render(wrap(<ConnectionEditor profile={null} persistentLocal={false} onState={vi.fn()} onClose={onClose} onSetup={onSetup} />));
     selectOption(screen.getByRole("combobox", { name: "Connection provider" }), "cloudflare_quick");
     expect(screen.getByRole("button",{name:"Save and apply"})).toBeDisabled();
-    fireEvent.click(screen.getByRole("button",{name:"Open Runtime setup"}));
+    fireEvent.click(screen.getByRole("button",{name:"Connect Gemini"}));
     expect(onSetup).toHaveBeenCalledOnce();expect(onClose).toHaveBeenCalledOnce();expect(api.saveTunnelProfile).not.toHaveBeenCalled();
   });
   it("retains the exact saved Named token and revision with an empty replacement field",async()=>{

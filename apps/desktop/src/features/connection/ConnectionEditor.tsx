@@ -8,11 +8,12 @@ import { useProduct } from "../../i18n/product";
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 
-export function ConnectionEditor({ profile, geminiNamed = false, initialAutostart = true, environmentId, persistentLocal, onState, onClose, onSetup }: {
+export function ConnectionEditor({ profile, geminiNamed = false, chatgptPreset = false, initialAutostart = true, environmentId, persistentLocal, onState, onClose, onSetup }: {
   profile: TunnelConnection | null;
   persistentLocal: boolean;
   environmentId?: string | null;
   geminiNamed?: boolean;
+  chatgptPreset?: boolean;
   initialAutostart?: boolean;
   onState: (state: DesktopState) => void;
   onClose: () => void;
@@ -20,7 +21,7 @@ export function ConnectionEditor({ profile, geminiNamed = false, initialAutostar
 }) {
   const p = useProduct();
   const c = useConnectionsTools();
-  const [name, setName] = useState(profile?.name ?? (geminiNamed ? "Gemini" : ""));
+  const [name, setName] = useState(profile?.name ?? (geminiNamed ? "Gemini" : chatgptPreset ? "ChatGPT" : ""));
   const [tunnelId, setTunnelId] = useState(profile?.tunnel_id || "");
   const [apiKey, setApiKey] = useState("");
   const [providerKind, setProviderKind] = useState<TunnelProvider["kind"]>(profile?.provider?.kind ?? (geminiNamed ? "cloudflare_named" : "openai"));

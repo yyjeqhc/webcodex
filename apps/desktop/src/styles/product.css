@@ -751,3 +751,7 @@ input[type="checkbox"].desktop-switch:hover:not(:disabled):not(:checked) { backg
 .gemini-connection .setup-shell :is(h1, h2) { font-size: 1.125rem; }
 .gemini-connection .connection-details label { display: grid; gap: var(--ui-space-2); margin-block: var(--ui-space-3); }
 .gemini-connection select { width: fit-content; max-width: 100%; }
+.connection-coexistence { margin: 0 0 var(--ui-space-4); color: var(--ui-text-secondary); font-size: 13px; line-height: 1.6; }
+.chatgpt-connection { margin-top: var(--ui-space-5); padding-top: var(--ui-space-4); border-top: 1px solid var(--ui-border-subtle); }
+.chatgpt-connection .workspace-section-heading { align-items: flex-start; gap: var(--ui-space-3); }
+.chatgpt-connection .workspace-section-heading .field-help { margin: 4px 0 0; }

@@ -1,14 +1,15 @@
 use super::*;
 use sha2::{Digest, Sha256};
 use webcodex_environment::{
+    can_reset_migration, inspect_legacy_import, migrate_legacy_environment, migration_journal,
+    reset_failed_migration, LegacyImport, LegacyOwner, LegacyOwnerSnapshot, LegacyProcess,
+    LegacyTunnelProfile, ProjectRecord, TunnelHostMode,
+};
+use webcodex_environment::{
     canonical_server_url, current_account, default_environment_dir, EnvironmentMode,
     EnvironmentRecord, EnvironmentSetup, EnvironmentStore, NativeEnvironment, RuntimeBinaries,
     RuntimeObservation, Secret, SetupDiagnostic, SetupProgress, SetupRequest, SetupResult,
     SetupResultValue, SetupSecrets,
-};
-use webcodex_environment::{
-    migrate_legacy_environment, migration_journal, LegacyImport, LegacyOwner, LegacyOwnerSnapshot,
-    LegacyProcess, LegacyTunnelProfile, ProjectRecord,
 };
 use webcodex_environment::{service::Component, ServiceOperation};
 
@@ -445,7 +446,72 @@ fn require_idle_runner(inventory: &Value) -> DesktopResult<()> {
     ))
 }
 
+fn same_desktop_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn preview_setup_request(
+    config: &StoredDesktopConfig,
+    project: Option<PathBuf>,
+) -> DesktopResult<SetupRequest> {
+    let runtime = config
+        .runtime
+        .as_ref()
+        .ok_or_else(migration_target_conflict)?;
+    let parsed = url::Url::parse(&runtime.server_url).map_err(|_| migration_target_conflict())?;
+    let listen = format!(
+        "{}:{}",
+        parsed.host_str().ok_or_else(migration_target_conflict)?,
+        parsed.port().ok_or_else(migration_target_conflict)?
+    );
+    Ok(SetupRequest {
+        runner_display_name: None,
+        service_scope: webcodex_environment::service::ServiceScope::User,
+        mode: EnvironmentMode::Create { listen },
+        server_url: canonical_server_url(&runtime.server_url).map_err(desktop_error)?,
+        project,
+        runner: Some(
+            config
+                .topology
+                .as_ref()
+                .is_some_and(|t| matches!(t.runner, RunnerTopology::Local)),
+        ),
+        account: current_account().map_err(desktop_error)?,
+        binaries: RuntimeBinaries {
+            cli: PathBuf::from("webcodex"),
+            server: PathBuf::from("webcodex-server"),
+            runner: PathBuf::from("webcodex-runner"),
+        },
+    })
+}
+
 impl AppState {
+    pub async fn reset_local_migration(&self) -> DesktopResult<DesktopStateSnapshot> {
+        let (operation, cancellation, mut core, baseline) = self
+            .begin_operation(DesktopOperationKind::EnvironmentMigration, false)
+            .await?;
+        let result = async {
+            cancellation.check()?;
+            if persisted_environment(&core.config) {
+                return Err(migration_target_conflict());
+            }
+            let root = default_environment_dir().map_err(desktop_error)?;
+            if let Some(store) = EnvironmentStore::open_existing(root).map_err(desktop_error)? {
+                reset_failed_migration(&store).map_err(desktop_error)?;
+            }
+            core.get_state().await
+        }
+        .await;
+        self.finish_operation(operation, cancellation, core, baseline, result)
+            .await
+    }
+
     pub async fn inspect_local_migration(
         &self,
     ) -> DesktopResult<crate::models::LocalMigrationPreview> {
@@ -466,10 +532,48 @@ impl AppState {
         let root = default_environment_dir().map_err(desktop_error)?;
         if let Some(store) = EnvironmentStore::open_existing(root).map_err(desktop_error)? {
             if let Some(journal) = migration_journal(&store).map_err(desktop_error)? {
-                return Ok(crate::models::LocalMigrationPreview {
-                    fingerprint: core.check_migration_journal(&journal).await?,
-                    resuming: true,
-                });
+                let checked = core.check_migration_journal(&journal).await;
+                match checked {
+                    Ok(fingerprint) => {
+                        if journal.phase == webcodex_environment::MigrationPhase::Prepared {
+                            if let Err(err) =
+                                inspect_legacy_import(&journal.request, &journal.import)
+                                    .map_err(desktop_error)
+                            {
+                                if can_reset_migration(&store).unwrap_or(false) {
+                                    return Err(DesktopError::new(
+                                        "migration_reset_available",
+                                        err.message,
+                                        "Clear the unfinished migration record and check your setup again.",
+                                    ));
+                                }
+                                return Err(err);
+                            }
+                        }
+                        return Ok(crate::models::LocalMigrationPreview {
+                            fingerprint,
+                            resuming: true,
+                        });
+                    }
+                    Err(err) => {
+                        if matches!(
+                            err.code.as_str(),
+                            "migration_recovery_required"
+                                | "legacy_process_changed"
+                                | "legacy_owner_changed"
+                                | "migration_target_conflict"
+                                | "migration_conflict"
+                        ) && can_reset_migration(&store).unwrap_or(false)
+                        {
+                            return Err(DesktopError::new(
+                                "migration_reset_available",
+                                err.message,
+                                "Clear the unfinished migration record and check your setup again.",
+                            ));
+                        }
+                        return Err(err);
+                    }
+                }
             }
             if store.load_environment().map_err(desktop_error)?.is_some()
                 || store.load_journal().map_err(desktop_error)?.is_some()
@@ -485,6 +589,13 @@ impl AppState {
             .transpose()
             .map_err(|_| migration_target_conflict())?;
         let import = core.collect_legacy_import(true, project.as_deref()).await?;
+        let preview_request = preview_setup_request(&core.config, project)?;
+        inspect_legacy_import(&preview_request, &import).map_err(desktop_error)?;
+        for profile in &import.tunnel_profiles {
+            LegacyOwner::tunnel_credentials(core, &profile.profile_id)
+                .await
+                .map_err(desktop_error)?;
+        }
         Ok(crate::models::LocalMigrationPreview {
             fingerprint: core.import_fingerprint(&import).await?,
             resuming: false,
@@ -1072,15 +1183,12 @@ impl DesktopCore {
                     let start = process_is_active(
                         self.process_snapshot(ProcessKey::RegularTunnel(id)).await,
                     );
-                    if start != (profile.enabled && profile.autostart) {
-                        return Err(DesktopError::new("migration_tunnel_startup_conflict",
-                            "A Tunnel's current state differs from its saved startup policy",
-                            "Start the connections set to start automatically and stop manual-only connections, then check again."));
-                    }
                     profiles.push(LegacyTunnelProfile {
                         profile_id: profile.id,
                         name: Some(profile.name),
                         start,
+                        host_mode: None,
+                        autostart: Some(profile.enabled && profile.autostart),
                     });
                 }
                 profiles
@@ -1116,12 +1224,27 @@ impl DesktopCore {
             cancellation.check()?;
             return self.project_environment_result(store, result).await;
         }
-        let import = self
+        let mut import = self
             .collect_legacy_import(request.local_server(), request.project.as_deref())
             .await?;
         if let Some(expected) = expected_fingerprint {
             if self.import_fingerprint(&import).await? != expected {
                 return Err(migration_target_conflict());
+            }
+        }
+        let use_embedded_tunnels = !(cfg!(windows) && request.service_scope.is_system());
+        for profile in &mut import.tunnel_profiles {
+            if use_embedded_tunnels {
+                profile.host_mode = Some(TunnelHostMode::Embedded);
+            } else {
+                profile.host_mode = Some(TunnelHostMode::Standalone);
+                if profile.start != profile.effective_autostart() {
+                    return Err(DesktopError::new(
+                        "migration_tunnel_startup_conflict",
+                        "A Tunnel's current state differs from its saved startup policy",
+                        "Start the connections set to start automatically and stop manual-only connections, then check again.",
+                    ));
+                }
             }
         }
         let progress = self.setup_progress_sink();
@@ -1220,13 +1343,23 @@ impl DesktopCore {
             .project
             .as_ref()
             .map(|project| PathBuf::from(&project.path))
-            .filter(|path| record.projects.iter().any(|entry| entry.path == *path))
+            .filter(|path| {
+                record
+                    .projects
+                    .iter()
+                    .any(|entry| same_desktop_path(&entry.path, path))
+            })
             .or_else(|| {
                 record
                     .request
                     .project
                     .as_ref()
-                    .filter(|path| record.projects.iter().any(|entry| entry.path == **path))
+                    .filter(|path| {
+                        record
+                            .projects
+                            .iter()
+                            .any(|entry| same_desktop_path(&entry.path, path))
+                    })
                     .cloned()
             });
         let project = if let Some(path) = selected.as_ref() {
@@ -1236,7 +1369,10 @@ impl DesktopCore {
                 .await?;
             if let (Some(client), Some(entry)) = (
                 record.runner_client_id.as_deref(),
-                record.projects.iter().find(|entry| entry.path == *path),
+                record
+                    .projects
+                    .iter()
+                    .find(|entry| same_desktop_path(&entry.path, path)),
             ) {
                 project.runtime_project_id = Some(format!("agent:{client}:{}", entry.id));
             }
@@ -1313,7 +1449,7 @@ impl DesktopCore {
             self.config
                 .project
                 .as_ref()
-                .is_some_and(|project| Path::new(&project.path) == entry.path)
+                .is_some_and(|project| same_desktop_path(Path::new(&project.path), &entry.path))
                 && observation
                     .projects_visible
                     .iter()
@@ -1345,6 +1481,13 @@ impl DesktopCore {
 }
 
 impl LegacyOwner for DesktopCore {
+    fn tunnel_proxy(&self) -> Option<Secret> {
+        effective_tunnel_proxy(&self.config.tunnel_proxy)
+            .ok()
+            .and_then(|proxy| proxy.url)
+            .map(Secret::new)
+    }
+
     async fn tunnel_credentials(
         &mut self,
         profile_id: &str,

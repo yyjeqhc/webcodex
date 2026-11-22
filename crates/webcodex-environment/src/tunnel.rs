@@ -12,6 +12,14 @@ pub struct TunnelCredentials {
     pub tunnel_id: Secret,
     pub api_key: Secret,
 }
+
+#[derive(Debug, Default)]
+pub enum TunnelProxyUpdate {
+    #[default]
+    Preserve,
+    Direct,
+    Explicit(Secret),
+}
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TunnelHostMode {
@@ -273,7 +281,7 @@ pub(crate) fn validate_name(name: &str) -> SetupResultValue<String> {
     Ok(name.to_owned())
 }
 
-fn validate_credentials(credentials: &TunnelCredentials) -> SetupResultValue<()> {
+pub(crate) fn validate_credentials(credentials: &TunnelCredentials) -> SetupResultValue<()> {
     let id = credentials.tunnel_id.expose();
     let api = credentials.api_key.expose();
     if id.is_empty()
@@ -288,6 +296,34 @@ fn validate_credentials(credentials: &TunnelCredentials) -> SetupResultValue<()>
         return Err(diagnostic(
             "tunnel_credentials",
             "Tunnel credentials are invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_proxy(proxy: &Secret) -> SetupResultValue<()> {
+    let value = proxy.expose();
+    if value.is_empty()
+        || value.len() > 8192
+        || value.chars().any(char::is_control)
+        || value.chars().any(char::is_whitespace)
+    {
+        return Err(diagnostic(
+            "tunnel_proxy_invalid",
+            "Tunnel proxy URL is invalid",
+        ));
+    }
+    let url = url::Url::parse(value)
+        .map_err(|_| diagnostic("tunnel_proxy_invalid", "Tunnel proxy URL is invalid"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !matches!(url.path(), "" | "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(diagnostic(
+            "tunnel_proxy_invalid",
+            "Tunnel proxy URL is invalid",
         ));
     }
     Ok(())
@@ -505,6 +541,7 @@ enum TunnelBindingMutation {
     None,
     Create,
     RotateCredential,
+    UpdateProxy,
 }
 
 #[derive(Debug)]
@@ -513,11 +550,26 @@ struct TunnelBindingPlan {
     mutation: TunnelBindingMutation,
 }
 
+fn proxy_changes(existing: Option<&Secret>, update: &TunnelProxyUpdate) -> SetupResultValue<bool> {
+    match update {
+        TunnelProxyUpdate::Preserve => Ok(false),
+        TunnelProxyUpdate::Direct => Ok(existing.is_some()),
+        TunnelProxyUpdate::Explicit(proxy) => {
+            validate_proxy(proxy)?;
+            Ok(existing.map(Secret::expose) != Some(proxy.expose()))
+        }
+    }
+}
+
 fn plan_tunnel_binding(
     existing: Option<&TunnelProfileBinding>,
     candidate: Option<&TunnelCredentials>,
     expected_revision: Option<u64>,
+    proxy_update: &TunnelProxyUpdate,
 ) -> SetupResultValue<TunnelBindingPlan> {
+    if let TunnelProxyUpdate::Explicit(proxy) = proxy_update {
+        validate_proxy(proxy)?;
+    }
     match (existing, candidate) {
         (Some(saved), Some(candidate)) => {
             validate_credentials(candidate)?;
@@ -528,7 +580,11 @@ fn plan_tunnel_binding(
                 ));
             }
             let mutation = if saved.api_key.expose() == candidate.api_key.expose() {
-                TunnelBindingMutation::None
+                if proxy_changes(saved.proxy.as_ref(), proxy_update)? {
+                    TunnelBindingMutation::UpdateProxy
+                } else {
+                    TunnelBindingMutation::None
+                }
             } else if expected_revision.is_some() {
                 TunnelBindingMutation::RotateCredential
             } else {
@@ -545,7 +601,11 @@ fn plan_tunnel_binding(
         }
         (Some(saved), None) => Ok(TunnelBindingPlan {
             tunnel_id: saved.tunnel_id.expose().to_owned(),
-            mutation: TunnelBindingMutation::None,
+            mutation: if proxy_changes(saved.proxy.as_ref(), proxy_update)? {
+                TunnelBindingMutation::UpdateProxy
+            } else {
+                TunnelBindingMutation::None
+            },
         }),
         (None, Some(candidate)) => {
             validate_credentials(candidate)?;
@@ -566,6 +626,7 @@ fn write_profile_binding(
     profile_id: &str,
     credentials: &TunnelCredentials,
     previous: Option<&TunnelProfileBinding>,
+    proxy_update: &TunnelProxyUpdate,
 ) -> SetupResultValue<()> {
     validate_credentials(credentials)?;
     let directory = profile_directory(store, profile_id);
@@ -581,8 +642,15 @@ fn write_profile_binding(
         Some(saved) => Secret::new(saved.local_token.expose().to_owned()),
         None => bootstrap_token(store)?,
     };
-    let proxy_line = previous
-        .and_then(|saved| saved.proxy.as_ref())
+    let effective_proxy = match proxy_update {
+        TunnelProxyUpdate::Preserve => previous.and_then(|saved| saved.proxy.as_ref()),
+        TunnelProxyUpdate::Direct => None,
+        TunnelProxyUpdate::Explicit(proxy) => {
+            validate_proxy(proxy)?;
+            Some(proxy)
+        }
+    };
+    let proxy_line = effective_proxy
         .map(|proxy| format!("WEBCODEX_TUNNEL_PROXY={}\n", proxy.expose()))
         .unwrap_or_default();
     let content = Secret::new(format!(
@@ -619,9 +687,16 @@ fn restore_profile_binding(
         tunnel_id: Secret::new(previous.tunnel_id.expose().to_owned()),
         api_key: Secret::new(previous.api_key.expose().to_owned()),
     };
-    write_profile_binding(store, profile_id, &credentials, Some(previous))
+    write_profile_binding(
+        store,
+        profile_id,
+        &credentials,
+        Some(previous),
+        &TunnelProxyUpdate::Preserve,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn commit_profile_files(
     store: &EnvironmentStore,
     profile_id: &str,
@@ -629,14 +704,28 @@ fn commit_profile_files(
     mutation: TunnelBindingMutation,
     credentials: Option<&TunnelCredentials>,
     previous: Option<&TunnelProfileBinding>,
+    proxy_update: &TunnelProxyUpdate,
     commit_catalog: impl FnOnce(&[TunnelRecord]) -> SetupResultValue<()>,
 ) -> SetupResultValue<()> {
     if mutation != TunnelBindingMutation::None {
+        let retained;
+        let effective_credentials = match credentials {
+            Some(credentials) => credentials,
+            None => {
+                let saved = previous.ok_or_else(SetupDiagnostic::io)?;
+                retained = TunnelCredentials {
+                    tunnel_id: Secret::new(saved.tunnel_id.expose().to_owned()),
+                    api_key: Secret::new(saved.api_key.expose().to_owned()),
+                };
+                &retained
+            }
+        };
         write_profile_binding(
             store,
             profile_id,
-            credentials.expect("validated binding mutation"),
+            effective_credentials,
             previous,
+            proxy_update,
         )?;
     }
     let Err(error) = commit_catalog(profiles) else {
@@ -645,7 +734,7 @@ fn commit_profile_files(
     let restored = match mutation {
         TunnelBindingMutation::None => Ok(()),
         TunnelBindingMutation::Create => remove_created_profile_binding(store, profile_id),
-        TunnelBindingMutation::RotateCredential => previous
+        TunnelBindingMutation::RotateCredential | TunnelBindingMutation::UpdateProxy => previous
             .ok_or_else(SetupDiagnostic::io)
             .and_then(|binding| restore_profile_binding(store, profile_id, binding)),
     };
@@ -730,6 +819,91 @@ pub fn tunnel_profiles(store: &EnvironmentStore) -> SetupResultValue<Vec<TunnelR
         .map(|value| value.unwrap_or_default())
 }
 
+/// Persist a migrated Server-owned OpenAI Tunnel profile before the new Server
+/// starts so ChatGPT connections resume on first boot without an extra restart.
+pub(crate) fn import_embedded_tunnel_profile_under_lock(
+    store: &EnvironmentStore,
+    _lock: &crate::storage::EnvironmentLock,
+    profile_id: &str,
+    name: Option<&str>,
+    autostart: bool,
+    credentials: &TunnelCredentials,
+    proxy_update: &TunnelProxyUpdate,
+) -> SetupResultValue<()> {
+    validate_id(profile_id)?;
+    validate_credentials(credentials)?;
+    if let TunnelProxyUpdate::Explicit(proxy) = proxy_update {
+        validate_proxy(proxy)?;
+    }
+    let desired_name = match name {
+        Some(value) => validate_name(value)?,
+        None => profile_id.to_owned(),
+    };
+    let mut profiles = tunnel_profiles(store)?;
+    validate_catalog(&profiles)?;
+    ensure_unique_tunnel_identity(store, &profiles, profile_id, credentials.tunnel_id.expose())?;
+    ensure_server_tunnel_environment(store)?;
+    let directory = profile_directory(store, profile_id);
+    ensure_private_directory(&directory)?;
+    let health_path = directory.join("readiness.json");
+    if !health_path.exists() {
+        atomic_private_write(&health_path, b"{}")?;
+    }
+    let env_path = directory.join("webcodex.env");
+    let existing_binding = env_path
+        .exists()
+        .then(|| tunnel_profile_binding(store, profile_id))
+        .transpose()?;
+    if let Some(saved) = &existing_binding {
+        if saved.tunnel_id.expose() != credentials.tunnel_id.expose() {
+            return Err(diagnostic(
+                "tunnel_binding_conflict",
+                "This profile already owns another Tunnel identity",
+            ));
+        }
+    }
+    write_profile_binding(
+        store,
+        profile_id,
+        credentials,
+        existing_binding.as_ref(),
+        proxy_update,
+    )?;
+    if let Some(existing) = profiles
+        .iter_mut()
+        .find(|profile| profile.profile_id == profile_id)
+    {
+        if existing.provider != TunnelProvider::Openai
+            || existing.host_mode != TunnelHostMode::Embedded
+        {
+            return Err(diagnostic(
+                "tunnel_owner_conflict",
+                "An imported Tunnel profile conflicts with an existing record",
+            ));
+        }
+        existing.name = desired_name;
+        existing.autostart = autostart;
+        existing.installed = false;
+        existing.started = false;
+    } else {
+        profiles.push(TunnelRecord {
+            oauth_dynamic_registration_enabled: false,
+            configuration_id: None,
+            provider: TunnelProvider::Openai,
+            profile_id: profile_id.to_owned(),
+            name: desired_name,
+            host_mode: TunnelHostMode::Embedded,
+            autostart,
+            revision: 1,
+            runtime_revision: 1,
+            installed: false,
+            started: false,
+        });
+    }
+    validate_catalog(&profiles)?;
+    store.write_json("tunnel.json", &profiles)
+}
+
 impl NativeEnvironment {
     pub async fn configure_tunnel(
         &self,
@@ -764,6 +938,33 @@ impl NativeEnvironment {
         credentials: Option<&TunnelCredentials>,
         start_standalone: bool,
     ) -> SetupResultValue<TunnelConfigurationResult> {
+        self.configure_tunnel_profile_with_proxy(
+            store,
+            profile_id,
+            name,
+            host_mode,
+            autostart,
+            expected_revision,
+            credentials,
+            &TunnelProxyUpdate::Preserve,
+            start_standalone,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn configure_tunnel_profile_with_proxy(
+        &self,
+        store: &EnvironmentStore,
+        profile_id: &str,
+        name: Option<&str>,
+        host_mode: TunnelHostMode,
+        autostart: Option<bool>,
+        expected_revision: Option<u64>,
+        credentials: Option<&TunnelCredentials>,
+        proxy_update: &TunnelProxyUpdate,
+        start_standalone: bool,
+    ) -> SetupResultValue<TunnelConfigurationResult> {
         let lock = store.lock()?;
         crate::ensure_upgrade_idle_under_lock(store)?;
         self.configure_tunnel_profile_under_lock(
@@ -775,11 +976,68 @@ impl NativeEnvironment {
             autostart,
             expected_revision,
             credentials,
+            proxy_update,
             start_standalone,
         )
         .await
     }
 
+    /// Propagate Desktop's effective OpenAI Tunnel proxy setting across all saved
+    /// OpenAI profiles in this Environment. Returns true when any profile changed.
+    pub fn update_openai_tunnel_proxies(
+        &self,
+        store: &EnvironmentStore,
+        proxy: Option<&Secret>,
+    ) -> SetupResultValue<bool> {
+        let _lock = store.lock()?;
+        crate::ensure_upgrade_idle_under_lock(store)?;
+        let Some(environment) = store.load_environment()? else {
+            return Ok(false);
+        };
+        if !environment.request.local_server() {
+            return Ok(false);
+        }
+        let proxy_update = match proxy {
+            Some(proxy) => {
+                validate_proxy(proxy)?;
+                TunnelProxyUpdate::Explicit(Secret::new(proxy.expose().to_owned()))
+            }
+            None => TunnelProxyUpdate::Direct,
+        };
+        let mut profiles = tunnel_profiles(store)?;
+        validate_catalog(&profiles)?;
+        let mut changed = false;
+        for profile in &mut profiles {
+            if profile.provider != TunnelProvider::Openai {
+                continue;
+            }
+            let binding = tunnel_profile_binding(store, &profile.profile_id)?;
+            if !proxy_changes(binding.proxy.as_ref(), &proxy_update)? {
+                continue;
+            }
+            let credentials = TunnelCredentials {
+                tunnel_id: Secret::new(binding.tunnel_id.expose().to_owned()),
+                api_key: Secret::new(binding.api_key.expose().to_owned()),
+            };
+            write_profile_binding(
+                store,
+                &profile.profile_id,
+                &credentials,
+                Some(&binding),
+                &proxy_update,
+            )?;
+            let previous_runtime_revision = profile.effective_runtime_revision();
+            profile.revision = next_revision(profile.revision)?;
+            profile.runtime_revision = next_revision(previous_runtime_revision)?;
+            changed = true;
+        }
+        if changed {
+            store.write_json("tunnel.json", &profiles)?;
+        }
+        Ok(changed)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn configure_tunnel_under_lock(
         &self,
         store: &EnvironmentStore,
@@ -787,6 +1045,7 @@ impl NativeEnvironment {
         profile_id: &str,
         name: Option<&str>,
         credentials: Option<&TunnelCredentials>,
+        proxy_update: &TunnelProxyUpdate,
         start: bool,
     ) -> SetupResultValue<service::ServiceStatus> {
         Ok(self
@@ -799,6 +1058,7 @@ impl NativeEnvironment {
                 None,
                 None,
                 credentials,
+                proxy_update,
                 start,
             )
             .await?
@@ -816,6 +1076,7 @@ impl NativeEnvironment {
         autostart: Option<bool>,
         expected_revision: Option<u64>,
         credentials: Option<&TunnelCredentials>,
+        proxy_update: &TunnelProxyUpdate,
         start_standalone: bool,
     ) -> SetupResultValue<TunnelConfigurationResult> {
         validate_id(profile_id)?;
@@ -931,9 +1192,16 @@ impl NativeEnvironment {
             .exists()
             .then(|| tunnel_profile_binding(store, profile_id))
             .transpose()?;
-        let binding_plan =
-            plan_tunnel_binding(existing_binding.as_ref(), credentials, expected_revision)?;
-        let credential_changed = binding_plan.mutation == TunnelBindingMutation::RotateCredential;
+        let binding_plan = plan_tunnel_binding(
+            existing_binding.as_ref(),
+            credentials,
+            expected_revision,
+            proxy_update,
+        )?;
+        let credential_changed = matches!(
+            binding_plan.mutation,
+            TunnelBindingMutation::RotateCredential | TunnelBindingMutation::UpdateProxy
+        );
         ensure_unique_tunnel_identity(store, &profiles, profile_id, &binding_plan.tunnel_id)?;
 
         let desired_name = match name {
@@ -1006,6 +1274,7 @@ impl NativeEnvironment {
             binding_plan.mutation,
             credentials,
             existing_binding.as_ref(),
+            proxy_update,
             |profiles| store.write_json("tunnel.json", &profiles),
         )?;
 
@@ -1955,32 +2224,60 @@ mod tests {
         let saved = binding("tunnel_work", "old-key");
         let same = credentials("tunnel_work", "old-key");
         assert_eq!(
-            plan_tunnel_binding(Some(&saved), Some(&same), None)
-                .unwrap()
-                .mutation,
+            plan_tunnel_binding(
+                Some(&saved),
+                Some(&same),
+                None,
+                &TunnelProxyUpdate::Preserve
+            )
+            .unwrap()
+            .mutation,
             TunnelBindingMutation::None
         );
 
         let rotated = credentials("tunnel_work", "new-key");
         assert_eq!(
-            plan_tunnel_binding(Some(&saved), Some(&rotated), Some(7))
-                .unwrap()
-                .mutation,
+            plan_tunnel_binding(
+                Some(&saved),
+                Some(&rotated),
+                Some(7),
+                &TunnelProxyUpdate::Preserve,
+            )
+            .unwrap()
+            .mutation,
             TunnelBindingMutation::RotateCredential
         );
         assert_eq!(
-            plan_tunnel_binding(Some(&saved), Some(&rotated), None)
-                .unwrap_err()
-                .code,
+            plan_tunnel_binding(
+                Some(&saved),
+                Some(&rotated),
+                None,
+                &TunnelProxyUpdate::Preserve,
+            )
+            .unwrap_err()
+            .code,
             "tunnel_credential_rotation_requires_revision"
         );
 
         let foreign = credentials("tunnel_other", "new-key");
         assert_eq!(
-            plan_tunnel_binding(Some(&saved), Some(&foreign), Some(7))
-                .unwrap_err()
-                .code,
+            plan_tunnel_binding(
+                Some(&saved),
+                Some(&foreign),
+                Some(7),
+                &TunnelProxyUpdate::Preserve,
+            )
+            .unwrap_err()
+            .code,
             "tunnel_binding_conflict"
+        );
+
+        let proxy_update = TunnelProxyUpdate::Explicit(Secret::new("http://127.0.0.1:7890".into()));
+        assert_eq!(
+            plan_tunnel_binding(Some(&saved), None, None, &proxy_update)
+                .unwrap()
+                .mutation,
+            TunnelBindingMutation::UpdateProxy
         );
     }
 
@@ -2004,7 +2301,14 @@ mod tests {
         .unwrap();
         let previous = tunnel_profile_binding(&store, "work").unwrap();
         let rotated = credentials("tunnel_work", "new-private-key");
-        write_profile_binding(&store, "work", &rotated, Some(&previous)).unwrap();
+        write_profile_binding(
+            &store,
+            "work",
+            &rotated,
+            Some(&previous),
+            &TunnelProxyUpdate::Preserve,
+        )
+        .unwrap();
 
         let saved = tunnel_profile_binding(&store, "work").unwrap();
         assert_eq!(saved.tunnel_id.expose(), "tunnel_work");
@@ -2049,6 +2353,7 @@ mod tests {
             TunnelBindingMutation::RotateCredential,
             Some(&rotated),
             Some(&previous),
+            &TunnelProxyUpdate::Preserve,
             |_| {
                 Err(diagnostic(
                     "catalog_write_failed",
@@ -2086,6 +2391,7 @@ mod tests {
             TunnelBindingMutation::Create,
             Some(&fresh),
             None,
+            &TunnelProxyUpdate::Direct,
             |_| {
                 Err(diagnostic(
                     "catalog_write_failed",
@@ -2103,13 +2409,87 @@ mod tests {
     #[test]
     fn first_binding_requires_credentials_and_records_creation() {
         assert_eq!(
-            plan_tunnel_binding(None, None, None).unwrap_err().code,
+            plan_tunnel_binding(None, None, None, &TunnelProxyUpdate::Preserve)
+                .unwrap_err()
+                .code,
             "tunnel_credentials"
         );
         let candidate = credentials("tunnel_work", "first-key");
-        let plan = plan_tunnel_binding(None, Some(&candidate), None).unwrap();
+        let plan = plan_tunnel_binding(None, Some(&candidate), None, &TunnelProxyUpdate::Preserve)
+            .unwrap();
         assert_eq!(plan.tunnel_id, "tunnel_work");
         assert_eq!(plan.mutation, TunnelBindingMutation::Create);
+    }
+
+    #[test]
+    fn embedded_migration_and_proxy_updates_persist_explicit_and_direct_modes() {
+        let temp = crate::test_tempdir().unwrap();
+        let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+        let server_dir = store.root().join("server");
+        ensure_private_directory(&server_dir).unwrap();
+        atomic_private_write(
+            &server_dir.join("webcodex.env"),
+            b"WEBCODEX_ADDR=127.0.0.1:62645\nWEBCODEX_TOKEN=bootstrap-token\n",
+        )
+        .unwrap();
+        let record = EnvironmentRecord {
+            schema_version: ENVIRONMENT_SCHEMA,
+            environment_id: "env-proxy".into(),
+            request: SetupRequest {
+                runner_display_name: None,
+                service_scope: service::ServiceScope::User,
+                mode: EnvironmentMode::Create {
+                    listen: "127.0.0.1:62645".into(),
+                },
+                server_url: "http://127.0.0.1:62645".into(),
+                project: None,
+                runner: Some(true),
+                account: LocalAccount {
+                    name: "owner".into(),
+                    identity: "1000".into(),
+                    home: temp.path().to_path_buf(),
+                },
+                binaries: RuntimeBinaries {
+                    cli: temp.path().join("webcodex"),
+                    server: temp.path().join("webcodex-server"),
+                    runner: temp.path().join("webcodex-runner"),
+                },
+            },
+            username: Some("owner".into()),
+            runner_client_id: Some("runner".into()),
+            projects: vec![],
+            configured: true,
+        };
+        store.save_environment(&record).unwrap();
+        let lock = store.lock().unwrap();
+        let creds = credentials("tunnel_chatgpt", "secret-key");
+        import_embedded_tunnel_profile_under_lock(
+            &store,
+            &lock,
+            "chatgpt",
+            Some("ChatGPT"),
+            true,
+            &creds,
+            &TunnelProxyUpdate::Explicit(Secret::new("http://127.0.0.1:7890".into())),
+        )
+        .unwrap();
+        drop(lock);
+        let saved = tunnel_profile_binding(&store, "chatgpt").unwrap();
+        assert_eq!(
+            saved.proxy.as_ref().map(Secret::expose),
+            Some("http://127.0.0.1:7890")
+        );
+        let server_env = read_secret(&server_dir.join("webcodex.env")).unwrap();
+        assert!(server_env.expose().contains("WEBCODEX_TUNNEL_ENVIRONMENT="));
+
+        let native = NativeEnvironment::new().unwrap();
+        assert!(native.update_openai_tunnel_proxies(&store, None).unwrap());
+        let direct = tunnel_profile_binding(&store, "chatgpt").unwrap();
+        assert!(direct.proxy.is_none());
+        let profiles = tunnel_profiles(&store).unwrap();
+        assert_eq!(profiles[0].revision, 2);
+        assert_eq!(profiles[0].runtime_revision, 2);
+        assert!(!native.update_openai_tunnel_proxies(&store, None).unwrap());
     }
 
     #[test]

@@ -57,6 +57,13 @@ pub(crate) async fn prepare_cloudflared() -> Result<PathBuf, ProductError> {
     super::cloudflared_service::installed_cloudflared().await
 }
 
+/// Interactive user-initiated connection start may download the pinned,
+/// SHA256-verified managed cloudflared binary when no local binary is present.
+/// Unattended boot autostart keeps using `prepare_cloudflared()`.
+pub(crate) async fn prepare_cloudflared_interactive() -> Result<PathBuf, ProductError> {
+    super::cloudflared_service::resolve_cloudflared().await
+}
+
 pub(crate) fn valid_quick_origin(origin: &str) -> bool {
     super::share_service::parse_quick_tunnel_url(origin).as_deref() == Some(origin)
 }

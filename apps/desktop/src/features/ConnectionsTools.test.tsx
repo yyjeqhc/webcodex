@@ -11,7 +11,7 @@ import { connectionFixture, connectionSnapshot } from "../test/connections-fixtu
 import { ConnectionPanel } from "./connection/ConnectionPanel";
 import { McpProvidersPanel } from "./extensions/McpProvidersPanel";
 
-const api = vi.hoisted(() => ({ openDiagnosticResource: vi.fn(), getState: vi.fn(), inspectLocalMigration: vi.fn(), configureEnvironment: vi.fn(), saveTunnelProfile: vi.fn(), tunnelProfileAction: vi.fn(), cloudflareConnection: vi.fn(), environmentServiceAction: vi.fn(), saveMcpProvider: vi.fn(), removeMcpProvider: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), stopQuickShare: vi.fn() }));
+const api = vi.hoisted(() => ({ openDiagnosticResource: vi.fn(), getState: vi.fn(), inspectLocalMigration: vi.fn(), resetLocalMigration: vi.fn(), configureEnvironment: vi.fn(), saveTunnelProfile: vi.fn(), tunnelProfileAction: vi.fn(), cloudflareConnection: vi.fn(), environmentServiceAction: vi.fn(), saveMcpProvider: vi.fn(), removeMcpProvider: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), stopQuickShare: vi.fn() }));
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn() }));
 const onSettings = vi.fn();
@@ -147,6 +147,59 @@ describe("Connections + Tools control surfaces", () => {
     expect(screen.getByRole("button", {name: "Retry"})).toBeEnabled();
     expect(api.configureEnvironment).not.toHaveBeenCalled();
     expect(api.tunnelProfileAction).not.toHaveBeenCalled();
+  });
+
+  it("shows localized recovery instead of raw English fallback and can clear a clean unfinished migration", async () => {
+    api.inspectLocalMigration
+      .mockRejectedValueOnce({
+        code: "legacy_project_registry",
+        message: "Registry path mismatch",
+        next_action: "Inspect both owners and resume the saved migration only after their state is known",
+      })
+      .mockRejectedValueOnce({
+        code: "migration_reset_available",
+        message: "An unrecognized legacy process generation is active",
+        next_action: "Clear the unfinished migration record and check your setup again.",
+      })
+      .mockResolvedValueOnce({ fingerprint: "fresh-after-reset", resuming: false });
+    api.resetLocalMigration.mockResolvedValue(state());
+    render(<Harness mode="connections" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Check existing setup" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.querySelector("p")?.textContent).toMatch(/project folder still exists/i);
+    expect(alert.querySelector("p")?.textContent).not.toContain("Inspect both owners");
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    const resetButton = await screen.findByRole("button", { name: "Clear unfinished record and recheck" });
+    fireEvent.click(resetButton);
+    expect(await screen.findByRole("button", { name: "Save and switch services" })).toBeEnabled();
+    expect(api.resetLocalMigration).toHaveBeenCalledExactlyOnceWith();
+    expect(api.inspectLocalMigration).toHaveBeenCalledTimes(3);
+  });
+
+  it("presents Connect ChatGPT alongside Connect Gemini with prefilled ChatGPT defaults", async () => {
+    const initial = { ...state(), persistent_environment: "local", connections: connectionSnapshot() };
+    const captured: TunnelProfileRequest[] = [];
+    api.saveTunnelProfile.mockImplementation(async request => {
+      captured.push(structuredClone(request));
+      return initial;
+    });
+    render(<Harness mode="connections" initial={initial} />);
+    expect(screen.getByText(/ChatGPT and Gemini can stay connected/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect Gemini" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Connect ChatGPT" }));
+    expect(screen.getByLabelText("Name")).toHaveValue("ChatGPT");
+    fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_chatgpt_1" } });
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "chatgpt-write-only-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
+    await waitFor(() => expect(captured).toHaveLength(1));
+    expect(captured[0]).toMatchObject({
+      name: "ChatGPT",
+      tunnel_id: "tunnel_chatgpt_1",
+      host_mode: "embedded",
+      autostart: true,
+    });
   });
 
   it("can cancel local setup or finish with the sign-in defaults and no project", async () => {

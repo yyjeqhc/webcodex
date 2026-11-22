@@ -426,6 +426,16 @@ impl DesktopCore {
         };
         self.config.tunnel_proxy = TunnelProxyConfig { mode, custom_url };
         self.save_config().await?;
+        if self.config.persistent_environment.is_some() {
+            let proxy = effective_tunnel_proxy(&self.config.tunnel_proxy)?;
+            let store = environment::store()?;
+            let native = webcodex_environment::NativeEnvironment::new()
+                .map_err(environment::desktop_error)?;
+            let secret_proxy = proxy.url.map(webcodex_environment::Secret::new);
+            let _ = native
+                .update_openai_tunnel_proxies(&store, secret_proxy.as_ref())
+                .map_err(environment::desktop_error)?;
+        }
         self.get_state().await
     }
 

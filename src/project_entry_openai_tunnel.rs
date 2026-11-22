@@ -209,10 +209,16 @@ impl Drop for OpenAiTunnel {
 }
 
 pub(super) async fn prepare_openai_tunnel() -> Result<OpenAiTunnelPrerequisites, ProductError> {
+    let proxy = match std::env::var("WEBCODEX_TUNNEL_PROXY") {
+        Ok(value) if !value.trim().is_empty() => {
+            ControlPlaneProxy::Explicit(value.trim().to_owned())
+        }
+        _ => ControlPlaneProxy::System,
+    };
     OpenAiTunnelPrerequisites::bound(
         std::env::var("CONTROL_PLANE_TUNNEL_ID").map_err(|_| missing_configuration())?,
         std::env::var("CONTROL_PLANE_API_KEY").map_err(|_| missing_configuration())?,
-        ControlPlaneProxy::System,
+        proxy,
     )
 }
 

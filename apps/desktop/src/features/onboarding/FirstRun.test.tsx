@@ -6,7 +6,7 @@ import { DesktopMantineProvider } from "../../components/DesktopMantineProvider"
 import type { DesktopState } from "../../models/topology";
 import { FirstRun } from "./FirstRun";
 
-const api = vi.hoisted(() => ({ configureEnvironment: vi.fn(), inspectLocalMigration: vi.fn(), inspectProject: vi.fn(), startQuickShare: vi.fn() }));
+const api = vi.hoisted(() => ({ configureEnvironment: vi.fn(), inspectLocalMigration: vi.fn(), resetLocalMigration: vi.fn(), inspectProject: vi.fn(), startQuickShare: vi.fn() }));
 const picker = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => picker);

@@ -76,9 +76,9 @@ Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runn
 ChatGPT 在不同工作目录之间切换时，不需要先停止 Runtime 或 OpenAI Secure Tunnel。Runtime 会根据当前 Runner policy 解析兼容路径，并按需注册 Project。
 ## 连接 Gemini 网页版
 
-打开**连接 → 连接 Gemini**。如果检测到本机已有 WebCodex，点击**检查并继续**。Desktop 会核对进程归属、项目清单和运行中的作业。阅读服务切换的影响后，再点击**确认保存并切换服务**。中断的迁移沿用原恢复记录。新电脑选择**准备这台电脑 → 开始配置**。两种流程完成后都会回到 Gemini。如果本机连接的是远程 Server，请在运行该 Server 的电脑上配置 Gemini，或向管理员索取 MCP 地址。
+打开**连接 → 连接 Gemini**。ChatGPT（OpenAI Secure Tunnel）与 Gemini（Cloudflare + OAuth）可以同时连接到同一个本机 WebCodex Server，互不冲突。如果检测到本机已有 WebCodex，点击**检查并继续**。Desktop 会先核对进程归属、项目清单、原有配置和运行中的作业，再记录迁移。阅读服务切换的影响后，再点击**确认保存并切换服务**。中断的迁移沿用原恢复记录；若上次失败的迁移未留下已安装的后台服务，可选择**清理未完成记录并重新检查**。新电脑选择**准备这台电脑 → 开始配置**。两种流程完成后都会回到 Gemini。如果本机连接的是远程 Server，请在运行该 Server 的电脑上配置 Gemini，或向管理员索取 MCP 地址。
 
-1. 点击**连接 Gemini**使用临时地址。首次会保存一个随 Server 运行的临时连接，并允许 Gemini 自动注册。如果已经保存了 Cloudflare 连接，请选择要使用的连接，按提示为该连接启用应用注册。若提示 **重启 Server**，请在可以中断当前工作的时间点击，等待 **MCP 入口已就绪**。
+1. 点击**连接 Gemini**使用临时地址。首次会保存一个随 Server 运行的临时连接，并允许 Gemini 自动注册。如果已经保存了 Cloudflare 连接，请选择要使用的连接，按提示为该连接启用应用注册。若提示 **重启 Server**，请在可以中断当前工作的时间点击，等待 **MCP 入口已就绪**。若本机尚未安装 `cloudflared`，点击**连接 Gemini**会自动下载并校验固定版本的二进制文件。
 2. 点击 **复制 MCP 地址** 和 **打开 Gemini**。在 Gemini 网页的 **Settings → Connected Apps → Custom apps** 中添加地址并点击 **Next**。部分界面将 Connected Apps 放在 Personal Intelligence 下。浏览器跳转到 WebCodex 后，核对地址，在该页使用连接所有者的用户 PAT 登录，查看请求的权限并授权。Gemini 的表单只需 MCP 地址。
 3. 在 Gemini 对话中输入 `@` 并选择刚添加的应用，试着说“查看 WebCodex Runtime 状态”。Desktop 会分别显示已观察到的 OAuth 使用和本次连接中成功的 MCP 工具调用。之后直接在对话中使用工具；Gemini 可能要求确认写入操作。[Google 的自定义应用指南](https://support.google.com/gemini/answer/17209137)
 
@@ -86,7 +86,7 @@ ChatGPT 在不同工作目录之间切换时，不需要先停止 Runtime 或 Op
 
 | 遇到的情况 | 如何继续 |
 | --- | --- |
-| 所有者或 Runner 不可用 | 打开 Runtime 设置，检查本机 Server 和同一用户的 Runner。若提示缺少 cloudflared，请为服务账户安装 2025.4.0 或更高版本，再启动连接。 |
+| 所有者或 Runner 不可用 | 打开 Runtime 设置，检查本机 Server 和同一用户的 Runner。若提示缺少 `cloudflared`，点击**连接 Gemini**可自动下载校验版本，离线环境也可手动安装 2025.4.0 或更高版本后再启动连接。 |
 | 暂时无法读取 Gemini 登录所需的信息 | 保持连接运行，WebCodex 会自动重新检查公网登录元数据。 |
 | 地址尚未出现或固定地址无法连接 | 等待启动及公网验证完成。Named 请核对 Cloudflare 主机名路由和本机转发目标，修正后重新连接。复制失败时，可手动选中卡片中的地址复制。 |
 | 看不到 Custom apps | Google 目前要求用户位于美国、年满 18 岁、使用个人账号、选择英语并开启 Gemini 历史记录。工作或学校账号暂不支持此入口。可用性以当前账号和 Google 帮助为准。 |

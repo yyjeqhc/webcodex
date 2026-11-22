@@ -1,5 +1,7 @@
 //! The Server owns public admission even when a separate service owns cloudflared.
-use crate::project_entry::cloudflare_transport::{prepare_cloudflared, CloudflareTransport};
+use crate::project_entry::cloudflare_transport::{
+    prepare_cloudflared, prepare_cloudflared_interactive, CloudflareTransport,
+};
 use crate::public_ingress_auth::{ClientIngressGate, PublicIngressRequest};
 use salvo::conn::{Listener, TcpListener};
 use salvo::prelude::*;
@@ -554,7 +556,12 @@ impl CloudflareControl {
         Ok(())
     }
 
-    fn start(self: &Arc<Self>, id: &str, revision: u64) -> Result<(), &'static str> {
+    fn start(
+        self: &Arc<Self>,
+        id: &str,
+        revision: u64,
+        allow_install: bool,
+    ) -> Result<(), &'static str> {
         let prepared = self.prepare(id, revision, false)?;
         let profile = match self.profile(id) {
             Ok(profile) => profile,
@@ -575,9 +582,12 @@ impl CloudflareControl {
                 let control = weak.upgrade().ok_or("cloudflare_stopped")?;
                 control.verify_owner(&profile).await?;
                 drop(control);
-                let binary = prepare_cloudflared()
-                    .await
-                    .map_err(|_| "cloudflare_binary_unavailable")?;
+                let binary = if allow_install {
+                    prepare_cloudflared_interactive().await
+                } else {
+                    prepare_cloudflared().await
+                }
+                .map_err(|_| "cloudflare_binary_unavailable")?;
                 let deadline = Instant::now() + START_TIMEOUT;
                 let (origin, mut transport) = match &profile.provider {
                     TunnelProvider::CloudflareNamed { public_origin, .. } => (
@@ -959,7 +969,7 @@ pub(crate) async fn cloudflare_control_handler(
                 if server_instance_id != control.instance_id {
                     return Err("cloudflare_stale_attempt");
                 }
-                control.start(&id, expected_revision)?;
+                control.start(&id, expected_revision, true)?;
             }
             ControlRequest::Prepare {
                 expected_revision,
@@ -1477,7 +1487,9 @@ impl CloudflareOwner {
             for profile in profiles.into_iter().filter(|profile| {
                 profile.autostart && profile.host_mode == TunnelHostMode::Embedded
             }) {
-                let _ = self.control.start(&profile.profile_id, profile.revision);
+                let _ = self
+                    .control
+                    .start(&profile.profile_id, profile.revision, false);
             }
         }
         loop {

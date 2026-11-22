@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   configureLocal: vi.fn(),
   configureEnvironment: vi.fn(),
   inspectLocalMigration: vi.fn(),
+  resetLocalMigration: vi.fn(),
   activateLocalProject: vi.fn(),
   configureRemote: vi.fn(),
   startQuickShare: vi.fn(),

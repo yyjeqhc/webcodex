@@ -1360,7 +1360,11 @@ impl EnvironmentBackend for NativeEnvironment {
                                 "Saved project registration is invalid",
                             )
                         })?;
-                    if value.get("path").and_then(toml::Value::as_str) != project.to_str() {
+                    if !value
+                        .get("path")
+                        .and_then(toml::Value::as_str)
+                        .is_some_and(|recorded| same_project_path(recorded, project))
+                    {
                         return Err(diagnostic(
                             "project_conflict",
                             "The project identifier is registered to another directory",
@@ -1881,6 +1885,23 @@ fn read_enrollment(
     Ok(result)
 }
 
+pub(crate) fn same_project_path(recorded: &str, expected: &Path) -> bool {
+    let candidate = Path::new(recorded);
+    if !candidate.is_absolute() {
+        return false;
+    }
+    if candidate == expected {
+        return true;
+    }
+    let Ok(recorded_canonical) = std::fs::canonicalize(candidate) else {
+        return false;
+    };
+    let Ok(expected_canonical) = std::fs::canonicalize(expected) else {
+        return false;
+    };
+    recorded_canonical == expected_canonical
+}
+
 fn runner_config_matches(
     store: &EnvironmentStore,
     record: &mut EnvironmentRecord,
@@ -1895,8 +1916,13 @@ fn runner_config_matches(
             "Existing Runner configuration is invalid",
         )
     })?;
-    if value.get("server_url").and_then(toml::Value::as_str)
-        != Some(record.request.server_url.as_str())
+    let recorded_server = value
+        .get("server_url")
+        .and_then(toml::Value::as_str)
+        .and_then(|url| canonical_server_url(url).ok());
+    let expected_server = canonical_server_url(&record.request.server_url).ok();
+    if recorded_server.is_none()
+        || recorded_server != expected_server
         || value.get("client_id").and_then(toml::Value::as_str)
             != record.runner_client_id.as_deref()
     {

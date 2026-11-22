@@ -209,7 +209,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete, 
   </section>;
 
   if (mode === "create" && savedMode === "create" && state.topology?.experience === "full" && !state.persistent_environment) {
-    return <><LocalMigrationSetup key={desktopIdentity(state)} state={state} onDiagnostics={onDiagnostics}
+    return <><LocalMigrationSetup key={desktopIdentity(state)} state={state} onDiagnostics={onDiagnostics} onReset={onState}
       onCancel={onCancelLocal ?? (() => chooseMode(null))} onComplete={next => { onState(next); onComplete?.(next); }} />
       {runner && <PowerShellInstallGuidance state={state} onState={onState} />}
     </>;

@@ -630,7 +630,7 @@ describe("Connections + Tools control surfaces", () => {
   });
 
   it.each([
-    ["tunnel_restart_uncertain", "tunnel_recovery", "Restart is blocked", false],
+    ["tunnel_restart_uncertain", "tunnel_recovery", "Previous Tunnel work is unconfirmed", false],
     ["tunnel_control_plane_unreachable", "tunnel_control_plane", "Check internet", true],
   ] as const)("shows specific recovery for %s instead of blaming credentials", (reason_code, failure_stage, message, proxyHint) => {
     const initial = state();

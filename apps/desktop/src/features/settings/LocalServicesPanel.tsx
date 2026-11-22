@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { desktopApi } from "../../lib/desktop-api";
 import { desktopIdentity } from "../../lib/desktop-observation";
-import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import { useShellText } from "../../i18n/runtime-shell";
-import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
+import { normalizeDesktopError } from "../../i18n/presentation";
 import type { DesktopError, DesktopState } from "../../models/topology";
 import { statusKey } from "../workspace/WorkspaceStatus";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 
 type Props = { state: DesktopState; onState: (state: DesktopState) => void };
 
@@ -15,7 +15,7 @@ export function LocalServicesPanel(props: Props) {
 }
 
 function LocalServiceControls({ state, onState }: Props) {
-  const p = useProduct(); const s = useShellText(); const { t } = useLocale();
+  const p = useProduct(); const s = useShellText();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
   const alive = useRef(true), actionInFlight = useRef(false);
@@ -31,7 +31,6 @@ function LocalServiceControls({ state, onState }: Props) {
     } catch (value) { if (alive.current) setError(normalizeDesktopError(value)); }
     finally { actionInFlight.current = false; if (alive.current) setBusy(false); }
   };
-  const presentation = error && desktopErrorPresentation(error, t);
   return <div className="service-status-list" data-testid={environmentId ? "persistent-services" : undefined}>
     {(["server", "runner"] as const).filter(component => component === "server" || state.topology?.runner?.kind === "local").map(component => {
       const local = state.topology?.[component]?.kind === "local";
@@ -52,6 +51,16 @@ function LocalServiceControls({ state, onState }: Props) {
       </div>;
     })}
     {environmentId && <p className="field-help">{p("serviceRecoveryHelp")}</p>}
-    {presentation && <div className="error-card" role="alert"><strong>{presentation.title}</strong><span>{presentation.action}</span><details><summary>{p("details")}</summary><code>{error?.code}</code></details></div>}
+    {error && (
+      <DesktopErrorAlert
+        error={error}
+        disabled={disabled}
+        actions={{
+          onRepairRunnerCredential: state.can_repair_runner_credential && environmentId
+            ? () => void act("runner", "repair_credential")
+            : undefined,
+        }}
+      />
+    )}
   </div>;
 }

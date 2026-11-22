@@ -123,9 +123,9 @@ fn runtime_error_updates_are_kind_scoped_and_cancellation_is_not_a_failure() {
             OperationCompletion::new(kind, Some(&error)).apply_runtime_error(&mut snapshot, None)
         );
         assert_eq!(snapshot.runtime_error.as_ref(), Some(&error));
-        assert!(OperationCompletion::new(kind, Some(&cancelled))
+        assert!(!OperationCompletion::new(kind, Some(&cancelled))
             .apply_runtime_error(&mut snapshot, None));
-        assert!(snapshot.runtime_error.is_none());
+        assert_eq!(snapshot.runtime_error.as_ref(), Some(&error));
     }
     for kind in [
         DesktopUpdate,
@@ -138,6 +138,119 @@ fn runtime_error_updates_are_kind_scoped_and_cancellation_is_not_a_failure() {
         assert!(!OperationCompletion::new(kind, None).apply_runtime_error(&mut snapshot, None));
         assert_eq!(snapshot.runtime_error.as_ref(), Some(&error));
     }
+}
+
+#[test]
+fn cancelling_an_operation_preserves_independent_component_failures() {
+    let runner = DesktopError::new("runner_offline", "Runner offline", "Wait");
+    let service = DesktopError::new(
+        "service_ownershipunknown",
+        "Ownership is unverified",
+        "Inspect",
+    );
+    let mut snapshot = DesktopStateSnapshot::default();
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Runner, runner.clone());
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Service, service.clone());
+    snapshot.runtime_error = Some(service.clone());
+    let cancelled = crate::operation::cancelled_error();
+    let completion =
+        OperationCompletion::new(DesktopOperationKind::EnvironmentService, Some(&cancelled));
+    assert!(!completion.apply_runtime_error(&mut snapshot, None));
+    assert_eq!(snapshot.runtime_error.as_ref(), Some(&service));
+    assert_eq!(
+        snapshot.component_errors.get(&ErrorComponent::Runner),
+        Some(&runner)
+    );
+    assert_eq!(
+        snapshot.component_errors.get(&ErrorComponent::Service),
+        Some(&service)
+    );
+}
+
+#[test]
+fn successful_service_action_does_not_erase_unrelated_component_failures() {
+    let server = DesktopError::new(
+        "server_unreachable",
+        "Server is still unreachable",
+        "Inspect server",
+    );
+    let runner = DesktopError::new("runner_offline", "Runner is offline", "Wait");
+    let mut snapshot = DesktopStateSnapshot::default();
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Server, server.clone());
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Runner, runner.clone());
+    snapshot.runtime_error = Some(server.clone());
+    snapshot.readiness = aggregate_readiness(
+        ServerReadiness::Error,
+        RunnerReadiness::Connecting,
+        ExposureReadiness::Disabled,
+        ProjectReadiness::Configured,
+    );
+
+    let service = OperationCompletion::new(DesktopOperationKind::EnvironmentService, None);
+    assert!(!service.apply_runtime_error(&mut snapshot, None));
+    assert_eq!(
+        snapshot.component_errors.get(&ErrorComponent::Server),
+        Some(&server)
+    );
+    assert_eq!(
+        snapshot.component_errors.get(&ErrorComponent::Runner),
+        Some(&runner)
+    );
+    assert_eq!(snapshot.runtime_error.as_ref(), Some(&server));
+
+    snapshot.readiness = aggregate_readiness(
+        ServerReadiness::Error,
+        RunnerReadiness::Ready,
+        ExposureReadiness::Disabled,
+        ProjectReadiness::Configured,
+    );
+    let restarted = OperationCompletion::new(DesktopOperationKind::RunnerRestart, None);
+    assert!(restarted.apply_runtime_error(&mut snapshot, None));
+    assert!(!snapshot
+        .component_errors
+        .contains_key(&ErrorComponent::Runner));
+    assert_eq!(
+        snapshot.component_errors.get(&ErrorComponent::Server),
+        Some(&server)
+    );
+    assert_eq!(snapshot.runtime_error.as_ref(), Some(&server));
+}
+
+#[test]
+fn confirmed_server_recovery_clears_port_conflict_without_retrying_failed_start() {
+    let conflict = DesktopError::new(
+        "server_start_failed",
+        "Server could not bind HTTP listener",
+        "Inspect port owner",
+    )
+    .with_reason_code("local_port_unavailable")
+    .with_recovery(
+        crate::error::RecoveryKind::ManualCheck,
+        crate::error::SafeRecoveryAction::OpenDiagnostics,
+        false,
+    );
+    let mut snapshot = DesktopStateSnapshot::default();
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Server, conflict.clone());
+    snapshot.runtime_error = Some(conflict);
+    snapshot.readiness = aggregate_readiness(
+        ServerReadiness::Ready,
+        RunnerReadiness::Connecting,
+        ExposureReadiness::Disabled,
+        ProjectReadiness::Configured,
+    );
+    assert!(reconcile_runtime_errors_after_observation(&mut snapshot));
+    assert!(snapshot.runtime_error.is_none());
+    assert!(snapshot.component_errors.is_empty());
 }
 
 #[test]
@@ -194,14 +307,86 @@ fn successful_switch_preserves_durable_rollback_or_recovery_diagnostics_only() {
         let mut snapshot = DesktopStateSnapshot::default();
         snapshot.runtime_error = Some(failure());
         let completion = OperationCompletion::new(DesktopOperationKind::RuntimeSwitch, None);
-        assert!(completion.apply_runtime_error(&mut snapshot, Some(&switch)));
+        assert_eq!(
+            completion.apply_runtime_error(&mut snapshot, Some(&switch)),
+            outcome == "switched",
+        );
         assert_eq!(snapshot.runtime_error.is_some(), outcome != "switched");
         snapshot.runtime_error = Some(failure());
-        OperationCompletion::new(DesktopOperationKind::RuntimeResume, None)
-            .apply_runtime_error(&mut snapshot, Some(&switch));
         assert!(
-            snapshot.runtime_error.is_none(),
-            "unrelated success must not inherit switch policy"
+            !OperationCompletion::new(DesktopOperationKind::RuntimeResume, None)
+                .apply_runtime_error(&mut snapshot, Some(&switch)),
+        );
+        assert!(
+            snapshot.runtime_error.is_some(),
+            "a successful resume without confirming readiness must not erase a previous error"
         );
     }
+}
+
+#[test]
+fn component_recovery_clears_only_recovered_component_and_preserves_other_or_uncertain_errors() {
+    use crate::error::ErrorComponent;
+
+    let runner_offline = DesktopError::new("runner_offline", "Runner offline", "Wait");
+    let server_unreachable =
+        DesktopError::new("server_unreachable", "Server offline", "Start Server");
+    let uncertain = DesktopError::new("operation_uncertain", "Outcome unknown", "Inspect state");
+
+    // 1. Runner recovery clears runner_offline while preserving an active Server error.
+    let mut snapshot = DesktopStateSnapshot::default();
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Server, server_unreachable.clone());
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Runner, runner_offline.clone());
+    snapshot.runtime_error = Some(runner_offline.clone());
+    snapshot.readiness = aggregate_readiness(
+        ServerReadiness::Error,
+        RunnerReadiness::Ready,
+        ExposureReadiness::Disabled,
+        ProjectReadiness::Configured,
+    );
+    let observation = OperationCompletion::new(DesktopOperationKind::RuntimeRefresh, None);
+    assert!(observation.apply_runtime_error(&mut snapshot, None));
+    assert!(!snapshot
+        .component_errors
+        .contains_key(&ErrorComponent::Runner));
+    assert_eq!(
+        snapshot.component_errors.get(&ErrorComponent::Server),
+        Some(&server_unreachable)
+    );
+    assert_eq!(snapshot.runtime_error.as_ref(), Some(&server_unreachable));
+
+    // 2. Server recovery clears server_unreachable without clearing a still-connecting Runner error.
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Runner, runner_offline.clone());
+    snapshot.readiness = aggregate_readiness(
+        ServerReadiness::Ready,
+        RunnerReadiness::Connecting,
+        ExposureReadiness::Disabled,
+        ProjectReadiness::Configured,
+    );
+    assert!(observation.apply_runtime_error(&mut snapshot, None));
+    assert!(!snapshot
+        .component_errors
+        .contains_key(&ErrorComponent::Server));
+    assert_eq!(snapshot.runtime_error.as_ref(), Some(&runner_offline));
+
+    // 3. Uncertain write outcome must NOT be auto-cleared merely because components observe Ready.
+    let mut uncertain_snapshot = DesktopStateSnapshot::default();
+    uncertain_snapshot
+        .component_errors
+        .insert(uncertain.component(), uncertain.clone());
+    uncertain_snapshot.runtime_error = Some(uncertain.clone());
+    uncertain_snapshot.readiness = aggregate_readiness(
+        ServerReadiness::Ready,
+        RunnerReadiness::Ready,
+        ExposureReadiness::Disabled,
+        ProjectReadiness::Ready,
+    );
+    assert!(!observation.apply_runtime_error(&mut uncertain_snapshot, None));
+    assert_eq!(uncertain_snapshot.runtime_error.as_ref(), Some(&uncertain));
 }

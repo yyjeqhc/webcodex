@@ -220,6 +220,67 @@ fn report_and_bundle_include_only_explicit_safe_projections() {
 }
 
 #[test]
+fn report_includes_safe_failed_stage_and_http_status_without_raw_message_secrets() {
+    let mut snapshot = crate::models::DesktopStateSnapshot::default();
+    let active = DesktopError::new(
+        "server_request_failed",
+        "Local user creation failed: Bearer wc_pat_canary_in_message (HTTP 400)",
+        "Check inputs at C:\\private\\secret",
+    )
+    .with_stage("user_create")
+    .with_http_status(400)
+    .with_operation_context(Some("desktop-operation-7"), Some(3), None, Some(12));
+    snapshot
+        .component_errors
+        .insert(active.component(), active.clone());
+    snapshot.runtime_error = Some(active);
+    let runtime = RuntimeSettings {
+        source: Default::default(),
+        selection_revision: 0,
+        desktop_contract: webcodex_core::desktop_runtime_contract::DESKTOP_RUNTIME_CONTRACT,
+        selected: None,
+        candidate: None,
+        previous_source: None,
+        last_switch: None,
+        unavailable_code: None,
+        active_jobs: None,
+        can_switch: false,
+        switch_unavailable_reason: None,
+    };
+    let trace = TraceSettings {
+        configured_mode: Some(TraceMode::Off),
+        effective_mode: None,
+        revision: "fence".into(),
+        can_edit: true,
+        restart_required: false,
+        can_restart: false,
+        error_code: None,
+    };
+    let value = report(
+        &snapshot,
+        &runtime,
+        None,
+        None,
+        &trace,
+        &[],
+        json!({"supported":false}),
+    );
+    assert_eq!(
+        value["diagnostics"]["active_error"]["code"],
+        "server_request_failed"
+    );
+    assert_eq!(value["diagnostics"]["active_error"]["stage"], "user_create");
+    assert_eq!(value["diagnostics"]["active_error"]["http_status"], 400);
+    assert_eq!(
+        value["diagnostics"]["active_error"]["operation_id"],
+        "desktop-operation-7"
+    );
+    let encoded = serde_json::to_string(&value).unwrap();
+    assert!(!encoded.contains("wc_pat_canary_in_message"));
+    assert!(!encoded.contains("C:\\private\\secret"));
+}
+
+#[test]
 fn support_export_never_overwrites_existing_files() {
     let path = env_fixture("original").with_file_name("report.zip");
     let configuration = diagnostic_configuration_fixture();

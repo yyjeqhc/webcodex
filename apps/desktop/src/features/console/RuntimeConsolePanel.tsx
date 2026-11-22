@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, Monitor } from "lucide-react";
 import { desktopApi } from "../../lib/desktop-api";
-import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import { useShellText } from "../../i18n/runtime-shell";
-import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
+import { normalizeDesktopError } from "../../i18n/presentation";
 import type { DesktopError, DesktopState } from "../../models/topology";
 import type { DiagnosticSnapshot } from "../../models/runtime-shell";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { desktopIdentity, readDesktopObservation } from "../../lib/desktop-observation";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 
 export function RuntimeConsolePanel({ state, onSettings }: { state: DesktopState; onSettings: () => void }) {
-  const p = useProduct(); const s = useShellText(); const { t } = useLocale();
+  const p = useProduct(); const s = useShellText();
   const [data, setData] = useState<DiagnosticSnapshot | null>(null);
   const [error, setError] = useState<DesktopError | null>(null);
   const [busy, setBusy] = useState(false);
@@ -41,8 +41,17 @@ export function RuntimeConsolePanel({ state, onSettings }: { state: DesktopState
     catch (value) { if (alive.current && observation.current === observed) setError(normalizeDesktopError(value)); }
     finally { if (alive.current) setBusy(false); }
   };
-  const presentation = error && desktopErrorPresentation(error, t);
-  const errorCard = presentation && <div className="error-card" role="alert"><strong>{presentation.title}</strong><span>{presentation.action}</span><details><summary>{p("details")}</summary><code>{error?.code}</code></details></div>;
+  const errorCard = error && (
+    <DesktopErrorAlert
+      error={error}
+      disabled={disabled}
+      actions={{
+        onRefresh: () => setRevision(value => value + 1),
+        onRetry: () => setRevision(value => value + 1),
+        onOpenRuntime: onSettings,
+      }}
+    />
+  );
   return <section className="page-section workspace-page console-page" data-webcodex-page="console" aria-labelledby="console-title">
     <header className="page-heading-row"><h1 id="console-title">{p("runtimeConsole")}</h1><button type="button" className="secondary-button" disabled={disabled} onClick={() => setRevision(value => value + 1)}>{p("refresh")}</button></header>
     <div className="console-launch">

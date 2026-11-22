@@ -18,6 +18,12 @@ fn startup_failure_preserves_final_unterminated_bind_error() {
     assert!(error
         .message
         .contains("failed to bind HTTP listener 127.0.0.1:54611 (os error 10013)"));
+    let diag = error.diagnostic_ref().unwrap();
+    assert_eq!(diag.component, crate::error::ErrorComponent::Server);
+    assert_eq!(diag.stage.as_deref(), Some("server_start"));
+    assert_eq!(diag.reason_code.as_deref(), Some("local_port_unavailable"));
+    assert_eq!(diag.exit_code, Some(1));
+    assert!(!diag.retry_allowed);
 }
 
 #[test]

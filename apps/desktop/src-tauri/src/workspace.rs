@@ -46,6 +46,24 @@ pub enum WorkspaceRequest {
     },
 }
 
+fn route_stage(route: &str) -> &'static str {
+    match route {
+        "/api/runtime-console/overview" => "workspace_overview",
+        "/api/runtime-console/projects" => "workspace_projects",
+        "/api/runtime-console/runner" => "workspace_runner",
+        "/api/runtime-console/browser-status" => "workspace_browser_status",
+        "/api/runtime-console/windows" => "workspace_windows",
+        "/api/runtime-console/window" => "workspace_window",
+        "/api/runtime-console/workflow-sessions" => "workspace_sessions",
+        "/api/runtime-console/workflow-session" => "workspace_session",
+        "/api/runtime-console/extensions" => "workspace_extensions",
+        "/api/runtime-console/project-git" => "workspace_project_git",
+        "/api/runtime-console/instruction" => "workspace_instruction",
+        "/api/runtime-console/plugin-reload" => "workspace_plugin_reload",
+        _ => "workspace_request",
+    }
+}
+
 pub fn unavailable() -> DesktopError {
     DesktopError::new(
         "workspace_unavailable",
@@ -72,6 +90,7 @@ fn response_error(status: reqwest::StatusCode) -> DesktopError {
         ),
         _ => unavailable(),
     }
+    .with_http_status(status.as_u16())
 }
 
 fn unreachable() -> DesktopError {
@@ -166,13 +185,15 @@ pub(crate) async fn post(
     body: Value,
     timeout: Duration,
 ) -> DesktopResult<Value> {
-    let mut url = url::Url::parse(&runtime.server_url).map_err(|_| unavailable())?;
+    let stage = route_stage(route);
+    let mut url =
+        url::Url::parse(&runtime.server_url).map_err(|_| unavailable().with_stage(stage))?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
     {
-        return Err(unavailable());
+        return Err(unavailable().with_stage(stage));
     }
     url.set_path(route);
     url.set_query(None);
@@ -189,44 +210,50 @@ pub(crate) async fn post(
     let token_path = runtime
         .user_token_file
         .as_ref()
-        .ok_or_else(authentication_required)?;
+        .ok_or_else(|| authentication_required().with_stage(stage))?;
     let mut token = String::new();
     tokio::fs::File::open(token_path)
         .await
-        .map_err(|_| authentication_required())?
+        .map_err(|_| authentication_required().with_stage(stage))?
         .take(16_385)
         .read_to_string(&mut token)
         .await
-        .map_err(|_| authentication_required())?;
+        .map_err(|_| authentication_required().with_stage(stage))?;
     if token.len() > 16_384 || token.trim().is_empty() {
-        return Err(authentication_required());
+        return Err(authentication_required().with_stage(stage));
     }
-    let client = builder.build().map_err(|_| unavailable())?;
+    let client = builder
+        .build()
+        .map_err(|_| unavailable().with_stage(stage))?;
     let mut response = client
         .post(url)
         .bearer_auth(token.trim())
         .json(&body)
         .send()
         .await
-        .map_err(|_| unreachable())?;
+        .map_err(|_| unreachable().with_stage(stage))?;
     drop(token);
     if !response.status().is_success() {
-        return Err(response_error(response.status()));
+        return Err(response_error(response.status()).with_stage(stage));
     }
     if response
         .content_length()
         .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
     {
-        return Err(unavailable());
+        return Err(unavailable().with_stage(stage));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| unavailable().with_stage(stage))?
+    {
         if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-            return Err(unavailable());
+            return Err(unavailable().with_stage(stage));
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).map_err(|_| unavailable())
+    serde_json::from_slice(&bytes).map_err(|_| unavailable().with_stage(stage))
 }
 
 #[cfg(test)]

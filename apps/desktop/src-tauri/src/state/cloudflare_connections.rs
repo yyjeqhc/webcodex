@@ -39,6 +39,15 @@ impl CloudflareConnectionRequest {
             | Self::ConfigureOauth { profile_id, .. } => profile_id,
         }
     }
+
+    fn stage(&self) -> &'static str {
+        match self {
+            Self::Status { .. } => "cloudflare_status",
+            Self::Start { .. } => "cloudflare_start",
+            Self::Stop { .. } => "cloudflare_stop",
+            Self::ConfigureOauth { .. } => "cloudflare_oauth",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +94,28 @@ fn unavailable() -> DesktopError {
         "The selected Cloudflare connection could not be controlled",
         "Check the local Server and refresh this connection before retrying.",
     )
+    .with_component(crate::error::ErrorComponent::Tunnel)
+}
+fn unavailable_for(stage: &str, profile_id: &str, reason_code: Option<&str>) -> DesktopError {
+    let mut error =
+        unavailable()
+            .with_stage(stage)
+            .with_operation_context(None, None, Some(profile_id), None);
+    if let Some(reason) = reason_code {
+        error = error.with_reason_code(reason);
+    }
+    error
+}
+fn stale_revision(stage: &str, profile_id: &str) -> DesktopError {
+    DesktopError::new(
+        "cloudflare_revision_stale",
+        "This Cloudflare connection changed before the control request completed",
+        "Refresh the connection status to review the current configuration before retrying.",
+    )
+    .with_component(crate::error::ErrorComponent::Tunnel)
+    .with_stage(stage)
+    .with_reason_code("stale_fence")
+    .with_operation_context(None, None, Some(profile_id), None)
 }
 fn requires_environment() -> DesktopError {
     DesktopError::new(
@@ -92,6 +123,8 @@ fn requires_environment() -> DesktopError {
         "Cloudflare needs a persistent local Environment",
         "Use Runtime setup or repair to adopt the existing local Server first.",
     )
+    .with_component(crate::error::ErrorComponent::Tunnel)
+    .with_stage("cloudflare_preflight")
 }
 
 impl AppState {
@@ -177,8 +210,14 @@ impl AppState {
                     &status_request,
                 )
                 .await?;
-                let observed: CloudflareConnectionStatus =
-                    serde_json::from_slice(&observed).map_err(|_| unavailable())?;
+                let observed: CloudflareConnectionStatus = serde_json::from_slice(&observed)
+                    .map_err(|_| {
+                        unavailable_for(
+                            request.stage(),
+                            &profile.profile_id,
+                            Some("invalid_response"),
+                        )
+                    })?;
                 if observed.profile_id != profile.profile_id
                     || observed.server_instance_id != expected_instance
                     || expected_revision.is_some_and(|revision| {
@@ -187,7 +226,7 @@ impl AppState {
                     || expected_generation
                         .is_some_and(|generation| generation != observed.process_generation)
                 {
-                    return Err(unavailable());
+                    return Err(stale_revision(request.stage(), &profile.profile_id));
                 }
                 // A standalone service is durable Environment startup intent. Its
                 // new run performs its own fenced Server prepare handshake; Desktop
@@ -254,24 +293,45 @@ async fn control_response(
     token: &Secret,
     request: &CloudflareConnectionRequest,
 ) -> DesktopResult<Vec<u8>> {
+    let stage = request.stage();
+    let profile_id = request.profile_id();
     let mut response = client
         .post(endpoint)
         .bearer_auth(token.expose())
         .json(request)
         .send()
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(|err| {
+            let reason = if err.is_timeout() {
+                "request_timeout"
+            } else {
+                "server_unreachable"
+            };
+            DesktopError::new(
+                "cloudflare_server_unreachable",
+                "Could not reach the local Server to control this Cloudflare connection",
+                "Check that the local Server is running, then refresh this connection.",
+            )
+            .with_component(crate::error::ErrorComponent::Tunnel)
+            .with_stage(stage)
+            .with_reason_code(reason)
+            .with_operation_context(None, None, Some(profile_id), None)
+        })?;
     let status = response.status();
     if response
         .content_length()
         .is_some_and(|length| length > 32 * 1024)
     {
-        return Err(unavailable());
+        return Err(unavailable_for(stage, profile_id, Some("response_limit")));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| unavailable_for(stage, profile_id, Some("response_uncertain")))?
+    {
         if bytes.len().saturating_add(chunk.len()) > 32 * 1024 {
-            return Err(unavailable());
+            return Err(unavailable_for(stage, profile_id, Some("response_limit")));
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -292,9 +352,30 @@ async fn control_response(
                 "cloudflare_ingress_not_applied",
                 "The running Server has not loaded Cloudflare connections yet",
                 "Review the saved connection and explicitly restart the Server to apply it.",
-            ));
+            )
+            .with_component(crate::error::ErrorComponent::Tunnel)
+            .with_stage(stage)
+            .with_http_status(status.as_u16())
+            .with_operation_context(None, None, Some(profile_id), None));
         }
-        return Err(unavailable());
+        if matches!(
+            status,
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(DesktopError::new(
+                "cloudflare_authentication_failed",
+                "The local Server rejected authorization for this Cloudflare connection",
+                "Refresh Diagnostics and verify the local Environment configuration.",
+            )
+            .with_component(crate::error::ErrorComponent::Auth)
+            .with_stage(stage)
+            .with_http_status(status.as_u16())
+            .with_operation_context(None, None, Some(profile_id), None));
+        }
+        if status == reqwest::StatusCode::CONFLICT {
+            return Err(stale_revision(stage, profile_id).with_http_status(status.as_u16()));
+        }
+        return Err(unavailable_for(stage, profile_id, None).with_http_status(status.as_u16()));
     }
     Ok(bytes)
 }

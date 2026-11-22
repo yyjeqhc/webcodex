@@ -110,9 +110,25 @@ impl<B: EnvironmentBackend> EnvironmentSetup<B> {
                 .await;
             let result = match reconciled {
                 Ok(Reconciliation::Complete) => Ok(()),
-                Ok(Reconciliation::Unknown) => Err(SetupDiagnostic::new("operation_uncertain", "The previous external operation has an unknown result", "Inspect its actual state before retrying; do not start another instance")),
-                Ok(Reconciliation::Missing) if step == SetupStep::RunnerEnrollment && prior.is_some() && !secrets.replacement_pairing_code => {
-                    Err(SetupDiagnostic::new("pairing_recovery_required", "Pairing may have consumed its code, but saved credentials could not be verified", "Recover the credentials or explicitly resume with a new pairing code"))
+                Ok(Reconciliation::Unknown) => Err(SetupDiagnostic::new(
+                    "operation_uncertain",
+                    "The previous external operation has an unknown result",
+                    "Inspect its actual state before retrying; do not start another instance",
+                )
+                .with_component(step.component_name())
+                .with_stage(step.stage_name())),
+                Ok(Reconciliation::Missing)
+                    if step == SetupStep::RunnerEnrollment
+                        && prior.is_some()
+                        && !secrets.replacement_pairing_code =>
+                {
+                    Err(SetupDiagnostic::new(
+                        "pairing_recovery_required",
+                        "Pairing may have consumed its code, but saved credentials could not be verified",
+                        "Recover the credentials or explicitly resume with a new pairing code",
+                    )
+                    .with_component("auth")
+                    .with_stage(step.stage_name()))
                 }
                 Ok(Reconciliation::Missing) => {
                     journal.steps.insert(step, StepState::Started);
@@ -124,6 +140,9 @@ impl<B: EnvironmentBackend> EnvironmentSetup<B> {
                 Err(error) => Err(error),
             };
             if let Err(error) = result {
+                let error = error
+                    .with_default_stage(step.stage_name())
+                    .with_default_component(step.component_name());
                 journal.last_diagnostic = Some(error.clone());
                 // Preserve the original actionable failure if writing its diagnostic fails.
                 let _ = store.save_journal(&journal);
@@ -137,7 +156,15 @@ impl<B: EnvironmentBackend> EnvironmentSetup<B> {
                 state: StepState::Complete,
             });
         }
-        let observation = self.backend.observe(store, &journal.environment).await?;
+        let observation = self
+            .backend
+            .observe(store, &journal.environment)
+            .await
+            .map_err(|error| {
+                error
+                    .with_default_stage(SetupStep::Readiness.stage_name())
+                    .with_default_component(SetupStep::Readiness.component_name())
+            })?;
         journal.environment.configured = true;
         store.save_journal(&journal)?;
         store.save_environment(&journal.environment)?;

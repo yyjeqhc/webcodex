@@ -427,6 +427,11 @@ pub struct DesktopStateSnapshot {
     pub readiness: ReadinessSnapshot,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_error: Option<crate::error::DesktopError>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub component_errors:
+        std::collections::BTreeMap<crate::error::ErrorComponent, crate::error::DesktopError>,
+    #[serde(default)]
+    pub state_generation: u64,
     pub project: Option<ProjectSelection>,
     pub binaries: Option<BinaryInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -463,6 +468,8 @@ impl Default for DesktopStateSnapshot {
             topology: None,
             readiness: ReadinessSnapshot::default(),
             runtime_error: None,
+            component_errors: std::collections::BTreeMap::new(),
+            state_generation: 0,
             project: None,
             binaries: None,
             powershell_runtime: None,

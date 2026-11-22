@@ -50,3 +50,42 @@ it("keeps the concrete error when the follow-up state observation also fails",as
   await screen.findByText("MCP · Browser tools");
   expect(onState).not.toHaveBeenCalled();
 });
+
+it("does not offer Start Runtime or Select Runtime folder on service ownership conflict", () => {
+  const ownershipError = {
+    code: "service_foreignservice",
+    message: "Existing service owned by another installation",
+    next_action: "Inspect existing services before changing ownership.",
+  };
+  show({ ...stopped, runtime_error: ownershipError });
+  expect(screen.getByRole("alert")).toHaveTextContent("Cannot confirm local service or process ownership");
+  expect(screen.queryByRole("button", { name: "Start Runtime" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Select Runtime folder…" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Inspect conflicting services" })).toBeEnabled();
+});
+
+it("clears stale local banner error when environment identity changes", async () => {
+  const serverErr = { code: "server_unreachable", message: "Unreachable", next_action: "Retry" };
+  api.resumeSavedRuntime.mockRejectedValueOnce(serverErr);
+  api.getState.mockRejectedValueOnce(new Error("skip"));
+  const initial = { ...stopped, persistent_environment: "env-a", runtime_error: null } as DesktopState;
+  const view = render(
+    <LocaleProvider>
+      <ReadinessBanner state={initial} onState={vi.fn()} onDiagnostics={vi.fn()} onRuntime={vi.fn()} onConnection={vi.fn()} />
+    </LocaleProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Start Runtime" }));
+  await screen.findByRole("alert");
+  view.rerender(
+    <LocaleProvider>
+      <ReadinessBanner
+        state={{ ...initial, persistent_environment: "env-b" }}
+        onState={vi.fn()}
+        onDiagnostics={vi.fn()}
+        onRuntime={vi.fn()}
+        onConnection={vi.fn()}
+      />
+    </LocaleProvider>,
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});

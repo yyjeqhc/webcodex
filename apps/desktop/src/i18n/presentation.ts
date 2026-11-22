@@ -9,6 +9,11 @@ import type {
   RunnerReadiness,
   ServerReadiness,
 } from "../models/topology";
+import {
+  extractSafeErrorDiagnostics,
+  normalizeDesktopError as normalizeErrorCore,
+  resolveDesktopError,
+} from "../lib/desktop-errors";
 import type { MessageKey } from "./locale";
 
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
@@ -108,89 +113,21 @@ export type DesktopCommandDiagnostics = {
   reasonCode?: string;
 };
 
-const binaryErrors = new Set([
-  "binaries_not_checked",
-  "binary_directory_invalid",
-  "binary_directory_missing",
-  "binary_missing",
-  "binary_version_mismatch",
-  "binary_version_unverifiable",
-  "binary_probe_failed",
-]);
-const serverErrors = new Set([
-  "server_unreachable",
-  "server_start_failed",
-  "server_unavailable",
-  "local_port_unavailable",
-]);
-const runnerErrors = new Set(["runner_offline"]);
-const projectErrors = new Set([
-  "project_unavailable",
-  "project_not_directory",
-  "project_not_loaded",
-  "project_not_ready",
-]);
-const enrollmentErrors = new Set([
-  "webcodex_command_failed",
-  "webcodex_command_start_failed",
-  "webcodex_command_input_failed",
-  "webcodex_command_wait_failed",
-  "webcodex_command_timeout",
-]);
-const commandPhasePresentation: Record<string, { title: MessageKey; action: MessageKey }> = {
-  runtime_probe: { title: "error.binaryTitle", action: "error.binaryAction" },
-  server_init: { title: "error.serverTitle", action: "error.serverAction" },
-  server_status: { title: "error.serverTitle", action: "error.serverAction" },
-  pairing_create: { title: "error.enrollmentTitle", action: "error.enrollmentAction" },
-  login: { title: "error.enrollmentTitle", action: "error.enrollmentAction" },
-  runner_status: { title: "error.runnerTitle", action: "error.runnerAction" },
-  project_activation: { title: "error.projectTitle", action: "error.projectAction" },
-  project_register: { title: "error.projectTitle", action: "error.projectAction" },
-  project_readiness: { title: "error.projectTitle", action: "error.projectAction" },
-};
-const tunnelErrors = new Set([
-  "tunnel_unavailable",
-  "tunnel_auth_invalid",
-  "regular_tunnel_not_ready",
-  "regular_tunnel_already_running",
-  "quick_share_not_ready",
-]);
-const processErrors = new Set([
-  "process_start_failed",
-  "process_already_running",
-  "quick_share_already_running",
-]);
-
 export function desktopErrorPresentation(error: DesktopError, t: Translate): ErrorPresentation {
-  if (error.code === "tunnel_config_apply_failed") return { title: t("error.tunnelTitle"), action: t("tunnelConfig.applyFailed") };
-  if (error.code === "tunnel_config_invalid") return { title: t("error.tunnelTitle"), action: t("tunnelConfig.invalidInput") };
-  if (error.code === "tunnel_config_save_failed") return { title: t("error.fallbackTitle"), action: t("tunnelConfig.saveFailed") };
-  if (binaryErrors.has(error.code)) return { title: t("error.binaryTitle"), action: t("error.binaryAction") };
-  if (serverErrors.has(error.code) || error.code === "server_url_invalid") return { title: t("error.serverTitle"), action: t("error.serverAction") };
-  if (error.code === "runtime_not_ready") return { title: t("error.runtimeTitle"), action: t("error.runtimeAction") };
-  if (runnerErrors.has(error.code)) return { title: t("error.runnerTitle"), action: t("error.runnerAction") };
-  if (projectErrors.has(error.code)) return { title: t("error.projectTitle"), action: t("error.projectAction") };
-  if (error.code === "pairing_code_invalid") return { title: t("error.pairingTitle"), action: t("error.pairingAction") };
-  if (enrollmentErrors.has(error.code)) {
-    const phase = desktopCommandDiagnostics(error)?.phase;
-    const phasePresentation = phase ? commandPhasePresentation[phase] : undefined;
-    if (phasePresentation) {
-      return { title: t(phasePresentation.title), action: t(phasePresentation.action) };
-    }
-    return { title: t("error.enrollmentTitle"), action: t("error.enrollmentAction") };
-  }
-  if (tunnelErrors.has(error.code)) return { title: t("error.tunnelTitle"), action: t("error.tunnelAction") };
-  if (processErrors.has(error.code)) return { title: t("error.processTitle"), action: t("error.processAction") };
-  if (error.code === "webcodex_contract_invalid") return { title: t("error.contractTitle"), action: t("error.contractAction") };
-  if (error.code === "unsupported_topology" || error.code === "quick_share_provider_invalid") return { title: t("error.topologyTitle"), action: t("error.topologyAction") };
-  if (error.code === "desktop_operation_busy" || error.code === "desktop_operation_not_cancellable") return { title: t("error.operationBusyTitle"), action: t("error.operationBusyAction") };
-  if (error.code === "desktop_operation_not_current") return { title: t("error.operationStaleTitle"), action: t("error.operationStaleAction") };
-  if (error.code === "desktop_operation_cancelled") return { title: t("error.operationCancelledTitle"), action: t("error.operationCancelledAction") };
-  return { title: t("error.fallbackTitle"), action: t("error.fallbackAction") };
+  const resolved = resolveDesktopError(error, t);
+  return { title: resolved.title, action: resolved.action };
 }
 
 export function desktopCommandDiagnostics(error: DesktopError): DesktopCommandDiagnostics | null {
-  if (!error.details || typeof error.details !== "object" || Array.isArray(error.details)) return null;
+  if (!error.details || typeof error.details !== "object" || Array.isArray(error.details)) {
+    const structured = extractSafeErrorDiagnostics(error);
+    if (!structured.stage && structured.exitCode === undefined && !structured.reasonCode) return null;
+    return {
+      phase: structured.stage,
+      exitCode: structured.exitCode,
+      reasonCode: structured.reasonCode,
+    };
+  }
   const details = error.details as Record<string, unknown>;
   const phase = safeDiagnosticString(details.phase, /^[a-z0-9_-]+$/);
   const logicalCommand = safeDiagnosticString(details.logical_command, /^[a-z0-9 _-]+$/);
@@ -213,17 +150,7 @@ function safeDiagnosticString(value: unknown, pattern: RegExp): string | undefin
 }
 
 export function normalizeDesktopError(value: unknown): DesktopError {
-  if (value && typeof value === "object") {
-    const candidate = value as Partial<DesktopError>;
-    if (candidate.code && candidate.message && candidate.next_action) {
-      return candidate as DesktopError;
-    }
-  }
-  return {
-    code: "desktop_operation_failed",
-    message: "Desktop could not complete the operation.",
-    next_action: "Retry the operation or open Activity for safe diagnostics.",
-  };
+  return normalizeErrorCore(value);
 }
 
 export function serverReadinessLabel(value: ServerReadiness, t: Translate) {

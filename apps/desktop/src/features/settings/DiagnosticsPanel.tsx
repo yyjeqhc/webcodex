@@ -7,12 +7,12 @@ import { desktopIdentity, readDesktopObservation } from "../../lib/desktop-obser
 import type { DesktopError, DesktopState } from "../../models/topology";
 import type { DiagnosticSnapshot, DiagnosticResource, TraceMode } from "../../models/runtime-shell";
 import { useProduct } from "../../i18n/product";
-import { useLocale } from "../../i18n/locale";
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import { useShellText } from "../../i18n/runtime-shell";
-import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
+import { normalizeDesktopError } from "../../i18n/presentation";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { ContinuationFacts } from "../activity/ContinuationFacts";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 
 type DiagnosticsProps = { state: DesktopState; onState: (state: DesktopState) => void; onActivity?: () => void; onRuntime?: () => void; onConnection?: () => void };
 
@@ -21,7 +21,7 @@ export function DiagnosticsPanel(props: DiagnosticsProps) {
 }
 
 function DiagnosticsContents({ state, onState, onActivity, onRuntime, onConnection }: DiagnosticsProps) {
-  const s = useShellText(); const p = useProduct(); const c = useConnectionsTools(); const { t } = useLocale();
+  const s = useShellText(); const p = useProduct(); const c = useConnectionsTools();
   const [data, setData] = useState<DiagnosticSnapshot | null>(null);
   const [mode, setMode] = useState<TraceMode>("off");
   const [busy, setBusy] = useState(false);
@@ -130,8 +130,19 @@ function DiagnosticsContents({ state, onState, onActivity, onRuntime, onConnecti
     }
   });
   const resourceNames: [DiagnosticResource, string][] = [["app_data", "Open app data directory"], ["server_configuration", "Open Server configuration location"], ["trace_directory", "Open trace directory"], ["runtime_directory", "Open Runtime folder"]];
-  const presentation = error && desktopErrorPresentation(error, t);
-  const errorCard = presentation && <div className="error-card" role="alert"><strong>{presentation.title}</strong><span>{presentation.action}</span><details><summary>{p("details")}</summary><code>{error?.code}</code></details></div>;
+  const errorCard = error && (
+    <DesktopErrorAlert
+      error={error}
+      disabled={disabled}
+      actions={{
+        onRefresh: () => void act(() => refresh()),
+        onOpenRuntime: onRuntime,
+        onOpenActivity: onActivity,
+        onCheckConnection: onConnection,
+        onRepairUserCredential: persistentEnvironment ? () => setCredentialRecoveryOpen(true) : undefined,
+      }}
+    />
+  );
   return <div className="diagnostics-panel" data-webcodex-panel="diagnostics">
     <div className="shell-section-heading"><h2>{p("resolveProblems")}</h2><button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(() => refresh())}>{s("Refresh")}</button></div>
     <div className="diagnostics-routes">

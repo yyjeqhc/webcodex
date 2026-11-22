@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { WorkspaceProvider } from "./features/workspace/WorkspaceContext";
-import { Alert, Button } from "@mantine/core";
+import { Button } from "@mantine/core";
 import { DesktopMantineProvider } from "./components/DesktopMantineProvider";
+import { DesktopErrorAlert, type DesktopErrorActions } from "./components/DesktopErrorAlert";
 import { BrandMark } from "../../../frontend/src/ui/BrandMark";
 import { ExtensionsPanel, type ExtensionTab } from "./features/extensions/ExtensionsPanel";
 import { ComputerPermissions } from "./features/settings/ComputerPermissions";
@@ -11,11 +12,6 @@ import { desktopApi } from "./lib/desktop-api";
 import { useRuntimeUpdates } from "./hooks/useRuntimeUpdates";
 import { UpdateBanner } from "./features/settings/AboutPanel";
 import { ReadinessBanner } from "./features/dashboard/ReadinessBanner";
-import { useShellText } from "./i18n/runtime-shell";
-import { useProduct } from "./i18n/product";
-import type {
-  DesktopError,
-} from "./models/topology";
 import { FirstRunCompletion } from "./features/onboarding/FirstRunCompletion";
 import { FirstRun } from "./features/onboarding/FirstRun";
 import { Dashboard } from "./features/dashboard/Dashboard";
@@ -25,7 +21,7 @@ import { ActivityPanel } from "./features/activity/ActivityPanel";
 import { SettingsPanel } from "./features/settings/SettingsPanel";
 import { RuntimeConsolePanel } from "./features/console/RuntimeConsolePanel";
 import { useLocale } from "./i18n/locale";
-import { desktopCommandDiagnostics, desktopErrorPresentation, operationLabel } from "./i18n/presentation";
+import { operationLabel } from "./i18n/presentation";
 
 export default function App() {
   return <DesktopMantineProvider><DesktopApp /></DesktopMantineProvider>;
@@ -33,8 +29,6 @@ export default function App() {
 
 function DesktopApp() {
   const { t } = useLocale();
-  const s = useShellText();
-  const p = useProduct();
   const [completionEnvironment, setCompletionEnvironment] = useState<string | null>(null);
   const [extensionTab, setExtensionTab] = useState<ExtensionTab>();
   const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | "access" | undefined>();
@@ -47,7 +41,7 @@ function DesktopApp() {
         <BrandMark />
         {error ? (
           <section className="startup-error" aria-label="WebCodex">
-            <AppError error={error} />
+            <DesktopErrorAlert error={error} showSafeMessage className="app-error" />
             <Button
               className="primary-button"
               type="button"
@@ -68,6 +62,26 @@ function DesktopApp() {
   }
 
   const needsSetup = !state.topology || showSetup;
+  const shellErrorActions: DesktopErrorActions = {
+    onRefresh: () => void refresh(),
+    onRetry: () => void refresh(),
+    onStartRuntime: () => void resumeRuntime(),
+    onStartServer: () => void resumeRuntime(),
+    onRestartServer: () => openSettings("runtime"),
+    onStartRunner: () => void resumeRuntime(),
+    onRestartRunner: () => openSettings("runtime"),
+    onRepairRunnerCredential: () => openSettings("runtime"),
+    onRepairUserCredential: () => openSettings("diagnostics"),
+    onCheckConnection: () => setNavigation("connection"),
+    onOpenNetwork: () => openSettings("network"),
+    onOpenRuntime: () => openSettings("runtime"),
+    onOpenDiagnostics: () => openSettings("diagnostics"),
+    onOpenActivity: () => setNavigation("activity"),
+    onOpenProjects: () => setNavigation("projects"),
+    onOpenSetup: openSetup,
+    onRestoreConfiguration: () => openSettings("diagnostics"),
+    onManageProviders: () => { setExtensionTab("mcpProviders"); setNavigation("extensions"); },
+  };
 
   return (
     <WorkspaceProvider state={state} suspended={refreshing} preservePollDeadline={preserveWorkspacePollDeadline}><div className="app-shell">
@@ -114,10 +128,18 @@ function DesktopApp() {
             )}
           </section>
         )}
-        {error && !(navigation === "home" && state.runtime_error?.code === error.code) && <><AppError error={error} /><div className="shell-actions"><button type="button" className="secondary-button" onClick={() => openSettings("diagnostics")}>{p("troubleshooting")}</button><button type="button" className="text-button" onClick={() => openSettings("runtime")}>{s("Select another Runtime")}</button></div></>}
+        {error && !(navigation === "home" && state.runtime_error?.code === error.code) && (
+          <DesktopErrorAlert
+            error={error}
+            actions={shellErrorActions}
+            disabled={refreshing || Boolean(state.current_operation)}
+            showSafeMessage
+            className="app-error"
+          />
+        )}
         {navigation !== "settings" && <ComputerPermissions welcome />}
         {navigation === "home" && <UpdateBanner updates={updates} />}
-        {navigation === "home" && (state.topology || state.configuration_issue || state.runtime_error) && <ReadinessBanner state={state} onState={commitState} onDiagnostics={() => openSettings("diagnostics")} onRuntime={() => openSettings("runtime")} onConnection={() => setNavigation("connection")} onProviders={kind => { setExtensionTab(kind === "mcp" ? "mcpProviders" : "codingAgents"); setNavigation("extensions"); }} />}
+        {navigation === "home" && (state.topology || state.configuration_issue || state.runtime_error) && <ReadinessBanner state={state} onState={commitState} onDiagnostics={() => openSettings("diagnostics")} onRuntime={() => openSettings("runtime")} onConnection={() => setNavigation("connection")} onActivity={() => setNavigation("activity")} onProjects={() => setNavigation("projects")} onSetup={openSetup} onRefresh={() => void refresh()} onProviders={kind => { setExtensionTab(kind === "mcp" ? "mcpProviders" : "codingAgents"); setNavigation("extensions"); }} />}
         {navigation === "home" && !state.configuration_issue && (!needsSetup && completionEnvironment !== null && completionEnvironment === (state.environment_setup?.environment_id ?? state.persistent_environment) && state.topology?.experience === "full" ? (
           <FirstRunCompletion state={state} onState={commitState} onRuntime={() => { setCompletionEnvironment(null); openSettings("runtime"); }} onComplete={() => setCompletionEnvironment(null)}
             onProjects={() => { setCompletionEnvironment(null); setNavigation("projects"); }}
@@ -150,31 +172,5 @@ function DesktopApp() {
         {navigation === "settings" && <SettingsPanel state={state} onState={commitState} onChangeSetup={openSetup} onStopRuntime={() => void runStateOperation(desktopApi.stopLocalRuntime)} initialSection={settingsSection} onActivity={() => setNavigation("activity")} onConnection={() => setNavigation("connection")} updates={updates} />}
       </main>
     </div></WorkspaceProvider>
-  );
-}
-
-function AppError({ error }: { error: DesktopError }) {
-  const { t } = useLocale(); const p = useProduct();
-  const presentation = desktopErrorPresentation(error, t);
-  const diagnostics = desktopCommandDiagnostics(error);
-  return (
-    <Alert className="error-card app-error" role="alert" variant="light" color="red">
-      <strong>{presentation.title}</strong>
-      <span>{presentation.action}</span>
-      <details>
-        <summary>{t("common.details")}</summary>
-        <code>{error.code}</code>
-        <p>{error.message}</p>
-        {diagnostics && (
-          <dl className="error-diagnostics">
-            {diagnostics.phase && <><dt>{p("errorPhase")}</dt><dd><code>{diagnostics.phase}</code></dd></>}
-            {diagnostics.logicalCommand && <><dt>{p("errorCommand")}</dt><dd><code>{diagnostics.logicalCommand}</code></dd></>}
-            {diagnostics.executable && <><dt>{p("errorExecutable")}</dt><dd><code>{diagnostics.executable}</code></dd></>}
-            {diagnostics.exitCode !== undefined && <><dt>{p("runtimeExitCode")}</dt><dd><code>{diagnostics.exitCode}</code></dd></>}
-            {diagnostics.reasonCode && <><dt>{p("errorReason")}</dt><dd><code>{diagnostics.reasonCode}</code></dd></>}
-          </dl>
-        )}
-      </details>
-    </Alert>
   );
 }

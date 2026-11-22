@@ -498,7 +498,16 @@ pub fn report(
         );
     }
     let safe_activity:Vec<_>=activity.iter().rev().take(25).map(|entry| json!({"sequence":entry.sequence,"timestamp_ms":entry.timestamp_ms,"level":entry.level,"event_kind":entry.event_kind})).collect();
-    let connection_health:Vec<_>=snapshot.connections.profiles.iter().take(16).map(|p|json!({"lifecycle":p.runtime.lifecycle,"health":p.runtime.health,"ready":p.runtime.ready,"error_code":p.runtime.last_error})).collect();
+    let connection_health:Vec<_>=snapshot.connections.profiles.iter().take(16).map(|p|json!({"lifecycle":p.runtime.lifecycle,"health":p.runtime.health,"ready":p.runtime.ready,"error_code":p.runtime.last_error,"failure_stage":p.runtime.failure_stage.as_deref().and_then(crate::error::sanitize_safe_identifier),"reason_code":p.runtime.reason_code.as_deref().and_then(crate::error::sanitize_safe_identifier)})).collect();
+    let active_error = snapshot
+        .runtime_error
+        .as_ref()
+        .map(DesktopError::safe_summary_value);
+    let component_errors: serde_json::Map<String, Value> = snapshot
+        .component_errors
+        .iter()
+        .map(|(component, error)| (component.as_str().to_string(), error.safe_summary_value()))
+        .collect();
     let mut desktop = webcodex_build_info::machine_build_info("webcodex-desktop");
     desktop.version = env!("CARGO_PKG_VERSION").into();
     json!({"schema_version":1,"desktop":safe_build(&desktop),
@@ -509,11 +518,13 @@ pub fn report(
             "build_alignment":selected.map(|s|s.build_alignment),"runner_build_alignment":runner.and_then(|r|bounded_code(r.get("build_alignment")))},
         "runtime_health":{"server":snapshot.readiness.server,"runner":snapshot.readiness.runner,"project":snapshot.readiness.project,
             "connection":snapshot.readiness.exposure,"runtime_ready":snapshot.readiness.runtime_ready,
+            "state_generation":snapshot.state_generation,
             "connections_running":snapshot.connections.running,"connections_needing_attention":snapshot.connections.needs_attention,
             "connections":connection_health,"last_observed_chatgpt_activity_at_ms":snapshot.chatgpt_activity.as_ref().and_then(|a|a.last_meaningful_activity_at_ms)},
         "diagnostics":{"trace_mode":trace.configured_mode,"effective_trace_mode":trace.effective_mode,"restart_required":trace.restart_required,
             "current_operation":snapshot.current_operation.as_ref().map(|o|o.kind),
-            "configuration_issue":snapshot.configuration_issue,"runtime_issue":runtime.unavailable_code},
+            "configuration_issue":snapshot.configuration_issue,"runtime_issue":runtime.unavailable_code,
+            "active_error":active_error,"component_errors":component_errors},
         "computer_use":{"desktop_permissions":permissions,"runner_advertised_capabilities":cu},
         "last_webcodex_call":last_call,"activity":safe_activity,
         "excluded":["credentials","environment contents","Runner config contents","project files","tool input/result payloads","clipboard","raw stdout/stderr"]})

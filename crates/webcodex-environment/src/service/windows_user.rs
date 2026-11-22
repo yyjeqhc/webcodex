@@ -548,6 +548,31 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn user_task_restart_waits_for_owned_process_exit_and_confirms_one_new_instance() {
+        use crate::process::CommandOutputExt;
+        use std::os::windows::process::CommandExt;
+        let root = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let result =
+            std::process::Command::new(root.join("System32/WindowsPowerShell/v1.0/powershell.exe"))
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    include_str!("windows_user_lifecycle_tests.ps1"),
+                ])
+                .env("WEBCODEX_PARSE_SCRIPT", SCRIPT)
+                .creation_flags(0x08000000)
+                .bounded_output()
+                .unwrap();
+        assert!(
+            result.status.success(),
+            "native user-task lifecycle races failed"
+        );
+    }
+
     #[test]
     fn user_task_does_not_turn_unobserved_state_into_stopped() {
         let spec = super::super::tests::sample_spec();

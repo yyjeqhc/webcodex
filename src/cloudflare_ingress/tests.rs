@@ -609,6 +609,206 @@ async fn quick_forwarding_never_retries_an_identity_mismatch() {
     assert_eq!(started.elapsed(), Duration::ZERO);
 }
 
+// These fixtures enter the final commit stage after the forwarding/Runner proofs.
+// They exercise the real setup.lock and admission fences, not a simulated TLS probe.
+async fn assert_admission_waiting<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+    std::future::poll_fn(|context| {
+        assert!(future.as_mut().poll(context).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+}
+
+fn assert_admission_closed(control: &CloudflareControl) {
+    let entry = control
+        .db
+        .get_public_ingress_entry_for_profile("quick")
+        .unwrap()
+        .unwrap();
+    assert!(!entry.admission_open);
+    let status = control.status("quick").unwrap();
+    assert!(status.public_origin.is_none());
+    assert!(!status.registration_available);
+    assert!(
+        !control
+            .attempt
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .network_ready
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn embedded_admission_waits_for_a_short_configuration_lock() {
+    let fixture = Fixture::new();
+    let control = &fixture.control;
+    let prepared = control.prepare("quick", 1, false, None, None).unwrap();
+    let profile = control.profile("quick").unwrap();
+    let store = EnvironmentStore::open(control.root.clone()).unwrap();
+    let lock = store.lock().unwrap();
+    let started = tokio::time::Instant::now();
+    let mut admission = Box::pin(control.admit_forwarded_ingress(
+        &prepared,
+        1,
+        "https://fixture.trycloudflare.com",
+        &profile,
+    ));
+    assert_admission_waiting(admission.as_mut()).await;
+    assert_admission_closed(control);
+    tokio::time::advance(Duration::from_secs(2)).await;
+    drop(lock);
+    let entry = admission.await.unwrap();
+    assert_eq!(started.elapsed(), Duration::from_secs(2));
+    assert!(entry.active && entry.admission_open);
+    assert_eq!(entry.process_generation, prepared.process_generation);
+    assert_eq!(control.status("quick").unwrap().lifecycle, "running");
+    assert_eq!(
+        control
+            .db
+            .get_public_ingress_entry(&entry.entry_id)
+            .unwrap(),
+        Some(entry)
+    );
+    assert!(
+        store.lock().is_ok(),
+        "the final commit must release its lock"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn configuration_lock_deadline_keeps_admission_closed_and_standalone_immediate() {
+    for (mode, standalone, expected_elapsed) in [
+        ("embedded", false, Duration::from_secs(5)),
+        ("standalone", true, Duration::ZERO),
+    ] {
+        let fixture = Fixture::new();
+        let control = &fixture.control;
+        let catalog = control.root.join("tunnel.json");
+        let mut profiles: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&catalog).unwrap()).unwrap();
+        profiles[0]["host_mode"] = json!(mode);
+        private_file(&catalog, &serde_json::to_vec(&profiles).unwrap());
+        let prepared = control.prepare("quick", 1, standalone, None, None).unwrap();
+        let profile = control.profile("quick").unwrap();
+        let store = EnvironmentStore::open(control.root.clone()).unwrap();
+        let lock = store.lock().unwrap();
+        let started = tokio::time::Instant::now();
+        let result = control
+            .admit_forwarded_ingress(&prepared, 1, "https://fixture.trycloudflare.com", &profile)
+            .await;
+        assert!(matches!(result, Err("cloudflare_configuration_busy")));
+        assert_eq!(started.elapsed(), expected_elapsed, "{mode}");
+        assert_admission_closed(control);
+        drop(lock);
+        assert!(store.lock().is_ok());
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn configuration_lock_storage_error_is_immediate_and_not_busy() {
+    let fixture = Fixture::new();
+    let control = &fixture.control;
+    let prepared = control.prepare("quick", 1, false, None, None).unwrap();
+    let profile = control.profile("quick").unwrap();
+    std::fs::create_dir(control.root.join("setup.lock")).unwrap();
+    let started = tokio::time::Instant::now();
+    let result = control
+        .admit_forwarded_ingress(&prepared, 1, "https://fixture.trycloudflare.com", &profile)
+        .await;
+    assert!(matches!(result, Err("environment_unavailable")));
+    assert_eq!(started.elapsed(), Duration::ZERO);
+    assert_admission_closed(control);
+}
+
+#[tokio::test(start_paused = true)]
+async fn admission_revalidates_profile_after_configuration_lock_wait() {
+    for (field, value) in [
+        ("revision", json!(2)),
+        (
+            "configuration_id",
+            json!("00000000-0000-4000-8000-000000000002"),
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let control = &fixture.control;
+        let prepared = control.prepare("quick", 1, false, None, None).unwrap();
+        let profile = control.profile("quick").unwrap();
+        let store = EnvironmentStore::open(control.root.clone()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut admission = Box::pin(control.admit_forwarded_ingress(
+            &prepared,
+            1,
+            "https://fixture.trycloudflare.com",
+            &profile,
+        ));
+        assert_admission_waiting(admission.as_mut()).await;
+        let catalog = control.root.join("tunnel.json");
+        let mut profiles: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&catalog).unwrap()).unwrap();
+        profiles[0][field] = value;
+        private_file(&catalog, &serde_json::to_vec(&profiles).unwrap());
+        drop(lock);
+        assert!(matches!(
+            admission.await,
+            Err("cloudflare_revision_conflict")
+        ));
+        assert_admission_closed(control);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn admission_wait_rejects_a_replaced_attempt() {
+    let fixture = Fixture::new();
+    let control = &fixture.control;
+    let prepared = control.prepare("quick", 1, false, None, None).unwrap();
+    let profile = control.profile("quick").unwrap();
+    let store = EnvironmentStore::open(control.root.clone()).unwrap();
+    let lock = store.lock().unwrap();
+    let mut admission = Box::pin(control.admit_forwarded_ingress(
+        &prepared,
+        1,
+        "https://fixture.trycloudflare.com",
+        &profile,
+    ));
+    assert_admission_waiting(admission.as_mut()).await;
+    control
+        .stop("quick", "server-one", prepared.process_generation, None)
+        .unwrap();
+    let replacement = control.prepare("quick", 1, false, None, None).unwrap();
+    assert!(replacement.process_generation > prepared.process_generation);
+    drop(lock);
+    assert!(matches!(admission.await, Err("cloudflare_stale_attempt")));
+    assert_admission_closed(control);
+    assert_eq!(
+        control.status("quick").unwrap().process_generation,
+        replacement.process_generation
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelled_admission_wait_never_commits_in_the_background() {
+    let fixture = Fixture::new();
+    let control = &fixture.control;
+    let prepared = control.prepare("quick", 1, false, None, None).unwrap();
+    let profile = control.profile("quick").unwrap();
+    let store = EnvironmentStore::open(control.root.clone()).unwrap();
+    let lock = store.lock().unwrap();
+    let mut admission = Box::pin(control.admit_forwarded_ingress(
+        &prepared,
+        1,
+        "https://fixture.trycloudflare.com",
+        &profile,
+    ));
+    assert_admission_waiting(admission.as_mut()).await;
+    drop(admission);
+    drop(lock);
+    tokio::time::advance(Duration::from_secs(6)).await;
+    assert_admission_closed(control);
+    assert!(store.lock().is_ok());
+}
+
 #[tokio::test]
 async fn missing_runner_identity_requires_explicit_repair() {
     let fixture = Fixture::new();

@@ -22,6 +22,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(60);
 // for DNS publication and cached negative answers to settle.
 const QUICK_FORWARDING_TIMEOUT: Duration = Duration::from_secs(120);
 const LEASE_TIMEOUT: Duration = Duration::from_secs(8);
+#[cfg(not(windows))]
+const CONFIGURATION_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 const DISCOVERY_MIN_INTERVAL: Duration = Duration::from_secs(15);
 const DISCOVERY_MAX_INTERVAL: Duration = Duration::from_secs(120);
@@ -451,12 +453,54 @@ impl CloudflareControl {
             return Err("cloudflare_revision_conflict");
         }
         self.verify_owner(&current_profile).await?;
-        // No asynchronous gap may separate the final catalog check and admission.
+        self.admit_forwarded_ingress(prepared, revision, origin, &profile)
+            .await
+    }
+
+    #[cfg(not(windows))]
+    async fn lock_configuration_for_admission(
+        &self,
+        host_mode: &TunnelHostMode,
+    ) -> Result<webcodex_environment::EnvironmentLock, &'static str> {
+        let store =
+            EnvironmentStore::open(self.root.clone()).map_err(|_| "environment_unavailable")?;
+        // Embedded startup owns an asynchronous task, so a short status/configuration
+        // observation must not discard an already verified public connection.
+        // Standalone retains immediate failure: its separate control/lease budget
+        // must not inherit this wait. No retry task outlives this future.
+        let deadline = tokio::time::Instant::now() + CONFIGURATION_LOCK_TIMEOUT;
+        loop {
+            match store.lock() {
+                Ok(lock) => return Ok(lock),
+                Err(error) if error.code == "setup_busy" => {
+                    let now = tokio::time::Instant::now();
+                    if *host_mode != TunnelHostMode::Embedded || now >= deadline {
+                        return Err("cloudflare_configuration_busy");
+                    }
+                    tokio::time::sleep_until(deadline.min(now + Duration::from_millis(50))).await;
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err("cloudflare_configuration_busy");
+                    }
+                }
+                Err(_) => return Err("environment_unavailable"),
+            }
+        }
+    }
+
+    // The forwarding and Runner ownership proofs precede this final admission
+    // stage. Any configuration changes during its bounded wait still fail closed.
+    async fn admit_forwarded_ingress(
+        &self,
+        prepared: &PreparedIngress,
+        revision: u64,
+        origin: &str,
+        profile: &CloudflareTunnelRuntimeProfile,
+    ) -> Result<PublicIngressEntry, &'static str> {
         #[cfg(not(windows))]
-        let _configuration_lock = EnvironmentStore::open(self.root.clone())
-            .map_err(|_| "environment_unavailable")?
-            .lock()
-            .map_err(|_| "cloudflare_configuration_busy")?;
+        let _configuration_lock = self
+            .lock_configuration_for_admission(&profile.host_mode)
+            .await?;
+        // No asynchronous gap may separate the final catalog check and admission.
         let final_profile = self.profile(&prepared.profile_id)?;
         if final_profile.revision != revision
             || final_profile.configuration_id != profile.configuration_id

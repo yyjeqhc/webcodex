@@ -94,15 +94,40 @@ public static class WebCodexTaskArgv {
 }
 '@ | Out-Null
     }
+    function Executable-PathMatches([string]$observed, [string]$expected) {
+        if ([string]::IsNullOrEmpty($observed) -or [string]::IsNullOrEmpty($expected)) { return $false }
+        if ([string]::Equals($observed, $expected, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        # CIM can omit the extended DOS prefix retained in the child's argv[0].
+        # Only bridge an otherwise identical, unambiguous absolute DOS path.
+        # Never normalize relative/device/UNC paths or reinterpret path segments.
+        # https://learn.microsoft.com/windows/win32/fileio/naming-a-file
+        $prefix = '\\?\'
+        $observedExtended = $observed.StartsWith($prefix, [StringComparison]::Ordinal)
+        $expectedExtended = $expected.StartsWith($prefix, [StringComparison]::Ordinal)
+        if ($observedExtended -eq $expectedExtended) { return $false }
+        if ($observedExtended) { $normal = $expected; $extended = $observed.Substring($prefix.Length) }
+        else { $normal = $observed; $extended = $expected.Substring($prefix.Length) }
+        if (![string]::Equals($normal, $extended, [StringComparison]::OrdinalIgnoreCase) -or
+            $normal -cnotmatch '^[A-Za-z]:\\') { return $false }
+        foreach ($component in $normal.Substring(3).Split([char]'\')) {
+            if ([string]::IsNullOrEmpty($component) -or
+                $component -cmatch '[\x00-\x1f<>:"/|?*]' -or
+                $component.EndsWith('.') -or $component.EndsWith(' ') -or
+                $component.ToUpperInvariant() -cmatch '^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9\u00b9\u00b2\u00b3]|LPT[1-9\u00b9\u00b2\u00b3])[ ]*(\.|$)') {
+                return $false
+            }
+        }
+        return $true
+    }
     function Action-Matches($process, $program, $arguments) {
         if ($null -eq $process -or [string]::IsNullOrEmpty($process.ExecutablePath) -or
             [string]::IsNullOrEmpty($process.CommandLine) -or
-            ![string]::Equals($process.ExecutablePath, $program, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+            !(Executable-PathMatches $process.ExecutablePath $program)) { return $false }
         Initialize-ActionArgv
         $actual = [WebCodexTaskArgv]::Parse([string]$process.CommandLine)
         $expected = [WebCodexTaskArgv]::Parse('webcodex ' + $arguments)
         if ($actual.Count -ne $expected.Count -or
-            ![string]::Equals($actual[0], $program, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+            !(Executable-PathMatches $actual[0] $program)) { return $false }
         for ($index=1; $index -lt $actual.Count; $index++) {
             if ($actual[$index] -cne $expected[$index]) { return $false }
         }

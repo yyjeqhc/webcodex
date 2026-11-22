@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "source_commit": "a819e2986e20a089a460f3b67f944231f5b68902",
+  "capture_method": "Native signed-in browser UI; result text copied with the visible response Copy button. Screenshots independently inspected.",
+  "shared_runtime": {
+    "server_pid": 85083,
+    "server_instance_id": "2fd85c51-71e2-4dce-95a0-9d71b2c740e4",
+    "runner_client_id": "device-47cbdf021f154085",
+    "runner_instance_id": "a46ab516-34e5-48bb-9251-7374b0a89678",
+    "runner_pid": 75981,
+    "project_id": "agent:device-47cbdf021f154085:webcodex-2eeb7eae"
+  },
+  "command": {
+    "executable": "/usr/bin/printf",
+    "args": [
+      "desktop-shared-runtime-ok"
+    ],
+    "expected_stdout_marker": "desktop-shared-runtime-ok"
+  },
+  "file": {
+    "path": "target/desktop-acceptance-20261122/connection-proof.txt",
+    "expected_marker": "desktop-shared-runtime-ok"
+  },
+  "gemini": {
+    "conversation_url": "https://gemini.google.com/app/c385a22f80f6e904?pli=1",
+    "session_id": "wc_sess_tvkYd9WfKAXzz7r9",
+    "run_process_trace_id": "15fa24df-a1ae-4453-8816-eac0fcd7c738",
+    "independent_backend": {
+      "execution_state": "completed",
+      "state": "succeeded",
+      "exit_code": 0,
+      "job_handoff": false
+    },
+    "screenshot": "a819-gemini-browser-file-command-proof.jpg",
+    "screenshot_sha256": "a7ea3d08482e391851d6087f225f6547a0822723cdc4b2c07c63e9ca19f8553a",
+    "browser_response": "已完成 WebCodex MCP 桌面版接入验收，所有涉及的工具调用均成功（未修改任何文件、配置或服务，也未安装软件或发送消息）。实际调用结果如下：\n\n### 1. Runner ID\n\n* **Client ID (`client_id`)**：`device-47cbdf021f154085`\n* **Runner 实例 ID (`runner_instance_id`)**：`a46ab516-34e5-48bb-9251-7374b0a89678`\n\n### 2. Server 实例信息（来自 `get_runtime_status`）\n\n* **服务与版本**：`webcodex` `v0.5.0`\n* **构建信息**：`git_commit` = `a819e2986e20a089a460f3b67f944231f5b68902`（`git_dirty: false`，`built_at`: `1795358840`），目标平台 `aarch64-apple-darwin`\n* **进程与宿主信息**：`pid` = `85083`，`server_time` = `1795361645`，MCP Host profile = `direct`（`deployment_profile: \"direct\"`），连接层状态 `compatible` / `build_alignment: \"exact\"`\n\n### 3. 项目 ID（来自 `work_on_project`）\n\n* **项目 ID (`project` / `resolved_project`)**：`agent:device-47cbdf021f154085:webcodex-2eeb7eae`（`project_ref`: `~p3`）\n* **会话 ID (`session_id`)**：`wc_sess_tvkYd9WfKAXzz7r9`（`session_ref`: `~s1`）\n* **工作区状态**：定位到 `/Users/yyjeqhc/git/webcodex`（分支 `feat/desktop-first-run-experience`，HEAD `990e0a68a617b371f29431e21aea6f80910d96e9`，工作区为 `dirty` 状态，已有 4 个未提交变更路径，已保持原样未改动）\n\n### 4. 文件标记（来自 `read_files`）\n\n* **路径**：`target/desktop-acceptance-20261122/connection-proof.txt`\n* **标记（Marker）**：`desktop-shared-runtime-ok`\n* **文件内容**：\n```text\nWebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n\n```\n\n\n\n### 5. 命令退出码与 stdout（来自 `run_process`）\n\n* **执行命令**：`/usr/bin/printf`，参数 `[\"desktop-shared-runtime-ok\"]`（`cwd: \".\"`）\n* **退出码**：工具响应返回 `{\"success\": true, ...}`（未在输出 JSON 中单独暴露数值 `exit_code` 字段，属正常完成）\n* **stdout**：\n```text\ndesktop-shared-runtime-ok\n\n```"
+  },
+  "chatgpt": {
+    "app_id": "asdk_app_6b0309961b34819181603639660b6417",
+    "workbench_url": "https://chatgpt.com/mcp-app/asdk_app_6b0309961b34819181603639660b6417/open_webcodex_workbench",
+    "run_process_trace_id": "fcb598c7-db38-488b-852c-a1decf77198a",
+    "trace_time_utc": "2026-11-22T15:42:55Z",
+    "independent_backend": {
+      "success": true,
+      "numeric_exit_code_available": false,
+      "session_id": null,
+      "job_id": null
+    },
+    "screenshot": "a819-chatgpt-browser-file-command-proof.jpg",
+    "screenshot_sha256": "7d9b28a72c594e1cc3266d5f45945c4134f080cb265a6a04ab2ac3dc96621b46",
+    "browser_response": "WebCodex Desktop mini 成功连接到在线 Runner，读取了验收文件，并执行了指定的 `printf`。工具返回成功和预期的 stdout，但未提供数值退出码。\n\n| 验收项 | 实际结果 |\n|---|---|\n| Runner ID | `device-47cbdf021f154085`，在线 |\n| Runner 实例 ID | `a46ab516-34e5-48bb-9251-7374b0a89678` |\n| Server | PID `85083`，版本 `0.5.0`，构建目标 `aarch64-apple-darwin`。状态接口未返回 Server 实例 ID |\n| 主仓库 | `/Users/yyjeqhc/git/webcodex` |\n| 项目 ID | `agent:device-47cbdf021f154085:webcodex-2eeb7eae` |\n| `run_process` | 执行 `/usr/bin/printf`，唯一参数为 `desktop-shared-runtime-ok` |\n| 退出码 | `run_process` 未返回该字段，项目的 `list_jobs` 也未返回可供核实的记录 |\n| stdout | `\"desktop-shared-runtime-ok\\n\"`，按工具返回值记录 |\n\n`target/desktop-acceptance-20261122/connection-proof.txt` 的内容：\n\n```text\nWebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n```"
+  },
+  "limits": [
+    "Copied browser responses are model reports, not raw protocol payloads; backend trace observations independently confirm success.",
+    "Numeric exit 0 is independently retained for Gemini only. ChatGPT trace capture was off, with no Session/Job result carrying a numeric exit code.",
+    "The marker was checked; quoted browser text is not byte-exact stdout evidence, including its displayed newline formatting.",
+    "This evidence covers a819 before final package upgrade; later package acceptance is recorded separately."
+  ]
+}

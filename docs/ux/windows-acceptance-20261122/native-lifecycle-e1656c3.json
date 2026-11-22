@@ -1,0 +1,27 @@
+{
+  "tested_on": "Windows 11 Pro; Windows PowerShell 5.1",
+  "source": "Uncommitted backend restart fix following candidate 7ef8601; not the currently installed product",
+  "production_sha256": "e1656c301d67d7e282a403880bafe327b1308a2c2a7a48b828f0f427e3614c1b",
+  "lifecycle_fixture_sha256": "92659b88e1143ee5da618f29cc11430c40cf96c3d6247b402f301389114ee652",
+  "pid_fixture_sha256": "decd2be44b70cb98e985579817f8e38fe6fb26ef94d460f59d0a78e6ed77b752",
+  "command": "$env:WEBCODEX_PARSE_SCRIPT=[IO.File]::ReadAllText((Join-Path $fixtureRoot 'windows_user.ps1')); & (Join-Path $fixtureRoot '<fixture-name>')",
+  "results": [
+    {
+      "fixture": "windows_user_lifecycle_tests.ps1",
+      "cases": 15,
+      "stdout": "Windows user-task lifecycle cases passed: 15",
+      "success": true,
+      "stderr": "",
+      "assertion": "windows-user-task-native-lifecycle-fixture"
+    },
+    {
+      "fixture": "windows_user_pid_tests.ps1",
+      "stdout": "Windows user-task PID identity fixture passed",
+      "success": true,
+      "stderr": "",
+      "assertion": "windows-user-task-native-pid-fixture"
+    }
+  ],
+  "execution": "Two independent synchronous typed PowerShell scripts; no Job ID",
+  "scope": "Native process observation handle only against fixture process; Task Scheduler/CIM simulated in memory; no real Scheduler connection, registration or service mutation."
+}

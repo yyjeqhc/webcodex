@@ -115,14 +115,14 @@ impl<'a> OperationCompletion<'a> {
         }
         if let Some(error) = self.error {
             if error.code == "desktop_operation_cancelled" {
-                snapshot.runtime_error = None;
-                snapshot.component_errors.clear();
-            } else {
-                snapshot
-                    .component_errors
-                    .insert(error.component(), error.clone());
-                snapshot.runtime_error = Some(error.clone());
+                // Cancellation is not a new component failure and cannot
+                // invalidate unrelated errors restored from the baseline.
+                return false;
             }
+            snapshot
+                .component_errors
+                .insert(error.component(), error.clone());
+            snapshot.runtime_error = Some(error.clone());
         } else {
             let preserve = matches!(
                 self.policy.runtime_error,
@@ -130,30 +130,43 @@ impl<'a> OperationCompletion<'a> {
             ) && last_switch.is_some_and(|switch| {
                 matches!(switch.outcome.as_str(), "rolled_back" | "recovery_required")
             });
-            if !preserve {
-                match self.kind {
-                    DesktopOperationKind::RunnerRestart => {
-                        snapshot.component_errors.remove(&ErrorComponent::Runner);
-                        snapshot.component_errors.remove(&ErrorComponent::Service);
-                    }
-                    _ => {
-                        snapshot.component_errors.clear();
-                    }
-                }
-                snapshot.runtime_error = primary_component_error(snapshot);
+            if preserve {
+                return false;
             }
+            return match self.kind {
+                // An explicit setup, migration or successful environment switch
+                // establishes a different owner/identity. Prior errors belong to
+                // the replaced environment, not the new one.
+                DesktopOperationKind::LocalSetup
+                | DesktopOperationKind::RemoteSetup
+                | DesktopOperationKind::EnvironmentMigration
+                | DesktopOperationKind::RuntimeSwitch => {
+                    let changed =
+                        snapshot.runtime_error.is_some() || !snapshot.component_errors.is_empty();
+                    snapshot.component_errors.clear();
+                    snapshot.runtime_error = None;
+                    changed
+                }
+                // Starting/restarting a component is not proof that all other
+                // components recovered. Only the observed readiness can retire
+                // each transient failure, including after a successful restart.
+                DesktopOperationKind::RuntimeResume
+                | DesktopOperationKind::RunnerRestart
+                | DesktopOperationKind::EnvironmentService => {
+                    reconcile_runtime_errors_after_observation(snapshot)
+                }
+                _ => false,
+            };
         }
         true
     }
 }
 
 fn is_auto_clearable_component_error(error: &DesktopError, readiness: &ReadinessSnapshot) -> bool {
-    if error
-        .diagnostic_ref()
-        .is_some_and(|diagnostic| !diagnostic.retry_allowed)
-    {
-        return false;
-    }
+    // Whether the *failed operation* may be retried is distinct from whether a
+    // fresh, authoritative health observation proves its failure has recovered.
+    // For example, a port-conflict start must not auto-retry, but Server=Ready
+    // resolves the stale alert after the port conflict has been fixed.
     match error.code.as_str() {
         "runner_offline" | "runner_not_ready" | "runner_start_failed" | "runner_exited" => {
             readiness.runner == RunnerReadiness::Ready

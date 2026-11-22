@@ -91,7 +91,8 @@ pub enum SafeRecoveryAction {
     ObserveBeforeRetry,
     RestoreConfiguration,
     ManageProviders,
-    None,
+    #[serde(rename = "none")]
+    NoAction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -287,6 +288,7 @@ impl ErrorDiagnostic {
             }
 
             // 11. OAuth / authentication / authorization
+            "credential_repair_failed" => (Auth, ManualCheck, OpenDiagnostics, false),
             "authentication_required"
             | "workspace_authentication_required"
             | "user_credential_required"
@@ -401,19 +403,20 @@ pub fn sanitize_safe_identifier(value: &str) -> Option<String> {
         return None;
     }
     if [
-        "token",
+        // Error codes and phase identifiers legitimately contain words such as
+        // "token", "credential", and "authorization". Reject real credential
+        // markers, not these generic metadata words.
         "secret",
         "password",
-        "credential",
         "bearer",
         "cookie",
         "api_key",
-        "authorization",
         "private_key",
         "session_id",
         "wc_pat",
         "wc_agent",
         "wc_boot",
+        "wc_acct",
     ]
     .into_iter()
     .any(|sensitive| trimmed.contains(sensitive))
@@ -739,6 +742,24 @@ mod tests {
                 SafeRecoveryAction::Retry,
                 "{code} must not recommend blind retry"
             );
+        }
+    }
+
+    #[test]
+    fn diagnostic_identifiers_may_name_token_or_credential_failure_without_leaking_values() {
+        for name in [
+            "credential_repair_failed",
+            "tunnel_token_invalid",
+            "oauth_authorization_failed",
+        ] {
+            assert_eq!(sanitize_safe_identifier(name).as_deref(), Some(name));
+        }
+        for sensitive in [
+            "wc_pat_canary_value",
+            "wc_agent_canary_value",
+            "password_secret",
+        ] {
+            assert!(sanitize_safe_identifier(sensitive).is_none());
         }
     }
 

@@ -105,6 +105,20 @@ describe("Unified Desktop error normalization, classification, and reconciliatio
     expect(structured.code).toBe("server_request_failed");
     expect(structured.diagnostic?.stage).toBe("user_create");
 
+    // Error-code identifiers may name credentials without containing credential
+    // values. Do not collapse them into desktop_unknown_error.
+    for (const code of [
+      "credential_repair_failed",
+      "service_credentialinvalid",
+      "tunnel_token_invalid",
+      "oauth_authorization_failed",
+    ]) {
+      const named = normalizeDesktopError({ code, message: "private text", next_action: "Inspect" });
+      expect(named.code).toBe(code);
+      expect(extractSafeErrorDiagnostics(named).code).toBe(code);
+    }
+    expect(normalizeDesktopError({ code: "wc_pat_sensitive_value" }).code).toBe("desktop_unknown_error");
+
     const partial = normalizeDesktopError({ code: "service_foreignservice" });
     expect(desktopErrorOrigin(partial)).toBe("trusted_partial");
     expect(partial.code).toBe("service_foreignservice");
@@ -248,6 +262,26 @@ describe("Unified Desktop error normalization, classification, and reconciliatio
     expect(reconciled.component_errors?.server).toEqual(serverUnreachable);
     expect(reconciled.runtime_error).toEqual(serverUnreachable);
 
+    // Port conflicts are not safe to retry, but a new Server=Ready
+    // observation proves the old error is no longer current.
+    const resolvedPortConflict = {
+      ...stateRunnerRecovered,
+      readiness: { ...stateRunnerRecovered.readiness, server: "ready" },
+      runtime_error: {
+        code: "server_start_failed",
+        message: "Port was busy",
+        next_action: "Inspect",
+        diagnostic: {
+          component: "server",
+          recovery_kind: "manual_check",
+          safe_action: "open_diagnostics",
+          retry_allowed: false,
+          reason_code: "local_port_unavailable",
+        },
+      },
+    } as DesktopState;
+    expect(reconcileDesktopStateErrors(resolvedPortConflict).runtime_error).toBeNull();
+
     // Uncertain errors survive even when all components appear ready.
     const readyWithUncertain = {
       ...stateRunnerRecovered,
@@ -266,10 +300,25 @@ describe("Unified Desktop error normalization, classification, and reconciliatio
     // Stale profile / environment identity fences old errors from overwriting new state.
     expect(isErrorStaleForState(serverUnreachable, stateRunnerRecovered, "env-old", "env-a")).toBe(true);
     expect(isErrorStaleForState(
-      { ...serverUnreachable, diagnostic: { component: "server", recovery_kind: "user_action", safe_action: "start_server", retry_allowed: true, resource_id: "env-old" } },
+      { ...serverUnreachable, diagnostic: { component: "environment", recovery_kind: "user_action", safe_action: "start_server", retry_allowed: true, resource_id: "env-old" } },
       stateRunnerRecovered,
       "env-a",
       "env-a",
     )).toBe(true);
+    // A Cloudflare auth error is scoped to its Profile, not to the Environment;
+    // do not suppress it merely because its resource_id differs.
+    const cloudflareAuth: DesktopError = {
+      code: "cloudflare_authentication_failed",
+      message: "Cloudflare authorization rejected",
+      next_action: "Inspect",
+      diagnostic: {
+        component: "auth",
+        recovery_kind: "user_action",
+        safe_action: "check_connection",
+        retry_allowed: false,
+        resource_id: "cf-profile-1",
+      },
+    };
+    expect(isErrorStaleForState(cloudflareAuth, stateRunnerRecovered, "env-a", "env-a")).toBe(false);
   });
 });

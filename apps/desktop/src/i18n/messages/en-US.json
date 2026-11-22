@@ -349,6 +349,8 @@
   "error.revisionStaleAction": "Refresh to load the latest verified state, then review and apply the change again.",
   "error.configCorruptTitle": "Saved configuration needs recovery",
   "error.configCorruptAction": "Open Diagnostics to inspect the configuration issue or explicitly restore the last known-good backup.",
+  "error.credentialRepairFailedTitle": "Could not confirm the login credential was updated",
+  "error.credentialRepairFailedAction": "Check the current login status in Diagnostics before deciding whether to submit a credential again.",
   "error.authTitle": "Login or API credentials are missing or invalid",
   "error.authAction": "Restore or re-authorize the user credential in Diagnostics or Connections, then refresh.",
   "error.permissionTitle": "Current account does not have permission for this action",

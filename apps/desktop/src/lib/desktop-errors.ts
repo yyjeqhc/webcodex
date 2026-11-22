@@ -111,6 +111,13 @@ const SENSITIVE_FRAGMENTS = [
   "wc_acct_",
 ];
 
+// The stricter reference-ID filter below must not be used for error codes:
+// e.g. credential_repair_failed and tunnel_token_invalid are valid, public
+// diagnostic identifiers and do not contain secret values.
+const SENSITIVE_IDENTIFIER_FRAGMENTS = SENSITIVE_FRAGMENTS.filter(
+  (fragment) => !["token", "credential", "authorization"].includes(fragment),
+);
+
 const errorOrigins = new WeakMap<DesktopError, ErrorOrigin>();
 
 export function safeIdentifier(value: unknown, pattern = /^[a-z][a-z0-9_-]{1,95}$/): string | undefined {
@@ -118,7 +125,7 @@ export function safeIdentifier(value: unknown, pattern = /^[a-z][a-z0-9_-]{1,95}
   const trimmed = value.trim();
   if (trimmed.length === 0 || trimmed.length > 96 || !pattern.test(trimmed)) return undefined;
   const lowered = trimmed.toLowerCase();
-  if (SENSITIVE_FRAGMENTS.some((fragment) => lowered.includes(fragment))) return undefined;
+  if (SENSITIVE_IDENTIFIER_FRAGMENTS.some((fragment) => lowered.includes(fragment))) return undefined;
   return trimmed;
 }
 
@@ -799,6 +806,19 @@ function classifyRule(error: DesktopError, diag: {
     };
   }
 
+  // A failed credential update is not proof that the supplied credential is
+  // invalid, nor permission to repeat an outcome-uncertain credential write.
+  if (code === "credential_repair_failed") {
+    return {
+      titleKey: "error.credentialRepairFailedTitle",
+      actionKey: "error.credentialRepairFailedAction",
+      component: "auth",
+      recoveryKind: "manual_check",
+      safeAction: "open_diagnostics",
+      retryAllowed: false,
+    };
+  }
+
   // Authentication & OAuth & Permissions
   if (AUTH_CODES.has(code) || code.startsWith("oauth_") || code.startsWith("auth_")) {
     return {
@@ -1222,8 +1242,9 @@ export function resolveDesktopError(error: DesktopError, t: Translate): Resolved
  * write outcomes, or ownership/migration conflicts.
  */
 export function isTransientErrorResolvedByState(error: DesktopError, state: DesktopState): boolean {
-  const diagnostics = extractSafeErrorDiagnostics(error);
-  if (!diagnostics.retryAllowed) return false;
+  // Retry permission concerns repeating the failed write; clearing an alert
+  // after authoritative readiness is a separate operation. A Server port
+  // conflict may forbid retry and still be resolved by Server=Ready.
   switch (error.code) {
     case "runner_offline":
     case "runner_not_ready":
@@ -1262,11 +1283,15 @@ export function isErrorStaleForState(
     return true;
   }
   const diagnostics = extractSafeErrorDiagnostics(error);
+  // resource_id is not globally an Environment ID: Cloudflare auth errors
+  // may carry a Profile ID, while Runner/Server errors may carry their own
+  // identity. Compare it with persistent_environment only for components
+  // whose resource identity is explicitly the Environment.
   if (
     diagnostics.resourceId
     && state.persistent_environment
+    && (diagnostics.component === "environment" || diagnostics.component === "migration")
     && diagnostics.resourceId !== state.persistent_environment
-    && diagnostics.component !== "tunnel"
   ) {
     return true;
   }

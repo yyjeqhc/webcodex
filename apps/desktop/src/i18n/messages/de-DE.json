@@ -349,6 +349,8 @@
   "error.revisionStaleAction": "Aktualisieren Sie zuerst den aktuellen Status und führen Sie die Aktion anschließend erneut aus.",
   "error.configCorruptTitle": "Gespeicherte Konfiguration muss wiederhergestellt werden",
   "error.configCorruptAction": "Öffnen Sie die Diagnose, um das Problem zu prüfen oder die letzte funktionierende Sicherung wiederherzustellen.",
+  "error.credentialRepairFailedTitle": "Aktualisierung der Anmeldedaten konnte nicht bestätigt werden",
+  "error.credentialRepairFailedAction": "Prüfen Sie den aktuellen Anmeldestatus in der Diagnose, bevor Sie die Anmeldedaten erneut übermitteln.",
   "error.authTitle": "Anmelde- oder API-Daten fehlen oder sind ungültig",
   "error.authAction": "Stellen Sie die Benutzer-Anmeldedaten unter Diagnose oder Verbindungen wieder her und aktualisieren Sie.",
   "error.permissionTitle": "Aktuelles Konto hat keine Berechtigung für diese Aktion",

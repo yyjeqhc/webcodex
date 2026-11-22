@@ -349,6 +349,8 @@
   "error.revisionStaleAction": "请先刷新获取最新状态，核对当前配置后再重新提交。",
   "error.configCorruptTitle": "已保存的配置损坏或迁移失败",
   "error.configCorruptAction": "请打开故障排查查看配置异常，或显式恢复上一个已知可用的配置备份。",
+  "error.credentialRepairFailedTitle": "无法确认登录凭据已更新",
+  "error.credentialRepairFailedAction": "请先在故障排查中核对当前登录状态，再决定是否重新提交凭据。",
   "error.authTitle": "登录或 API 凭据缺失或无效",
   "error.authAction": "请在故障排查或连接页面修复用户凭据或重新授权，然后刷新状态。",
   "error.permissionTitle": "当前账号没有执行此操作的权限",

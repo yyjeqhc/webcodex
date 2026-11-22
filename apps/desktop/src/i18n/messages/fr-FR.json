@@ -349,6 +349,8 @@
   "error.revisionStaleAction": "Actualisez pour charger le dernier état vérifié, puis vérifiez avant de recommencer.",
   "error.configCorruptTitle": "La configuration enregistrée doit être restaurée",
   "error.configCorruptAction": "Ouvrez le diagnostic pour examiner le problème ou restaurer la dernière sauvegarde valide.",
+  "error.credentialRepairFailedTitle": "La mise à jour des identifiants n’a pas pu être confirmée",
+  "error.credentialRepairFailedAction": "Vérifiez l’état actuel de connexion dans les diagnostics avant de soumettre à nouveau les identifiants.",
   "error.authTitle": "Identifiants de connexion ou API manquants ou invalides",
   "error.authAction": "Restaurez ou réautorisez les identifiants dans Diagnostic ou Connexions, puis actualisez.",
   "error.permissionTitle": "Le compte actuel n'a pas l'autorisation pour cette action",

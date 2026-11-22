@@ -349,6 +349,8 @@
   "error.revisionStaleAction": "最新の状態を再読み込みして確認してから、変更をやり直してください。",
   "error.configCorruptTitle": "保存された設定の復旧が必要です",
   "error.configCorruptAction": "トラブルシューティングを開き、設定の問題を確認するか、以前の正常なバックアップを復元してください。",
+  "error.credentialRepairFailedTitle": "ログイン認証情報の更新を確認できませんでした",
+  "error.credentialRepairFailedAction": "認証情報を再送信する前に、診断画面で現在のログイン状態を確認してください。",
   "error.authTitle": "ログインまたは API 資格情報が不足しているか無効です",
   "error.authAction": "トラブルシューティングまたは接続画面で資格情報を修復・再認証してから更新してください。",
   "error.permissionTitle": "現在のアカウントにはこの操作の権限がありません",

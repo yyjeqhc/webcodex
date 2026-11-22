@@ -349,6 +349,8 @@
   "error.revisionStaleAction": "請先重新整理取得最新狀態，核對目前設定後再重新提交。",
   "error.configCorruptTitle": "已儲存的設定損毀或移轉失敗",
   "error.configCorruptAction": "請開啟故障排除查看設定異常，或明確還原上一個已知可用的設定備份。",
+  "error.credentialRepairFailedTitle": "無法確認登入憑證已更新",
+  "error.credentialRepairFailedAction": "請先在疑難排解中檢查目前登入狀態，再決定是否重新提交憑證。",
   "error.authTitle": "登入或 API 憑證缺失或無效",
   "error.authAction": "請在故障排除或連線頁面修復使用者憑證或重新授權，然後重新整理狀態。",
   "error.permissionTitle": "目前帳號沒有執行此操作的權限",

@@ -664,7 +664,7 @@ function classifyRule(error: DesktopError, diag: {
         recoveryKind: "auto_recovering",
         safeAction: "refresh_state",
         secondaryAction: "open_diagnostics",
-        retryAllowed: true,
+        retryAllowed: false,
       };
     }
     if (diag.httpStatus === 409 || diag.reasonCode === "http_conflict") {
@@ -686,7 +686,7 @@ function classifyRule(error: DesktopError, diag: {
         recoveryKind: "manual_check",
         safeAction: "open_diagnostics",
         secondaryAction: "open_activity",
-        retryAllowed: true,
+        retryAllowed: false,
       };
     }
     return {
@@ -696,7 +696,7 @@ function classifyRule(error: DesktopError, diag: {
       recoveryKind: "user_action",
       safeAction: "open_diagnostics",
       secondaryAction: "open_activity",
-      retryAllowed: diag.httpStatus !== 400,
+      retryAllowed: false,
     };
   }
 
@@ -897,7 +897,7 @@ function classifyRule(error: DesktopError, diag: {
       recoveryKind: code === "tunnel_unavailable" ? "auto_recovering" : "user_action",
       safeAction: code === "tunnel_proxy_invalid" ? "open_network_settings" : "check_connection",
       secondaryAction: "open_diagnostics",
-      retryAllowed: true,
+      retryAllowed: code !== "cloudflare_control_unavailable",
     };
   }
 

@@ -162,7 +162,12 @@ impl ErrorDiagnostic {
             }
 
             // 4. Server HTTP request failures & workspace API failures
-            "server_request_failed" | "workspace_unavailable" => (Server, UserAction, Retry, true),
+            // These originate from HTTP POST handlers, including non-idempotent
+            // setup and workspace operations. An error response alone does not
+            // prove the write was unapplied. Offer diagnostics, not blind replay.
+            "server_request_failed" | "workspace_unavailable" => {
+                (Server, ManualCheck, OpenDiagnostics, false)
+            }
             "server_conflict" => (Server, ConfirmationRequired, ObserveBeforeRetry, false),
             "response_limit" | "response_invalid" => (Server, ManualCheck, OpenDiagnostics, false),
 
@@ -592,14 +597,16 @@ impl DesktopError {
                     diagnostic.retry_allowed = false;
                 }
                 503 => {
+                    // A read-only observation is allowed, but the original POST
+                    // must not be replayed without reconciling its effects.
                     diagnostic.recovery_kind = RecoveryKind::AutoRecovering;
                     diagnostic.safe_action = SafeRecoveryAction::RefreshState;
-                    diagnostic.retry_allowed = true;
+                    diagnostic.retry_allowed = false;
                 }
                 500..=599 => {
                     diagnostic.recovery_kind = RecoveryKind::ManualCheck;
                     diagnostic.safe_action = SafeRecoveryAction::OpenDiagnostics;
-                    diagnostic.retry_allowed = true;
+                    diagnostic.retry_allowed = false;
                 }
                 _ => {}
             }
@@ -714,9 +721,30 @@ mod tests {
             Some("http_service_unavailable")
         );
         assert_eq!(d503.recovery_kind, RecoveryKind::AutoRecovering);
-        assert!(d503.retry_allowed);
+        assert_eq!(d503.safe_action, SafeRecoveryAction::RefreshState);
+        assert!(!d503.retry_allowed, "503 does not prove POST had no effect");
         assert_eq!(d400.stage.as_deref(), Some("user_create"));
         assert_eq!(d503.stage.as_deref(), Some("user_create"));
+    }
+
+    #[test]
+    fn http_post_failures_require_reconciliation_before_replay() {
+        for code in [
+            "server_request_failed",
+            "workspace_unavailable",
+            "cloudflare_control_unavailable",
+        ] {
+            let base = DesktopError::new(code, "POST rejected", "Inspect");
+            if code != "cloudflare_control_unavailable" {
+                assert!(!base.diagnostic_ref().unwrap().retry_allowed);
+            }
+            for status in [400, 409, 500, 503] {
+                let error = base.clone().with_http_status(status);
+                let diagnostic = error.diagnostic_ref().unwrap();
+                assert!(!diagnostic.retry_allowed, "{code}: HTTP {status}");
+                assert_ne!(diagnostic.safe_action, SafeRecoveryAction::Retry);
+            }
+        }
     }
 
     #[test]

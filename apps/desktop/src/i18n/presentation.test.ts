@@ -173,7 +173,9 @@ describe("Unified Desktop error normalization, classification, and reconciliatio
     expect(res400.stageLabel).toBe(messages["zh-CN"]["error.stage.user_create"]);
     expect(res503.stageLabel).toBe(messages["zh-CN"]["error.stage.user_create"]);
     expect(res400.diagnostics.retryAllowed).toBe(false);
-    expect(res503.diagnostics.retryAllowed).toBe(true);
+    // A 503 allows read-only status checks, not replay of the original POST.
+    expect(res503.diagnostics.retryAllowed).toBe(false);
+    expect(res503.diagnostics.safeAction).toBe("refresh_state");
     expect(res503.diagnostics.recoveryKind).toBe("auto_recovering");
   });
 
@@ -281,6 +283,25 @@ describe("Unified Desktop error normalization, classification, and reconciliatio
       },
     } as DesktopState;
     expect(reconcileDesktopStateErrors(resolvedPortConflict).runtime_error).toBeNull();
+
+    // HTTP 503 allows checking Server readiness, never replaying the
+    // original setup/Workspace POST whose outcome is not proven.
+    const pendingPost = normalizeDesktopError({
+      code: "server_request_failed",
+      message: "Server returned HTTP 503",
+      next_action: "Check Server",
+      diagnostic: {
+        component: "server",
+        stage: "user_create",
+        recovery_kind: "auto_recovering",
+        safe_action: "refresh_state",
+        retry_allowed: true,
+        http_status: 503,
+      },
+    });
+    const pendingDiag = extractSafeErrorDiagnostics(pendingPost);
+    expect(pendingDiag.safeAction).toBe("refresh_state");
+    expect(pendingDiag.retryAllowed).toBe(false);
 
     // Uncertain errors survive even when all components appear ready.
     const readyWithUncertain = {

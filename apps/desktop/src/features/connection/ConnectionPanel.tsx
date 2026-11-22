@@ -11,7 +11,7 @@ import { useProduct } from "../../i18n/product";
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import { ChatgptObservation, desktopStatusPresentation } from "../workspace/WorkspaceStatus";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
-import { desktopIdentity } from "../../lib/desktop-observation";
+import { desktopIdentity, type ChatgptActivityQueryStatus } from "../../lib/desktop-observation";
 import { FirstRun } from "../onboarding/FirstRun";
 import { LocalMigrationSetup } from "../onboarding/LocalMigrationSetup";
 import { FirstReadGuide } from "../onboarding/FirstRunCompletion";
@@ -19,8 +19,9 @@ import { ConnectionEditor } from "./ConnectionEditor";
 import { GeminiConnections } from "./GeminiConnections";
 import { ConnectionCard } from "./ConnectionCard";
 
-export function ConnectionPanel({ state, onState, onSettings, initialClient }: {
+export function ConnectionPanel({ state, onState, onSettings, initialClient, chatgptActivityQueryStatus }: {
   initialClient?: "chatgpt" | "gemini";
+  chatgptActivityQueryStatus?: ChatgptActivityQueryStatus;
   state: DesktopState;
   onState: (state: DesktopState) => void;
   onSettings: (section: "network" | "runtime" | "diagnostics") => void;
@@ -199,7 +200,7 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient }: {
         <div className="shell-actions"><p>{c("localRuntimeNeeded")}</p>
           <button type="button" className="secondary-button" disabled={disabled} onClick={() => void desktopApi.resumeSavedRuntime().then(onState).catch(value => setFailed(normalizeDesktopError(value)))}>{p("start")} WebCodex</button></div>}
       {openaiProfiles.some(profile => profile.ready) && <p className="field-help">{c("chatgptNextStep")}</p>}
-      {(openaiProfiles.length > 0 || state.chatgpt_activity?.observed) && <ChatgptObservation state={state} />}
+      {(openaiProfiles.length > 0 || state.chatgpt_activity?.observed) && <ChatgptObservation state={state} queryStatus={chatgptActivityQueryStatus} />}
       <div className="connection-list">{openaiProfiles.map(profile => <ConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.runtime_ready} busy={disabled || !canManageConnections} copied={copiedId === profile.id}
         onAction={action => void run(profile.id, action)} onSettings={onSettings}
         onEdit={() => { setSaved(false); setEditor({ profile }); }} onDelete={() => { setFailed(null); setDeleting(profile); }}

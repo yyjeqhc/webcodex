@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeDesktopNavigation } from "../lib/desktop-navigation";
 import { desktopApi } from "../lib/desktop-api";
-import { desktopIdentity } from "../lib/desktop-observation";
+import { desktopIdentity, type ChatgptActivityQueryStatus } from "../lib/desktop-observation";
 import { isErrorStaleForState, reconcileDesktopStateErrors } from "../lib/desktop-errors";
 import type { ActivityEntry, DesktopError, DesktopState } from "../models/topology";
 import { normalizeDesktopError } from "../i18n/presentation";
@@ -30,6 +30,7 @@ export function useDesktopWorkspace() {
   }, [selectPage]);
   const [startupAttempt, setStartupAttempt] = useState(0);
   const [windowFocused, setWindowFocused] = useState(true);
+  const [chatgptActivityQuery, setChatgptActivityQuery] = useState<{ identity: string; status: ChatgptActivityQueryStatus } | null>(null);
   const latestGeneration = useRef(0);
   const stateVersionRef = useRef(0);
   const activeIdentityRef = useRef<string | null>(null);
@@ -44,6 +45,10 @@ export function useDesktopWorkspace() {
       && !refreshing
       && windowFocused,
   );
+  const chatgptActivityIdentity = state ? desktopIdentity(state) : null;
+  const chatgptActivityQueryStatus: ChatgptActivityQueryStatus = chatgptActivityQuery?.identity === chatgptActivityIdentity
+    ? chatgptActivityQuery.status === "pending" && !shouldObserveChatgptActivity ? "idle" : chatgptActivityQuery.status
+    : "idle";
 
   useEffect(() => {
     const onFocus = () => setWindowFocused(true);
@@ -274,17 +279,25 @@ export function useDesktopWorkspace() {
   }, [commitState, hasCurrentOperation, hasLoadedState, refreshing, state?.persistent_environment]);
 
   useEffect(() => {
-    if (!shouldObserveChatgptActivity) return;
+    if (!shouldObserveChatgptActivity || !chatgptActivityIdentity) return;
 
+    const identity = chatgptActivityIdentity;
     let cancelled = false;
     let timeoutId: number | undefined;
+    const current = () => !cancelled && activeIdentityRef.current === identity;
     const observe = async () => {
+      if (!current()) return;
+      setChatgptActivityQuery({ identity, status: "pending" });
       try {
         const next = await desktopApi.observeChatgptActivity();
-        if (!cancelled) commitChatgptActivity(next);
+        if (current()) {
+          if (desktopIdentity(next) === identity) commitChatgptActivity(next);
+          setChatgptActivityQuery({ identity, status: "idle" });
+        }
       } catch {
-        // Observation is best-effort. Keep the runtime usable and retry only
-        // while the Desktop window remains focused.
+        // A failed read is not an empty activity history. Keep it scoped to the
+        // same runtime identity and preserve any previously observed evidence.
+        if (current()) setChatgptActivityQuery({ identity, status: "failed" });
       } finally {
         if (!cancelled) {
           timeoutId = window.setTimeout(
@@ -300,7 +313,7 @@ export function useDesktopWorkspace() {
       cancelled = true;
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     };
-  }, [commitChatgptActivity, shouldObserveChatgptActivity]);
+  }, [chatgptActivityIdentity, commitChatgptActivity, shouldObserveChatgptActivity]);
 
   useEffect(() => {
     if (navigation !== "activity" && !(navigation === "home" && hasLoadedState && state?.topology)) return;
@@ -366,5 +379,5 @@ export function useDesktopWorkspace() {
     }
   };
 
-  return { state, activity, navigation, previousPage, setNavigation, refreshing: refreshing || runtimeObservations > 0, preserveWorkspacePollDeadline: runtimeObservations > 0 && !refreshing, error, setError, cancelSubmittingId, showSetup, setupOrigin, closeSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation };
+  return { state, activity, chatgptActivityQueryStatus, navigation, previousPage, setNavigation, refreshing: refreshing || runtimeObservations > 0, preserveWorkspacePollDeadline: runtimeObservations > 0 && !refreshing, error, setError, cancelSubmittingId, showSetup, setupOrigin, closeSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation };
 }

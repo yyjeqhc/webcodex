@@ -774,9 +774,47 @@ beforeEach(() => {
   it("does not equate an unmanaged Desktop tunnel with ChatGPT being disconnected", async () => {
     api.getState.mockResolvedValue(readyState); renderApp();
     await screen.findByRole("heading", { level: 1, name: "概览" });
-    expect(screen.getByText(/尚未观察到 ChatGPT 活动/)).toBeInTheDocument();
+    expect(screen.getByText(/尚未检查 ChatGPT 活动/)).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("WebCodex · 运行中");
     expect(screen.queryByText(/ChatGPT 未连接|等待 ChatGPT|不代表 ChatGPT/)).not.toBeInTheDocument();
+  });
+
+  it("distinguishes a pending or failed ChatGPT read from a successfully empty observation", async () => {
+    const pending = deferred<DesktopState>();
+    api.getState.mockResolvedValue(readyState);
+    api.observeChatgptActivity.mockReturnValueOnce(pending.promise);
+    renderApp();
+    await screen.findByText(/正在检查 ChatGPT 活动/);
+    expect(screen.queryByText(/尚未观察到 ChatGPT 活动/)).not.toBeInTheDocument();
+
+    await act(async () => { pending.reject({ code: "webcodex_command_failed" }); });
+    await screen.findByText(/无法检查 ChatGPT 活动/);
+    expect(screen.queryByText(/尚未观察到 ChatGPT 活动/)).not.toBeInTheDocument();
+
+    api.observeChatgptActivity.mockResolvedValue({ ...readyState, chatgpt_activity: { observed: false, last_meaningful_activity_at_ms: null } });
+    await act(async () => { window.dispatchEvent(new Event("blur")); });
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await screen.findByText(/尚未观察到 ChatGPT 活动/);
+    expect(screen.queryByText(/无法检查 ChatGPT 活动/)).not.toBeInTheDocument();
+    expect(api.observeChatgptActivity).toHaveBeenCalledTimes(2);
+  });
+
+  it("discards a late ChatGPT read failure after the displayed project identity changes", async () => {
+    const pending = deferred<DesktopState>();
+    const switched: DesktopState = { ...readyState, project: { ...readyState.project!, runtime_project_id: "agent:desktop:other" } };
+    api.getState.mockResolvedValue(readyState);
+    api.observeChatgptActivity.mockReturnValueOnce(pending.promise).mockResolvedValue(switched);
+    renderApp();
+    await screen.findByText(/正在检查 ChatGPT 活动/);
+    api.getState.mockResolvedValue(switched);
+    api.refresh.mockResolvedValue(switched);
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await screen.findByText(/尚未检查 ChatGPT 活动/);
+    await waitFor(() => expect(api.observeChatgptActivity).toHaveBeenCalledTimes(2));
+    await act(async () => { pending.reject({ code: "webcodex_command_failed" }); });
+    expect(screen.getByText(/尚未检查 ChatGPT 活动/)).toBeInTheDocument();
+    expect(screen.queryByText(/无法检查 ChatGPT 活动/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/尚未观察到 ChatGPT 活动/)).not.toBeInTheDocument();
   });
 
   it("rechecks ChatGPT use when the user returns to an already-open Desktop", async () => {
@@ -1347,7 +1385,7 @@ beforeEach(() => {
       });
 
       expect(screen.getByRole("button", {name:/ChatGPT.*连接已就绪/})).toBeVisible();
-      expect(screen.getByText(/尚未观察到 ChatGPT 活动/)).toBeInTheDocument();
+      expect(screen.getByText(/尚未检查 ChatGPT 活动/)).toBeInTheDocument();
       expect(screen.queryByText(/等待 ChatGPT|ChatGPT 未连接|外部连接已验证/)).not.toBeInTheDocument();
       expect(api.getState).toHaveBeenCalledTimes(1);
 

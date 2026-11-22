@@ -320,6 +320,8 @@ describe("product workspace task flows", () => {
     render(wrap(<Dashboard state={viewer} refreshing={false} onRefresh={vi.fn()} activity={[]}
       onConnection={vi.fn()} onNavigate={vi.fn()} onStopQuickShare={vi.fn()} />, viewer));
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Desktop events/ })).toHaveTextContent("No Desktop events in this app session");
+    expect(screen.queryByRole("button", { name: /Recent activity/ })).not.toBeInTheDocument();
   });
   it("describes locally ready tunnels without counting a live but unhealthy process as ready", () => {
     const selected = { ...state, connections: connectionSnapshot(connectionFixture({ ready: false, process_started: true, lifecycle: "running" })) };
@@ -440,7 +442,14 @@ describe("product workspace task flows", () => {
   });
 
   it("shows Runner Projects as read-only observed runtime inventory", async () => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "projects"
+      ? Promise.resolve({ projects: [alpha, { ...beta, sessions: undefined }], total: 2, truncated: false })
+      : normal(command, value));
     render(wrap(<ProjectsPanel />));    await screen.findByLabelText("Open sessions: 2"); expect(await screen.findAllByText("feat/export")).toHaveLength(2);
+    const missingSummary = screen.getByRole("row", { name: "beta" });
+    expect(within(missingSummary).getByText("Not checked")).toBeInTheDocument();
+    expect(missingSummary).not.toHaveTextContent("No activity observed yet");
     expect(screen.getAllByRole("row")).toHaveLength(3);
     for (const row of screen.getAllByRole("row")) expect(within(row).queryByRole("button", { name: /Use project|Select project/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Current")).not.toBeInTheDocument();
@@ -836,11 +845,24 @@ describe("product workspace task flows", () => {
     expect(screen.queryByText("Stale project")).not.toBeInTheDocument();
     expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
   });
+  it.each([
+    ["idle", "ChatGPT activity has not been checked"],
+    ["pending", "Checking ChatGPT activity…"],
+    ["failed", "Could not check ChatGPT activity"],
+  ] as const)("distinguishes an %s ChatGPT query from an empty observation", (queryStatus, label) => {
+    render(<LocaleProvider><ChatgptObservation state={{ ...state, chatgpt_activity: null }} queryStatus={queryStatus} /></LocaleProvider>);
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.queryByText("No ChatGPT activity observed yet")).not.toBeInTheDocument();
+  });
   it("uses timestamps, never inferred ChatGPT presence", () => {
     const view = render(<LocaleProvider><ChatgptObservation state={state} /></LocaleProvider>);
     expect(screen.getByText("No ChatGPT activity observed yet")).toBeInTheDocument();
-    view.rerender(<LocaleProvider><ChatgptObservation state={{ ...state, chatgpt_activity: { observed: true, last_meaningful_activity_at_ms: Date.now() - 120_000 } }} /></LocaleProvider>);
+    const observed = { ...state, chatgpt_activity: { observed: true, last_meaningful_activity_at_ms: Date.now() - 120_000 } };
+    view.rerender(<LocaleProvider><ChatgptObservation state={observed} /></LocaleProvider>);
     expect(screen.getByText(/Last ChatGPT activity/)).toHaveTextContent("2 minutes ago");
+    view.rerender(<LocaleProvider><ChatgptObservation state={observed} queryStatus="failed" /></LocaleProvider>);
+    expect(screen.getByText(/Last ChatGPT activity/)).toHaveTextContent("2 minutes ago");
+    expect(screen.getByText(/Last ChatGPT activity/)).toHaveTextContent("Could not check ChatGPT activity");
     expect(screen.queryByText(/connected|disconnected|Waiting for ChatGPT/i)).not.toBeInTheDocument();
   });
 });

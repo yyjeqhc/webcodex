@@ -5,7 +5,8 @@ import { ArrowRight, Folder, History, MessageSquare } from "lucide-react";
 import { useProduct } from "../../i18n/product";
 import { useLocale } from "../../i18n/locale";
 import { activityMessage } from "../../i18n/presentation";
-import { observationTime } from "../workspace/WorkspaceStatus";
+import { ChatgptObservationText } from "../workspace/WorkspaceStatus";
+import type { ChatgptActivityQueryStatus } from "../../lib/desktop-observation";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import { useCloudflareControl } from "../connection/useCloudflareControl";
 import { defaultGeminiProfile, verifiedPublicOrigin } from "../connection/gemini-status";
@@ -22,6 +23,7 @@ function GeminiStatus({ profile, ready }: { profile: TunnelConnection; ready: bo
 
 interface DashboardProps {
   state: DesktopState;
+  chatgptActivityQueryStatus?: ChatgptActivityQueryStatus;
   activity: ActivityEntry[];
   refreshing: boolean;
   onRefresh: () => Promise<void>;
@@ -29,9 +31,9 @@ interface DashboardProps {
   onConnection: (client: "chatgpt" | "gemini") => void;
   onStopQuickShare: () => void;
 }
-export function Dashboard({ state, activity, refreshing, onRefresh, onNavigate, onConnection, onStopQuickShare }: DashboardProps) {
+export function Dashboard({ state, chatgptActivityQueryStatus, activity, refreshing, onRefresh, onNavigate, onConnection, onStopQuickShare }: DashboardProps) {
   const p = useProduct();
-  const { t, formatTime, locale } = useLocale();
+  const { t, formatTime } = useLocale();
   const workspace = useWorkspace();
   const profiles = state.connections?.profiles ?? [];
   const openai = profiles.filter(profile => !profile.provider || profile.provider.kind === "openai");
@@ -41,7 +43,6 @@ export function Dashboard({ state, activity, refreshing, onRefresh, onNavigate, 
     : openai.some(profile => profile.lifecycle === "starting") ? "appLink.start"
     : openai.some(profile => profile.lifecycle === "error" || profile.health === "degraded") ? "common.error"
     : state.topology?.server.kind === "remote" || !state.connections ? "appLink.check" : "appLink.off";
-  const lastChatgpt = state.chatgpt_activity?.last_meaningful_activity_at_ms;
   const latest = [...activity].reverse().find(entry => !entry.event_kind.startsWith("process_"));
   return <section className="page-section workspace-page dashboard-page" aria-labelledby="home-title" data-webcodex-page="home">
     <header className="page-heading-row">
@@ -51,10 +52,10 @@ export function Dashboard({ state, activity, refreshing, onRefresh, onNavigate, 
       <Button variant="default" className="secondary-button" disabled={Boolean(state.current_operation) || refreshing} onClick={() => void onRefresh()}>{p("refresh")}</Button>
     </header>
     <div className="dashboard-shortcuts">
-      <button type="button" onClick={() => onConnection("chatgpt")}><MessageSquare aria-hidden="true" /><strong>ChatGPT</strong><span>{t(chatgpt)}<br />{lastChatgpt ? p("lastChatgpt") + " · " + observationTime(lastChatgpt, locale) : p("noChatgpt")}</span><ArrowRight aria-hidden="true" /></button>
+      <button type="button" onClick={() => onConnection("chatgpt")}><MessageSquare aria-hidden="true" /><strong>ChatGPT</strong><span>{t(chatgpt)}<br /><ChatgptObservationText state={state} queryStatus={chatgptActivityQueryStatus} /></span><ArrowRight aria-hidden="true" /></button>
       <button type="button" onClick={() => onConnection("gemini")}><MessageSquare aria-hidden="true" /><strong>Gemini</strong><span>{gemini ? <GeminiStatus key={JSON.stringify([gemini.configuration_id, gemini.revision])} profile={gemini} ready={Boolean(state.persistent_environment && state.readiness.server === "ready")} /> : t(state.connections?.config_error ? "common.error" : "appLink.off")}</span><ArrowRight aria-hidden="true" /></button>
       <button type="button" onClick={() => onNavigate("projects")}><Folder aria-hidden="true" /><strong>{p("projects")}</strong><span>{workspace.projects.length}</span><ArrowRight aria-hidden="true" /></button>
-      <button type="button" onClick={() => onNavigate("activity")}><History aria-hidden="true" /><strong>{p("recentActivity")}</strong><span>{latest ? activityMessage(latest, t) + " · " + formatTime(latest.timestamp_ms) : p("noActivity")}</span><ArrowRight aria-hidden="true" /></button>
+      <button type="button" onClick={() => onNavigate("activity")}><History aria-hidden="true" /><strong>{p("desktopEvents")}</strong><span>{latest ? activityMessage(latest, t) + " · " + formatTime(latest.timestamp_ms) : p("noDesktopEvents")}</span><ArrowRight aria-hidden="true" /></button>
     </div>
     {state.topology?.experience === "quick_share" && state.quick_share && <button className="secondary-button" onClick={onStopQuickShare} disabled={Boolean(state.current_operation)}>{p("stop")} Quick Share</button>}
   </section>;

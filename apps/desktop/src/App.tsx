@@ -33,7 +33,7 @@ function DesktopApp() {
   const [connectionFocus, setConnectionFocus] = useState<"chatgpt" | "gemini">();
   const [extensionTab, setExtensionTab] = useState<ExtensionTab>();
   const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | "access" | undefined>();
-  const { state, activity, navigation, previousPage, setNavigation, refreshing, preserveWorkspacePollDeadline, error, setError, cancelSubmittingId, showSetup, setupOrigin, closeSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation } = useDesktopWorkspace();
+  const { state, activity, chatgptActivityQueryStatus, navigation, previousPage, setNavigation, refreshing, preserveWorkspacePollDeadline, error, setError, cancelSubmittingId, showSetup, setupOrigin, closeSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation } = useDesktopWorkspace();
   const updates = useRuntimeUpdates(Boolean(state && !state.current_operation && !state.configuration_issue));
   const openSettings = (section: "diagnostics" | "runtime" | "network" | "access") => { setSettingsSection(section); setNavigation("settings"); };
   if (!state) {
@@ -161,6 +161,7 @@ function DesktopApp() {
         ) : (
           <Dashboard
             state={state}
+            chatgptActivityQueryStatus={chatgptActivityQueryStatus}
             refreshing={refreshing}
             onRefresh={refresh}
             activity={activity}
@@ -172,7 +173,7 @@ function DesktopApp() {
         {navigation === "projects" && (
           <ProjectsPanel onComputerSettings={() => openSettings("access")} onState={commitState} />
         )}
-        {navigation === "connection" && <ConnectionPanel initialClient={connectionFocus} key={state.persistent_environment} state={state} onState={commitState} onSettings={openSettings} />}
+        {navigation === "connection" && <ConnectionPanel initialClient={connectionFocus} key={state.persistent_environment} state={state} chatgptActivityQueryStatus={chatgptActivityQueryStatus} onState={commitState} onSettings={openSettings} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
         {navigation === "extensions" && <ExtensionsPanel state={state} onState={commitState} initialTab={extensionTab} />}
         {navigation === "console" && <RuntimeConsolePanel state={state} onSettings={() => openSettings("runtime")} />}

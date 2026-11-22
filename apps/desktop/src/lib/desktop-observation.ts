@@ -2,6 +2,8 @@ import { normalizeDesktopError } from "../i18n/presentation";
 import { desktopApi } from "./desktop-api";
 import type { DesktopError, DesktopState } from "../models/topology";
 
+export type ChatgptActivityQueryStatus = "idle" | "pending" | "failed";
+
 // Invalidate observations and drafts when their published target changes.
 // Native target/revision checks remain authoritative for every mutation.
 export function desktopIdentity(state: DesktopState): string {

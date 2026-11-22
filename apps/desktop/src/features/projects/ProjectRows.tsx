@@ -67,7 +67,7 @@ function ProjectRow({ project, compact = false, onUnregister, selected = false, 
   const path = displayProjectPath(project.path);
   const runner = projectRunnerId(project);
   const origin = runner ? <span className="project-table-meta" title={`${p("executionDevice")} · ${runner}`}>{runner === state.workspace_runner?.client_id ? p("thisComputer") : runner}</span> : null;
-  const updated = observationTime(project.sessions?.latest_updated_at ? project.sessions.latest_updated_at * 1000 : null, locale);
+  const updated = project.sessions ? observationTime(project.sessions.latest_updated_at ? project.sessions.latest_updated_at * 1000 : null, locale) : p("unknown");
   const remove = onUnregister && runner === state.workspace_runner?.client_id && <Tooltip label={p("unregisterProject")} openDelay={400}>
     <ActionIcon className="project-remove-action" variant="subtle" color="gray" size={36} disabled={busy || !project.id || !project.connected}
       aria-label={`${p("unregisterProject")} ${name}`} onClick={() => onUnregister(project)}><Trash2 size={16} /></ActionIcon>

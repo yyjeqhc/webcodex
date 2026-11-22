@@ -703,7 +703,7 @@ impl ProviderConnection {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = ManagedChild::spawn(&mut command)
+        let mut child = ManagedChild::spawn_background(&mut command)
             .map_err(|_| ProviderFailure::before_send("provider_spawn_failed"))?;
         let stdin = child
             .child_mut()

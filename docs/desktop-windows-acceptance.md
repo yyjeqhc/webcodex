@@ -25,4 +25,22 @@ On Windows ARM64, repeat the component download on a host that reports x64 user-
 - Disconnect the app in Gemini. Edit the Desktop connection, turn off dynamic registration and apply. Verify old grants fail and ChatGPT still works.
 - Restore the VM snapshot to roll back the complete test. For a manual downgrade, use this build to stop the verified owned tasks first. As the same user, run `webcodex environment uninstall-service runner` and `webcodex environment uninstall-service server`. Use `uninstall-service tunnel --profile PROFILE` for an owned standalone tunnel. Preserve the Environment directory and credentials, restore the matching older package and use its `environment resume` to recreate services. Inspect unresolved ownership or journal findings before continuing.
 
+## Automated console regression
+
+```powershell
+cargo test --locked -p webcodex-environment --lib service::windows_user::tests
+cargo test --locked -p webcodex-runner --bin webcodex-runner --features runner-real-process-tests runner_real_process_git_ -- --ignored --test-threads=1
+```
+
+The native inventory regression first creates a test owner with no console, then
+runs the same bounded Git and SSH capability-probe paths used by Runner startup.
+It checks that
+this GUI/service-like launch creates no console window, while preserving stdin
+EOF, both redirected output streams and the exit code. Running only from a
+terminal can mask the failure through console inheritance. A hidden console from
+`CREATE_NO_WINDOW` is valid; zero console membership is not required. Background
+Runtime children use explicit windowless spawning, while ordinary interactive
+CLI spawning retains its existing console behavior. These checks do not replace
+the logon and visual installer checks above.
+
 Record visual console behavior, logon recovery, real OAuth consent and real tool calls on Windows. The automated fixtures exercise separate process and protocol boundaries.

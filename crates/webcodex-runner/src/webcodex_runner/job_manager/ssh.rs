@@ -126,7 +126,7 @@ impl JobManager {
             return;
         };
         let start = Instant::now();
-        let spawn = ManagedChild::spawn(&mut command);
+        let spawn = ManagedChild::spawn_background(&mut command);
         let mut child = match spawn {
             Ok(child) => child,
             Err(error) => {

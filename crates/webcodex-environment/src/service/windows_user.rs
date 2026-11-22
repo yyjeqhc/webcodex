@@ -155,15 +155,7 @@ pub fn run_desktop_user_task(args: &[String]) -> Result<i32, Box<dyn std::error:
 
 #[cfg(windows)]
 fn run_console_free_worker(command: &mut std::process::Command) -> std::io::Result<i32> {
-    use webcodex_process::{ManagedChild, SpawnOptions};
-    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
-    let mut child = ManagedChild::spawn_with_options(
-        command,
-        SpawnOptions {
-            windows_creation_flags: CREATE_NO_WINDOW,
-            ..Default::default()
-        },
-    )?;
+    let mut child = webcodex_process::ManagedChild::spawn_background(command)?;
     Ok(child.wait()?.code().unwrap_or(1))
 }
 

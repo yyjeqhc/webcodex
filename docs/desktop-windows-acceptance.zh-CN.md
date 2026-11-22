@@ -25,4 +25,17 @@
 - 在 Gemini 断开应用。在 Desktop 编辑该连接、关闭动态注册并应用，检查旧授权失效。ChatGPT 应仍可执行查询。
 - 最可靠的测试回滚是还原整机快照。手工回退时，先用本分支的服务设置停止已确认归属的任务，再以同一用户用 `webcodex environment uninstall-service runner` 和 `webcodex environment uninstall-service server` 卸载对应任务。独立 Tunnel 可用 `uninstall-service tunnel --profile PROFILE`。保留 Environment 目录与凭据，在还原匹配的旧安装包后用其 `environment resume` 恢复服务。遇到不确定的进程归属或恢复记录时，先检查诊断。
 
+## 自动化控制台回归
+
+```powershell
+cargo test --locked -p webcodex-environment --lib service::windows_user::tests
+cargo test --locked -p webcodex-runner --bin webcodex-runner --features runner-real-process-tests runner_real_process_git_ -- --ignored --test-threads=1
+```
+
+原生项目清单回归先创建没有控制台的测试宿主，再走 Runner 启动时的有界 Git 与 SSH 能力探测路径，
+检查这种 GUI/服务启动条件下没有创建控制台窗口，同时保留 stdin EOF、两个重定向输出流及退出码。
+仅从终端运行测试可能因继承控制台而掩盖故障；`CREATE_NO_WINDOW` 创建的隐藏控制台属于正常行为，
+不要求控制台成员数为零。Runtime 的后台子进程显式使用无窗口启动，普通交互 CLI 保留原有控制台行为。
+这些检查不替代上面的登录与安装包视觉验收。
+
 自动化测试覆盖协议和进程边界。黑框观察、登录恢复、真实 OAuth 同意及宿主工具调用均需记录实机结果。

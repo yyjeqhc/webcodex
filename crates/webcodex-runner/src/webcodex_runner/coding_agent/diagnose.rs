@@ -64,8 +64,8 @@ impl EphemeralAcpProbe {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child =
-            ManagedChild::spawn(&mut command).map_err(|error| AcpFailure::SpawnIo(error.kind()))?;
+        let mut child = ManagedChild::spawn_background(&mut command)
+            .map_err(|error| AcpFailure::SpawnIo(error.kind()))?;
         let stdin = child
             .child_mut()
             .stdin

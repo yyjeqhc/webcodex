@@ -1126,7 +1126,7 @@ impl McpConnection {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         apply_safe_environment(&mut command);
-        let mut managed = ManagedChild::spawn(&mut command)
+        let mut managed = ManagedChild::spawn_background(&mut command)
             .map_err(|_| ProviderError::new("claude_code_spawn_failed"))?;
         let stdin = match managed.child_mut().stdin.take() {
             Some(stdin) => Arc::new(Mutex::new(stdin)),

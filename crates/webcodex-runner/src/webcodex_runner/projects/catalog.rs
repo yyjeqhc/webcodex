@@ -377,7 +377,7 @@ pub(super) fn run_git_bounded_with_program(
     // ManagedChild owns the whole Git process tree: a private process group on
     // Unix, a kill-on-close Job Object on Windows. Spawn remains direct process
     // spawning with the standard Command spawn failure semantics.
-    let mut child = match ManagedChild::spawn(&mut command) {
+    let mut child = match ManagedChild::spawn_background(&mut command) {
         Ok(child) => child,
         Err(error) => return Err(format!("failed to spawn git: {error}")),
     };
@@ -1019,6 +1019,94 @@ mod git_lifecycle_tests {
         assert!(
             started.elapsed() < BOUNDEDNESS_LIMIT,
             "normal completion was not bounded"
+        );
+    }
+
+    #[cfg(all(windows, feature = "runner-real-process-tests"))]
+    #[test]
+    #[ignore = "runner real-process lane: observes the native console of an inventory child"]
+    fn runner_real_process_git_and_ssh_probes_do_not_allocate_a_console() {
+        const CHILD: &str = "WEBCODEX_TEST_CONSOLELESS_INVENTORY_PARENT";
+        if std::env::var_os(CHILD).as_deref() != Some(std::ffi::OsStr::new("1")) {
+            // A test run from a terminal can silently inherit that console.
+            // Re-enter with no console, matching a GUI/service-owned Runner.
+            let output = tempfile::tempdir().unwrap();
+            let stdout = output.path().join("stdout");
+            let stderr = output.path().join("stderr");
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "webcodex_runner::projects::catalog::git_lifecycle_tests::runner_real_process_git_and_ssh_probes_do_not_allocate_a_console",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .stdin(Stdio::null())
+                .stdout(std::fs::File::create(&stdout).unwrap())
+                .stderr(std::fs::File::create(&stderr).unwrap());
+            let mut owner = ManagedChild::spawn_with_options(
+                &mut command,
+                webcodex_process::SpawnOptions {
+                    windows_creation_flags: windows_sys::Win32::System::Threading::DETACHED_PROCESS,
+                    ..Default::default()
+                },
+            )
+            .expect("spawn consoleless inventory owner");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let status = loop {
+                if let Some(status) = owner.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= deadline {
+                    owner.terminate_tree().unwrap();
+                    owner.wait().unwrap();
+                    panic!("consoleless inventory owner exceeded its deadline");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            assert!(
+                status.success(),
+                "consoleless inventory regression failed:\n{}\n{}",
+                std::fs::read_to_string(stdout).unwrap(),
+                std::fs::read_to_string(stderr).unwrap()
+            );
+            return;
+        }
+
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetConsoleProcessList(process_list: *mut u32, process_count: u32) -> u32;
+        }
+        let mut process = 0u32;
+        assert_eq!(
+            unsafe { GetConsoleProcessList(&mut process, 1) },
+            0,
+            "the fixture parent must have no console to reproduce a GUI launch"
+        );
+        let cwd = tempfile::tempdir().unwrap();
+        let program = helper_binary();
+        let output = run_git_bounded_with_program(
+            &program.to_string_lossy(),
+            cwd.path(),
+            &["console-probe"],
+            Duration::from_secs(10),
+            None,
+        )
+        .expect("inventory probe must complete");
+        assert_eq!(output.status.code(), Some(37));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("CONSOLE_WINDOW=false"),
+            "background inventory children must not create a console window: {stdout}"
+        );
+        assert!(stdout.contains("STDIN_BYTES=0"), "{stdout}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("CONSOLE_PROBE_STDERR"));
+        assert!(
+            crate::webcodex_runner::ssh::probe_ssh_version(program.as_os_str())
+                .expect("SSH capability version probe must complete")
+                .success(),
+            "background SSH capability probes must not create a console window"
         );
     }
 

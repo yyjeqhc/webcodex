@@ -277,7 +277,7 @@ pub(super) fn spawn_shell_process(
         .stderr(Stdio::piped())
         .env_clear()
         .envs(&launch.env);
-    let mut child = ManagedChild::spawn(&mut command).map_err(|error| {
+    let mut child = ManagedChild::spawn_background(&mut command).map_err(|error| {
         ShellError::new(
             "persistent_shell_spawn_failed",
             format!("failed to spawn managed PowerShell process: {error}"),

@@ -14,7 +14,24 @@ use webcodex_environment::{
 use webcodex_environment::{service::Component, ServiceOperation};
 
 pub(super) fn desktop_error(error: SetupDiagnostic) -> DesktopError {
-    DesktopError::new(error.code, error.message, error.recovery)
+    let mut mapped = DesktopError::new(error.code, error.message, error.recovery);
+    if let Some(component) = error
+        .component
+        .as_deref()
+        .and_then(crate::error::ErrorComponent::parse_safe)
+    {
+        mapped = mapped.with_component(component);
+    }
+    if let Some(stage) = error.stage.as_deref() {
+        mapped = mapped.with_stage(stage);
+    }
+    if let Some(http_status) = error.http_status {
+        mapped = mapped.with_http_status(http_status);
+    }
+    if let Some(exit_code) = error.exit_code {
+        mapped = mapped.with_exit_code(exit_code);
+    }
+    mapped
 }
 
 pub(super) fn store() -> DesktopResult<EnvironmentStore> {
@@ -1380,6 +1397,7 @@ impl DesktopCore {
         } else {
             None
         };
+        let config_before = self.config.clone();
         self.config.persistent_environment = Some(record.environment_id.clone());
         self.config.topology = Some(RuntimeTopology {
             experience: Experience::Full,
@@ -1428,7 +1446,9 @@ impl DesktopCore {
                 .and_then(|project| project.runtime_project_id.clone()),
         });
         self.config.runtime_autostart = Some(true);
-        self.save_config().await?;
+        if self.config != config_before {
+            self.save_config().await?;
+        }
         self.snapshot.topology = self.config.topology.clone();
         self.snapshot.project = project;
         let server = if observation.server_reachable && observation.authenticated {

@@ -1,4 +1,4 @@
-use crate::error::DesktopError;
+use crate::error::{DesktopError, ErrorComponent, RecoveryKind, SafeRecoveryAction};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -13,6 +13,7 @@ pub(crate) fn server_start_error(
     if let Some(code) = exit_code {
         message.push_str(&format!(" (exit code {code})"));
     }
+    let mut listener_bind_failed = false;
     if let Some(diagnostics) = diagnostics {
         let logs = diagnostics
             .0
@@ -22,15 +23,35 @@ pub(crate) fn server_start_error(
         // after the activity log's prefix-based redaction. Only reconstruct the
         // known listener failure from a validated socket address and OS code.
         if let Some(summary) = logs.iter().rev().find_map(|line| listener_failure(line)) {
+            listener_bind_failed = true;
             message.push_str(". ");
             message.push_str(&summary);
         }
     }
-    DesktopError::new(
+    let mut error = DesktopError::new(
         "server_start_failed",
         message,
-        "Review the error details and Activity, then retry.",
+        if listener_bind_failed {
+            "Check whether another program is already using the local Server port, then retry."
+        } else {
+            "Review the error details and Activity, then retry."
+        },
     )
+    .with_component(ErrorComponent::Server)
+    .with_stage("server_start");
+    if let Some(code) = exit_code {
+        error = error.with_exit_code(code);
+    }
+    if listener_bind_failed {
+        error = error
+            .with_reason_code("local_port_unavailable")
+            .with_recovery(
+                RecoveryKind::UserAction,
+                SafeRecoveryAction::OpenDiagnostics,
+                false,
+            );
+    }
+    error
 }
 
 fn listener_failure(line: &str) -> Option<String> {

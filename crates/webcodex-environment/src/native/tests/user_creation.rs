@@ -419,10 +419,64 @@ async fn http_rejection_diagnostics_preserve_codes_and_exclude_response_secrets(
         server.join().unwrap();
         assert_eq!(error.code, expected);
         assert!(error.message.contains(&format!("HTTP {status}")));
+        assert_eq!(error.http_status, Some(status));
+        assert_eq!(error.stage.as_deref(), Some("user_create"));
+        assert_eq!(
+            error.component.as_deref(),
+            Some(if matches!(status, 401 | 403) {
+                "auth"
+            } else {
+                "server"
+            })
+        );
         let encoded = serde_json::to_string(&error).unwrap();
         assert!(!encoded.contains("CANARY"));
         assert!(!encoded.contains(&url));
     }
+}
+
+#[tokio::test]
+async fn server_http_400_and_503_preserve_distinct_diagnostics_and_stage() {
+    let (url_400, _, server_400) = fixture(1, |_| (400, vec![], json!({"error": "SECRET_400"})));
+    let err_400 = NativeEnvironment::new()
+        .unwrap()
+        .post(
+            &url_400,
+            "/api/users/create",
+            Some("wc_boot_secret_400"),
+            json!({"username": "haruya"}),
+        )
+        .await
+        .unwrap_err();
+    server_400.join().unwrap();
+
+    let (url_503, _, server_503) = fixture(1, |_| (503, vec![], json!({"error": "SECRET_503"})));
+    let err_503 = NativeEnvironment::new()
+        .unwrap()
+        .post(
+            &url_503,
+            "/api/users/create",
+            Some("wc_boot_secret_503"),
+            json!({"username": "haruya"}),
+        )
+        .await
+        .unwrap_err();
+    server_503.join().unwrap();
+
+    assert_eq!(err_400.code, "server_request_failed");
+    assert_eq!(err_503.code, "server_request_failed");
+    assert_eq!(err_400.http_status, Some(400));
+    assert_eq!(err_503.http_status, Some(503));
+    assert_eq!(err_400.stage.as_deref(), Some("user_create"));
+    assert_eq!(err_503.stage.as_deref(), Some("user_create"));
+    assert_ne!(err_400.message, err_503.message);
+    assert_ne!(err_400.recovery, err_503.recovery);
+    assert!(!serde_json::to_string(&err_400)
+        .unwrap()
+        .contains("SECRET_400"));
+    assert!(!serde_json::to_string(&err_503)
+        .unwrap()
+        .contains("SECRET_503"));
 }
 
 #[tokio::test]
@@ -441,6 +495,8 @@ async fn user_creation_failure_identifies_the_stage_without_writing_a_token() {
         .unwrap_err();
     server.join().unwrap();
     assert_eq!(error.code, "server_request_failed");
+    assert_eq!(error.stage.as_deref(), Some("user_create"));
+    assert_eq!(error.http_status, Some(400));
     assert!(error.message.contains("Local user creation failed"));
     assert!(error.message.contains("HTTP 400"));
     assert!(!error.message.contains("CANARY"));

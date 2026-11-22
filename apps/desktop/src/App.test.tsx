@@ -547,7 +547,7 @@ beforeEach(() => {
     renderApp(); fireEvent.click(await screen.findByRole("button", { name: "连接" }));
     expect(api.tunnelProfileAction).not.toHaveBeenCalled();
     const start = screen.getByRole("button", { name: "启动 ChatGPT" });
-    fireEvent.click(start); expect(await screen.findByRole("alert")).toHaveTextContent("Tunnel 不可用");
+    fireEvent.click(start); expect(await screen.findByRole("alert")).toHaveTextContent("Tunnel 连接中断或无法访问网络");
     expect(document.body.textContent).not.toContain("private-error-must-not-render");
     await waitFor(() => expect(start).toBeEnabled()); fireEvent.click(start);
     await waitFor(() => expect(api.tunnelProfileAction).toHaveBeenCalledTimes(2));
@@ -572,7 +572,7 @@ beforeEach(() => {
     expect(profile.getByText("tunnel_control_plane")).toBeVisible();
     expect(profile.getByText("tunnel_control_plane_probe_failed")).toBeVisible();
     const stop = screen.getByRole("button", { name: "停止 ChatGPT" });
-    fireEvent.click(stop); expect(await screen.findByRole("alert")).toHaveTextContent("Tunnel 不可用");
+    fireEvent.click(stop); expect(await screen.findByRole("alert")).toHaveTextContent("Tunnel 连接中断或无法访问网络");
     await waitFor(() => expect(stop).toBeEnabled()); fireEvent.click(stop);
     await waitFor(() => expect(screen.getByRole("button", { name: "启动 ChatGPT" })).toBeEnabled());
     expect(api.tunnelProfileAction).toHaveBeenLastCalledWith("default", "stop");

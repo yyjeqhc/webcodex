@@ -204,3 +204,70 @@ async fn cloudflare_native_http_preserves_only_explicit_ingress_restart_handoff(
         fixture.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn cloudflare_native_http_distinguishes_auth_conflict_server_error_and_stage() {
+    for (http_status, expected_code, expected_http) in [
+        (
+            "401 Unauthorized",
+            "cloudflare_authentication_failed",
+            401u16,
+        ),
+        ("403 Forbidden", "cloudflare_authentication_failed", 403u16),
+        ("409 Conflict", "cloudflare_control_unavailable", 409u16),
+        (
+            "503 Service Unavailable",
+            "cloudflare_control_unavailable",
+            503u16,
+        ),
+    ] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let fixture = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 8192];
+            socket.read(&mut request).await.unwrap();
+            let body = r#"{"error":"PRIVATE_CF_SECRET"}"#;
+            let response = format!(
+                "HTTP/1.1 {http_status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let error = control_response(
+            &client,
+            &format!("http://{address}/api/connections/cloudflare"),
+            &Secret::new("test-private-bootstrap".into()),
+            &CloudflareConnectionRequest::Status {
+                profile_id: "cf-profile-1".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, expected_code);
+        let diag = error.diagnostic_ref().unwrap();
+        assert_eq!(diag.http_status, Some(expected_http));
+        assert_eq!(diag.stage.as_deref(), Some("cloudflare_status"));
+        assert_eq!(diag.resource_id.as_deref(), Some("cf-profile-1"));
+        if expected_http == 409 {
+            assert!(
+                !diag.retry_allowed,
+                "an unknown conflict must not replay a write"
+            );
+            assert_eq!(
+                diag.safe_action,
+                crate::error::SafeRecoveryAction::ObserveBeforeRetry
+            );
+        }
+        let projected = serde_json::to_string(&error).unwrap();
+        assert!(!projected.contains("PRIVATE_CF_SECRET"));
+        assert!(!projected.contains("test-private-bootstrap"));
+        fixture.await.unwrap();
+    }
+}

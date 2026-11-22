@@ -90,3 +90,12 @@ input:not([type="radio"]):not([type="checkbox"]):not(.mantine-Input-input), sele
 }
 
 .setup-shell h1:focus, .first-run h1:focus { outline-offset: 6px; }
+.desktop-error-alert { gap: 6px; }
+.desktop-error-alert.tone-info { border-color: color-mix(in srgb, var(--ui-accent) 34%, var(--ui-border)); background: color-mix(in srgb, var(--ui-accent) 10%, var(--ui-surface)); color: var(--ui-text-primary); }
+.desktop-error-alert.tone-warning { border-color: color-mix(in srgb, var(--ui-warning, #b7791f) 40%, var(--ui-border)); background: color-mix(in srgb, var(--ui-warning, #b7791f) 12%, var(--ui-surface)); color: var(--ui-text-primary); }
+.desktop-error-header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.desktop-error-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, currentColor 12%, transparent); }
+.desktop-error-stage { font-size: 13px; font-weight: 500; opacity: 0.92; }
+.desktop-error-guard { font-size: 13px; opacity: 0.88; }
+.desktop-error-actions { margin-top: 4px; }
+.desktop-error-details { margin-top: 4px; }

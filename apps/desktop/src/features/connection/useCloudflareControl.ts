@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { normalizeDesktopError } from "../../i18n/presentation";
+import type { DesktopError } from "../../models/topology";
 import { desktopApi } from "../../lib/desktop-api";
 import type { CloudflareConnectionRequest, CloudflareConnectionStatus, TunnelConnection } from "../../models/connections-tools";
 
@@ -7,8 +8,8 @@ import type { CloudflareConnectionRequest, CloudflareConnectionStatus, TunnelCon
 // change. Only loopback status reads poll. Mutations use the displayed fences.
 export function useCloudflareControl(profile: TunnelConnection, canStart: boolean) {
   const [status, setStatus] = useState<CloudflareConnectionStatus | null>(null);
-  const [readFailure, setReadFailure] = useState<string | null>(null);
-  const [actionFailure, setActionFailure] = useState<string | null>(null);
+  const [readFailure, setReadFailure] = useState<DesktopError | null>(null);
+  const [actionFailure, setActionFailure] = useState<DesktopError | null>(null);
   const [actionPending, setActionPending] = useState<"start" | "stop" | "restart" | null>(null);
   const sequence = useRef(0);
   const reading = useRef(false);
@@ -28,7 +29,7 @@ export function useCloudflareControl(profile: TunnelConnection, canStart: boolea
     } catch (error) {
       if (attempt !== sequence.current) return;
       setStatus(null);
-      setReadFailure(normalizeDesktopError(error).code);
+      setReadFailure(normalizeDesktopError(error));
     } finally {
       reading.current = false;
     }
@@ -71,11 +72,12 @@ export function useCloudflareControl(profile: TunnelConnection, canStart: boolea
       if (next.profile_id !== profile.id || next.server_instance_id !== status.server_instance_id) throw new Error();
       setStatus(next);
     } catch (error) {
-      if (attempt === sequence.current) setActionFailure(normalizeDesktopError(error).code);
+      if (attempt === sequence.current) setActionFailure(normalizeDesktopError(error));
     } finally {
       mutating.current = false;
       if (attempt === sequence.current) setActionPending(null);
     }
   };
-  return { status, failureCode: readFailure ?? actionFailure, actionPending, refresh, run };
+  const failure = readFailure ?? actionFailure;
+  return { status, failure, failureCode: failure?.code ?? null, actionPending, refresh, run };
 }

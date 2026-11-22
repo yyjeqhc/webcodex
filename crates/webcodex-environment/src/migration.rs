@@ -188,6 +188,8 @@ fn recovery_hint_for(code: &str) -> &'static str {
 
 fn diagnostic(code: &str, message: &str) -> SetupDiagnostic {
     SetupDiagnostic::new(code, message, recovery_hint_for(code))
+        .with_component("migration")
+        .with_stage("migration_handoff")
 }
 
 fn journal(store: &EnvironmentStore) -> SetupResultValue<Option<MigrationJournal>> {

@@ -173,7 +173,13 @@ pub(crate) fn verify_candidate_flavor(
     inspection: PackageInspection,
 ) -> crate::SetupResultValue<Option<InstallerTarget>> {
     let bad = || {
-        crate::SetupDiagnostic { code: "upgrade_package_flavor".into(), message: "The candidate package flavor differs from the verified installed package; installation types cannot be converted by an update".into(), recovery: "Use the existing manual installation path for a different package flavor".into() }
+        crate::SetupDiagnostic::new(
+            "upgrade_package_flavor",
+            "The candidate package flavor differs from the verified installed package; installation types cannot be converted by an update",
+            "Use the existing manual installation path for a different package flavor",
+        )
+        .with_component("runtime")
+        .with_stage("package_verification")
     };
     #[cfg(target_os = "linux")]
     {
@@ -230,11 +236,13 @@ pub(crate) fn verify_candidate_target(
     if matches {
         return Ok(());
     }
-    Err(crate::SetupDiagnostic {
-        code: "installer_package_target".into(),
-        message: "The package hook does not match the installed flavor and package manager".into(),
-        recovery: "Use the installer for the existing package target".into(),
-    })
+    Err(crate::SetupDiagnostic::new(
+        "installer_package_target",
+        "The package hook does not match the installed flavor and package manager",
+        "Use the installer for the existing package target",
+    )
+    .with_component("runtime")
+    .with_stage("package_verification"))
 }
 
 /// Re-read package identity at the privileged effect boundary, including the
@@ -247,11 +255,13 @@ pub(crate) fn verify_installed_target(
     if installed_target_matches(target, installed_package(), owned_layout(target, binaries)) {
         return Ok(());
     }
-    Err(crate::SetupDiagnostic {
-        code: "upgrade_package_ownership".into(),
-        message: "The installed package identity or ownership changed before installation".into(),
-        recovery: "Refresh the installation assessment; do not reuse this installer handoff".into(),
-    })
+    Err(crate::SetupDiagnostic::new(
+        "upgrade_package_ownership",
+        "The installed package identity or ownership changed before installation",
+        "Refresh the installation assessment; do not reuse this installer handoff",
+    )
+    .with_component("runtime")
+    .with_stage("package_verification"))
 }
 #[cfg(any(target_os = "linux", test))]
 fn installed_target_matches(

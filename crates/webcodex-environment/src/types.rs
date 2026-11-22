@@ -158,6 +158,39 @@ pub enum SetupStep {
     Readiness,
 }
 
+impl SetupStep {
+    pub fn stage_name(self) -> &'static str {
+        match self {
+            Self::Preflight => "preflight",
+            Self::ServerConfiguration => "server_configuration",
+            Self::ServerServiceInstall => "server_service_install",
+            Self::ServerServiceStart => "server_service_start",
+            Self::ServerReachability => "server_reachability",
+            Self::UserAuthentication => "user_authentication",
+            Self::RunnerEnrollment => "runner_enrollment",
+            Self::RunnerConfiguration => "runner_configuration",
+            Self::ProjectRegistration => "project_registration",
+            Self::RunnerServiceInstall => "runner_service_install",
+            Self::RunnerServiceStart => "runner_service_start",
+            Self::Readiness => "readiness",
+        }
+    }
+
+    pub fn component_name(self) -> &'static str {
+        match self {
+            Self::Preflight => "environment",
+            Self::ServerConfiguration => "server",
+            Self::ServerServiceInstall | Self::ServerServiceStart => "service",
+            Self::ServerReachability => "server",
+            Self::UserAuthentication => "auth",
+            Self::RunnerEnrollment | Self::RunnerConfiguration => "runner",
+            Self::ProjectRegistration => "project",
+            Self::RunnerServiceInstall | Self::RunnerServiceStart => "service",
+            Self::Readiness => "runtime",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StepState {
@@ -254,6 +287,14 @@ pub struct SetupDiagnostic {
     pub code: String,
     pub message: String,
     pub recovery: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 impl SetupDiagnostic {
@@ -262,7 +303,39 @@ impl SetupDiagnostic {
             code: code.into(),
             message: message.into(),
             recovery: recovery.into(),
+            component: None,
+            stage: None,
+            http_status: None,
+            exit_code: None,
         }
+    }
+    pub fn with_component(mut self, component: impl Into<String>) -> Self {
+        self.component = Some(component.into());
+        self
+    }
+    pub fn with_default_component(mut self, component: impl Into<String>) -> Self {
+        if self.component.is_none() {
+            self.component = Some(component.into());
+        }
+        self
+    }
+    pub fn with_stage(mut self, stage: impl Into<String>) -> Self {
+        self.stage = Some(stage.into());
+        self
+    }
+    pub fn with_default_stage(mut self, stage: impl Into<String>) -> Self {
+        if self.stage.is_none() {
+            self.stage = Some(stage.into());
+        }
+        self
+    }
+    pub fn with_http_status(mut self, status: u16) -> Self {
+        self.http_status = Some(status);
+        self
+    }
+    pub fn with_exit_code(mut self, code: i32) -> Self {
+        self.exit_code = Some(code);
+        self
     }
     pub(crate) fn io() -> Self {
         Self::new(
@@ -270,6 +343,7 @@ impl SetupDiagnostic {
             "Could not safely read or save environment state",
             "Check directory ownership, permissions and free space; then resume setup",
         )
+        .with_component("environment")
     }
 }
 

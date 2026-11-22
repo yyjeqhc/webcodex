@@ -292,6 +292,7 @@ impl DesktopCore {
             .snapshot(self.coding_agents_applied_revision);
         self.project_connections();
         self.snapshot.current_operation = None;
+        self.snapshot.state_generation = self.snapshot.state_generation.saturating_add(1);
         self.snapshot.activity_sequence = self.activity.latest_sequence();
         apply_openai_tunnel_configuration(
             &mut self.snapshot,

@@ -105,6 +105,31 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     expect(screen.queryByText("private-response-body")).toBeNull();
     expect(screen.queryByText("Restart WebCodex Server to apply saved connections")).toBeNull();
   });
+  it("preserves structured Cloudflare failure diagnostics without leaking private error text or offering unsafe retry", async () => {
+    api.cloudflareConnection.mockRejectedValue({
+      code: "cloudflare_authentication_failed",
+      message: "Bearer wc_pat_private_canary",
+      next_action: "Do not display this private instruction",
+      diagnostic: {
+        component: "auth",
+        stage: "cloudflare_status",
+        reason_code: "http_forbidden",
+        recovery_kind: "user_action",
+        safe_action: "repair_user_credential",
+        retry_allowed: false,
+        http_status: 403,
+        resource_id: "cf-profile-1",
+      },
+    });
+    render(wrap(<CloudflareConnectionCard profile={connectionFixture({id:"cf",revision:4,provider:{kind:"cloudflare_quick"}})} canStart busy={false} onEdit={vi.fn()} onDelete={vi.fn()} />));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveAttribute("data-error-component", "auth");
+    expect(alert).toHaveTextContent("HTTP 403");
+    expect(alert).toHaveTextContent("cloudflare_status");
+    expect(alert).not.toHaveTextContent("wc_pat_private_canary");
+    expect(alert).not.toHaveTextContent("private instruction");
+    expect(screen.queryByRole("button", {name: "Retry"})).toBeNull();
+  });
   function mount() {return render(wrap(<CloudflareConnectionCard profile={connectionFixture({id:"cf",revision:4,provider:{kind:"cloudflare_quick"},credential_present:false,host_mode:"embedded"})} canStart busy={false} onEdit={vi.fn()} onDelete={vi.fn()} />));}
   it("copies the current MCP origin and keeps observed authorization separate from process readiness",async()=>{
     mount();

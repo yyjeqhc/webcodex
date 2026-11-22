@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeDesktopNavigation } from "../lib/desktop-navigation";
 import { desktopApi } from "../lib/desktop-api";
+import { desktopIdentity } from "../lib/desktop-observation";
+import { isErrorStaleForState, reconcileDesktopStateErrors } from "../lib/desktop-errors";
 import type { ActivityEntry, DesktopError, DesktopState } from "../models/topology";
 import { normalizeDesktopError } from "../i18n/presentation";
 import { NAVIGATION, type Navigation } from "../components/Sidebar";
@@ -29,6 +31,8 @@ export function useDesktopWorkspace() {
   const [startupAttempt, setStartupAttempt] = useState(0);
   const [windowFocused, setWindowFocused] = useState(true);
   const stateVersionRef = useRef(0);
+  const activeIdentityRef = useRef<string | null>(null);
+  const errorIdentityRef = useRef<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
   const hasCurrentOperation = Boolean(state?.current_operation);
   const hasLoadedState = Boolean(state);
@@ -84,17 +88,34 @@ export function useDesktopWorkspace() {
 
   const commitState = useCallback((next: DesktopState) => {
     stateVersionRef.current += 1;
-    // The native RuntimeRefresh reconciles this error on confirmed recovery.
-    // A getState response may still carry the old error during that handoff;
-    // never publish contradictory Runner-ready + runner_offline UI state.
-    const staleRunnerError = next.readiness.runner === "ready" && next.runtime_error?.code === "runner_offline";
-    setState(staleRunnerError ? { ...next, runtime_error: null } : next);
-    setError((current) => current?.code === "runner_offline" && next.readiness.runner === "ready" ? null : current);
+    const reconciled = reconcileDesktopStateErrors(next);
+    const nextIdentity = desktopIdentity(reconciled);
+    activeIdentityRef.current = nextIdentity;
+    setState(reconciled);
+    setError((current) => {
+      if (!current) return null;
+      return isErrorStaleForState(current, reconciled, errorIdentityRef.current, nextIdentity)
+        ? null
+        : current;
+    });
+  }, []);
+
+  const recordError = useCallback((value: unknown, expectedIdentity?: string | null) => {
+    if (
+      expectedIdentity
+      && activeIdentityRef.current
+      && expectedIdentity !== activeIdentityRef.current
+    ) {
+      return;
+    }
+    errorIdentityRef.current = activeIdentityRef.current;
+    setError(normalizeDesktopError(value));
   }, []);
 
   const observeFailedOperation = useCallback(async (value: unknown, current: () => boolean = () => true) => {
     if (!current()) return;
-    setError(normalizeDesktopError(value));
+    const observedIdentity = activeIdentityRef.current;
+    recordError(value, observedIdentity);
     const observedVersion = stateVersionRef.current;
     try {
       const terminal = await desktopApi.getState();
@@ -102,7 +123,7 @@ export function useDesktopWorkspace() {
     } catch {
       // Preserve the original failure if this best-effort observation fails.
     }
-  }, [commitState]);
+  }, [commitState, recordError]);
 
   const commitChatgptActivity = useCallback((next: DesktopState) => {
     stateVersionRef.current += 1;
@@ -151,7 +172,7 @@ export function useDesktopWorkspace() {
             const observed = await desktopApi.refresh();
             if (!cancelled) commitState(observed);
           } catch (value) {
-            if (!cancelled) setError(normalizeDesktopError(value));
+            if (!cancelled) recordError(value);
           } finally {
             if (!cancelled) setRefreshing(false);
           }
@@ -188,7 +209,7 @@ export function useDesktopWorkspace() {
         }
         bootstrapSettled = true;
       } catch (value) {
-        if (!cancelled) setError(normalizeDesktopError(value));
+        if (!cancelled) recordError(value);
       } finally {
         if (!cancelled && bootstrapSettled) {
           try {
@@ -332,7 +353,7 @@ export function useDesktopWorkspace() {
     try {
       commitState(await desktopApi.cancelOperation(observed.id));
     } catch (value) {
-      setError(normalizeDesktopError(value));
+      recordError(value);
     } finally {
       setCancelSubmittingId((current) => current === observed.id ? null : current);
     }

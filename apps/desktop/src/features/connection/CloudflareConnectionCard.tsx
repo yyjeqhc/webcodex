@@ -7,6 +7,7 @@ import type { CloudflareConnectionStatus, CloudflareOAuthHandoff, TunnelConnecti
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import { useProduct } from "../../i18n/product";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 
 // Matches webcodex_core::authority::profiles::LOCAL_USER.
 const DEFAULT_OAUTH_SCOPES = "runtime:read runner:manage session:collaborate project:read project:write job:run";
@@ -76,7 +77,7 @@ export function CloudflareConnectionCard(props: CardProps) {
 
 function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair, onRestartServer, onEnableRegistration }: CardProps) {
   const c = useConnectionsTools(); const p = useProduct();
-  const { status, failureCode, actionPending, run, refresh } = useCloudflareControl(profile, canStart);
+  const { status, failure, failureCode, actionPending, run, refresh } = useCloudflareControl(profile, canStart);
   const [oauth, setOauth] = useState<CloudflareConnectionStatus | null>(null);
   const [handoffFeedback, setHandoffFeedback] = useState<{origin: string; generation: number; instance: string; kind: "copied" | "clipboardRecovery" | "openGeminiFailed"} | null>(null);
   const alive = useRef(false);
@@ -148,7 +149,13 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     {reason === "cloudflare_already_active" && <p role="alert">{c("otherCloudflareActive")}</p>}
     {profile.server_restart_required && <p role="status">{c("profileRestartHelp")}</p>}
     {ingressNotApplied && <div className="server-owned-apply shell-notice warning" role="status"><strong>{c("serverRestartRequired")}</strong><p>{c("serverRestartHelp")}</p>{onRestartServer && <button type="button" className="primary-button" disabled={disabled} onClick={onRestartServer}>{c("restartServer")}</button>}</div>}
-    {failed && !identityRepair && reason !== "cloudflare_already_active" && !ingressNotApplied && <p role="alert">{c("operationFailed")}</p>}
+    {failure && !ingressNotApplied && !identityRepair && reason !== "cloudflare_already_active" && (
+      <DesktopErrorAlert
+        error={failure}
+        disabled={disabled}
+        actions={{ onRefresh: () => void refresh(), onCheckConnection: () => void refresh() }}
+      />
+    )}
     {identityRepair && <p role="alert">{c("cloudflareIdentityRepair")}</p>}
     {(failed || identityRepair || (registrationUnavailable && !discoveryRetry) || reason === "cloudflare_binary_unavailable") && onRepair && <button type="button" className="secondary-button" disabled={disabled} onClick={onRepair}>{c("openRuntimeSetup")}</button>}
     <div className="connection-actions">

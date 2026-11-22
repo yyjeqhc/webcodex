@@ -1,9 +1,10 @@
 import { useEffect, useId, useState } from "react";
 import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
-import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
+import { normalizeDesktopError } from "../../i18n/presentation";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState } from "../../models/topology";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 
 export function TunnelConfigDiagnostics({ state, onState, onApplied, onCancel }: {
   state: DesktopState; onState: (state: DesktopState) => void; onApplied?: () => void; onCancel?: () => void;
@@ -37,7 +38,7 @@ export function TunnelConfigDiagnostics({ state, onState, onApplied, onCancel }:
     </div>
     <div className="connection-actions"><button type="submit" className="primary-button" data-webcodex-action="save-tunnel-config" disabled={busy || !tunnelId.trim() || (config.source !== "file" && !apiKey.trim())}>{saving ? p("loading") : p("saveApply")}</button>{onCancel && <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>{p("cancel")}</button>}</div>
     {saved && <p role="status">{p("applied")}</p>}
-    {error && <div className="error-card" role="alert"><strong>{desktopErrorPresentation(error, t).title}</strong><span>{desktopErrorPresentation(error, t).action}</span><details><summary>{p("details")}</summary><code>{error.code}</code><p>{error.message}</p></details></div>}
+    {error && <DesktopErrorAlert error={error} showSafeMessage disabled={busy} />}
     <details className="workspace-technical"><summary>{p("advanced")}</summary><p>{t(config.source === "file" ? "tunnelConfig.sourceFile" : config.source === "invalid" ? "tunnelConfig.sourceInvalid" : "tunnelConfig.sourceEnvironment")}</p>
       {config.source !== "environment" && <button type="button" className="secondary-button" disabled={busy} onClick={() => void save(true)}>{t("tunnelConfig.useEnvironment")}</button>}
     </details>

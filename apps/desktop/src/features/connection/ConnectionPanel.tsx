@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState } from "../../models/topology";
-import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
+import { normalizeDesktopError } from "../../i18n/presentation";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 import { useLocale } from "../../i18n/locale";
 import { useShellText } from "../../i18n/runtime-shell";
 import { EMPTY_CONNECTIONS, type TunnelConnection, type TunnelProfileAction } from "../../models/connections-tools";
@@ -59,7 +60,6 @@ export function ConnectionPanel({ state, onState, onSettings }: {
         : state.tunnel_proxy.effective_source === "invalid_custom"
           ? `${t("settings.tunnelProxyCustom")} · ${p("unavailable")}`
           : t("settings.tunnelProxyDirectValue");
-  const failure = failed ? desktopErrorPresentation(failed, t) : null;
   useEffect(() => {
     if (!copiedId) return;
     const timer = window.setTimeout(() => setCopiedId(null), 2500);
@@ -163,7 +163,22 @@ export function ConnectionPanel({ state, onState, onSettings }: {
     {serverRestartRequired && <div className="server-owned-apply shell-notice warning" role="status"><div><strong>{c("serverRestartRequired")}</strong><p>{c("serverRestartHelp")}</p></div><button type="button" className="primary-button" disabled={disabled} onClick={() => void runServer("restart")}>{c("restartServer")}</button></div>}
     {serverStartRequired && <div className="server-owned-apply shell-notice" role="status"><div><strong>{c("serverStartRequired")}</strong><p>{c("serverStartHelp")}</p></div><button type="button" className="primary-button" disabled={disabled} onClick={() => void runServer("start")}>{c("startServer")}</button></div>}
     {profiles.config_error && <p role="alert" className="workspace-notice">{c("configError")}</p>}
-    {failure && !deleting && <div role="alert" className="workspace-notice"><strong>{failure.title}</strong><p>{failed?.code === "tunnel_revision_stale" ? c("staleConnection") : failed?.code === "cloudflare_selection_conflict" ? c("otherCloudflareActive") : failure.action}</p><p>{c("operationFailed")}</p>{autoProxyRecovery && <p>{c("currentProxyHint")}</p>}</div>}
+    {failed && !deleting && <div className="connection-error">
+      <DesktopErrorAlert
+        error={failed}
+        disabled={disabled}
+        actions={{
+          onOpenDiagnostics: diagnostics,
+          onOpenRuntime: () => onSettings("runtime"),
+          onOpenNetwork: () => onSettings("network"),
+          onRefresh: () => void desktopApi.refresh().then(onState).catch(value => setFailed(normalizeDesktopError(value))),
+          onCheckConnection: () => void desktopApi.refresh().then(onState).catch(value => setFailed(normalizeDesktopError(value))),
+        }}
+        extraActions={autoProxyRecovery ? <p className="field-help">{c("currentProxyHint")}</p> : undefined}
+      />
+      {failed.code === "tunnel_revision_stale" && <p className="field-help">{c("staleConnection")}</p>}
+      {failed.code === "cloudflare_selection_conflict" && <p className="field-help">{c("otherCloudflareActive")}</p>}
+    </div>}
     {saved && <p role="status" className="workspace-notice">{c("saved")}</p>}
     <GeminiConnections key={environmentId} profiles={cloudflareProfiles} preparation={preparation} preparing={busyId === "__gemini__"}
       busy={disabled || !state.connections || profiles.config_error} canStart={persistentLocal && state.readiness.server === "ready" && busyId !== "__server__" && state.current_operation?.kind !== "environment_service"}
@@ -193,7 +208,7 @@ export function ConnectionPanel({ state, onState, onSettings }: {
     {editor && (!editor.profile || profiles.profiles.some(item => item.id === editor.profile?.id && item.revision === editor.profile.revision && item.configuration_id === editor.profile.configuration_id)) && <ConnectionEditor environmentId={environmentId} profile={editor.profile} geminiNamed={editor.geminiNamed} chatgptPreset={editor.chatgptPreset} initialAutostart={!editor.geminiNamed || !cloudflareProfiles.some(item => item.autostart)} persistentLocal={persistentLocal} onSetup={() => requestAnimationFrame(() => document.getElementById("gemini-heading")?.focus())} onState={next => { onState(next); setSaved(true); }} onClose={() => setEditor(null)} />}
     {deleting && <WorkspaceDialog title={c("delete") + " " + deleting.name} onClose={() => setDeleting(null)} busy={busyId !== null}>
       <p>{deleting.host_mode === "embedded" ? c("deleteServerOwnedHelp") : c("deleteConnectionHelp")}</p>
-      {failed && <p role="alert" className="workspace-notice">{c("operationFailed")}</p>}
+      {failed && <DesktopErrorAlert error={failed} disabled={disabled} actions={{ onOpenDiagnostics: diagnostics }} />}
       <div className="connection-actions"><button type="button" className="danger-button" disabled={disabled} onClick={() => void run(deleting.id, "delete", deleting.provider && deleting.provider.kind !== "openai" ? deleting.revision : undefined, deleting.configuration_id)}>{c("delete")}</button><button type="button" className="secondary-button" disabled={disabled} onClick={() => setDeleting(null)}>{p("cancel")}</button></div>
     </WorkspaceDialog>}
   </section>;

@@ -1416,4 +1416,24 @@ mod tests {
             ExposureReadiness::Unknown
         );
     }
+
+    #[tokio::test]
+    async fn readonly_refresh_does_not_claim_exclusive_operation_slot_or_block_diagnostics() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(
+            data_dir.path().to_path_buf(),
+            data_dir.path().join("test-resources"),
+        )
+        .unwrap();
+        let before_gen = state.get_state().state_generation;
+        let (refresh_result, diag_result) =
+            tokio::join!(state.refresh_runtime_status(), state.diagnostics());
+        let refreshed = refresh_result.expect("read-only refresh should succeed");
+        assert!(refreshed.current_operation.is_none());
+        assert!(refreshed.state_generation >= before_gen);
+        assert!(
+            diag_result.is_ok(),
+            "concurrent diagnostics must not fail with desktop_operation_busy during read-only refresh"
+        );
+    }
 }

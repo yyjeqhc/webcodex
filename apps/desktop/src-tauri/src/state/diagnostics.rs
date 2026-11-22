@@ -22,12 +22,23 @@ fn valid_console_user_credential(value: &str) -> bool {
 }
 
 impl AppState {
+    fn busy_diagnostic_error(&self) -> DesktopError {
+        let mut error = diagnostics::diagnostic_error("desktop_operation_busy");
+        if let Some(current) = self.operations.current() {
+            error = error
+                .with_details(serde_json::json!({
+                    "operation_id": current.id,
+                    "operation_kind": current.kind.as_str(),
+                }))
+                .with_operation_context(Some(&current.id), None, None, None);
+        }
+        error
+    }
+
     pub async fn diagnostics(&self) -> DesktopResult<DiagnosticSnapshot> {
         let (settings, runtime, trace_target, recovery, mut resources, identity_fence) = {
             let slot = self.core.lock().await;
-            let core = slot
-                .as_ref()
-                .ok_or_else(|| diagnostics::diagnostic_error("desktop_operation_busy"))?;
+            let core = slot.as_ref().ok_or_else(|| self.busy_diagnostic_error())?;
             let settings = core.runtime_settings_snapshot().await;
             let runtime = core.config.runtime.clone();
             let trace_target = core.managed_trace_target().await;

@@ -77,7 +77,7 @@ fn activate_quick_fixture(
     origin: &str,
 ) -> (PreparedIngress, PublicIngressEntry) {
     let standalone = control.profile("quick").unwrap().host_mode == TunnelHostMode::Standalone;
-    let prepared = control.prepare("quick", 1, standalone).unwrap();
+    let prepared = control.prepare("quick", 1, standalone, None, None).unwrap();
     let mut guard = control.attempt.lock().unwrap();
     let attempt = guard.as_mut().unwrap();
     let entry = control
@@ -181,16 +181,16 @@ fn prepare_stop_restart_fences_profile_revision_instance_and_generation() {
     let fixture = Fixture::new();
     let control = fixture.control;
     assert!(matches!(
-        control.prepare("quick", 2, false),
+        control.prepare("quick", 2, false, None, None),
         Err("cloudflare_revision_conflict")
     ));
     assert!(matches!(
-        control.prepare("quick", 1, true),
+        control.prepare("quick", 1, true, None, None),
         Err("cloudflare_owner_conflict")
     ));
-    let first = control.prepare("quick", 1, false).unwrap();
+    let first = control.prepare("quick", 1, false, None, None).unwrap();
     assert!(matches!(
-        control.prepare("quick", 1, false),
+        control.prepare("quick", 1, false, None, None),
         Err("cloudflare_already_active")
     ));
     assert!(control
@@ -202,7 +202,21 @@ fn prepare_stop_restart_fences_profile_revision_instance_and_generation() {
     control
         .stop("quick", "server-one", first.process_generation, None)
         .unwrap();
-    let second = control.prepare("quick", 1, false).unwrap();
+    assert!(matches!(
+        control.prepare("quick", 1, false, Some(0), None),
+        Err("cloudflare_stale_attempt")
+    ));
+    assert!(matches!(
+        control.prepare(
+            "quick",
+            1,
+            false,
+            Some(first.process_generation),
+            Some("replaced")
+        ),
+        Err("cloudflare_revision_conflict")
+    ));
+    let second = control.prepare("quick", 1, false, None, None).unwrap();
     assert!(second.process_generation > first.process_generation);
     assert_ne!(second.probe_nonce, first.probe_nonce);
     assert!(control
@@ -219,7 +233,7 @@ fn prepare_stop_restart_fences_profile_revision_instance_and_generation() {
 fn oauth_handoff_is_once_and_replacement_revokes_previous_client() {
     let fixture = Fixture::new();
     let control = fixture.control;
-    let prepared = control.prepare("quick", 1, false).unwrap();
+    let prepared = control.prepare("quick", 1, false, None, None).unwrap();
     let entry = control
         .db
         .get_public_ingress_entry_for_profile("quick")
@@ -540,7 +554,10 @@ async fn public_snapshot_enforces_pkce_and_origin_without_changing_private_confi
     config.oauth2.dcr_owner_user_id = Some("private-owner".into());
     config.oauth2.shared_key_bridge_enabled = true;
     Arc::get_mut(&mut fixture.control).unwrap().config = Arc::new(config);
-    fixture.control.prepare("quick", 1, false).unwrap();
+    fixture
+        .control
+        .prepare("quick", 1, false, None, None)
+        .unwrap();
     let entry = fixture
         .control
         .db

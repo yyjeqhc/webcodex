@@ -31,6 +31,7 @@ impl Drop for OwnedTask {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct CloudflareStatus {
+    pub configuration_id: String,
     pub profile_id: String,
     pub server_instance_id: String,
     pub process_generation: i64,
@@ -130,6 +131,8 @@ enum ControlRequest {
         profile_id: String,
         expected_revision: u64,
         server_instance_id: String,
+        expected_generation: Option<i64>,
+        expected_configuration_id: Option<String>,
     },
     Prepare {
         profile_id: String,
@@ -242,6 +245,7 @@ impl CloudflareControl {
                 .unwrap_or(false)
         });
         Ok(CloudflareStatus {
+            configuration_id: profile.configuration_id.clone(),
             profile_id: id.to_owned(),
             server_instance_id: self.instance_id.clone(),
             process_generation: attempt.map_or(0, |attempt| attempt.generation),
@@ -295,9 +299,13 @@ impl CloudflareControl {
         id: &str,
         revision: u64,
         standalone: bool,
+        expected_generation: Option<i64>,
+        expected_configuration_id: Option<&str>,
     ) -> Result<PreparedIngress, &'static str> {
         let profile = self.profile(id)?;
-        if profile.revision != revision {
+        if profile.revision != revision
+            || expected_configuration_id.is_some_and(|id| id != profile.configuration_id)
+        {
             return Err("cloudflare_revision_conflict");
         }
         if standalone != (profile.host_mode == TunnelHostMode::Standalone) {
@@ -318,6 +326,15 @@ impl CloudflareControl {
             .attempt
             .lock()
             .map_err(|_| "ingress_state_unavailable")?;
+        if expected_generation.is_some_and(|generation| {
+            generation
+                != guard
+                    .as_ref()
+                    .filter(|a| a.profile_id == id)
+                    .map_or(0, |a| a.generation)
+        }) {
+            return Err("cloudflare_stale_attempt");
+        }
         if guard
             .as_ref()
             .is_some_and(|attempt| matches!(attempt.lifecycle, "starting" | "running"))
@@ -486,6 +503,7 @@ impl CloudflareControl {
         entry.admission_open = true;
         attempt.entry = Some(entry.clone());
         attempt.lifecycle = "running";
+        attempt.reason = None;
         attempt.network_ready = true;
         attempt.last_heartbeat = Instant::now();
         Ok(entry)
@@ -561,8 +579,16 @@ impl CloudflareControl {
         id: &str,
         revision: u64,
         allow_install: bool,
+        expected_generation: Option<i64>,
+        expected_configuration_id: Option<&str>,
     ) -> Result<(), &'static str> {
-        let prepared = self.prepare(id, revision, false)?;
+        let prepared = self.prepare(
+            id,
+            revision,
+            false,
+            expected_generation,
+            expected_configuration_id,
+        )?;
         let profile = match self.profile(id) {
             Ok(profile) => profile,
             Err(reason) => {
@@ -582,12 +608,25 @@ impl CloudflareControl {
                 let control = weak.upgrade().ok_or("cloudflare_stopped")?;
                 control.verify_owner(&profile).await?;
                 drop(control);
+                let progress = |stage: &'static str| {
+                    if let Some(control) = weak.upgrade() {
+                        if let Ok(mut guard) = control.attempt.lock() {
+                            if let Some(current) = guard
+                                .as_mut()
+                                .filter(|a| a.generation == generation && a.lifecycle == "starting")
+                            {
+                                current.reason = Some(stage);
+                            }
+                        };
+                    }
+                };
                 let binary = if allow_install {
-                    prepare_cloudflared_interactive().await
+                    prepare_cloudflared_interactive(progress).await
                 } else {
                     prepare_cloudflared().await
                 }
-                .map_err(|_| "cloudflare_binary_unavailable")?;
+                .map_err(|error| error.code)?;
+                progress("cloudflare_transport_start");
                 let deadline = Instant::now() + START_TIMEOUT;
                 let (origin, mut transport) = match &profile.provider {
                     TunnelProvider::CloudflareNamed { public_origin, .. } => (
@@ -602,12 +641,24 @@ impl CloudflareControl {
                             deadline,
                         )
                         .await
-                        .map_err(|_| "cloudflare_start_failed")?,
+                        .map_err(|error| {
+                            if error.code == "tunnel_unavailable" {
+                                "cloudflare_start_failed"
+                            } else {
+                                error.code
+                            }
+                        })?,
                     ),
                     TunnelProvider::CloudflareQuick => {
                         CloudflareTransport::start_quick(&binary, &profile.local_target, deadline)
                             .await
-                            .map_err(|_| "cloudflare_start_failed")?
+                            .map_err(|error| {
+                                if error.code == "tunnel_unavailable" {
+                                    "cloudflare_start_failed"
+                                } else {
+                                    error.code
+                                }
+                            })?
                     }
                     _ => return Err("cloudflare_provider_invalid"),
                 };
@@ -962,6 +1013,8 @@ pub(crate) async fn cloudflare_control_handler(
         match request {
             ControlRequest::Status { .. } => {}
             ControlRequest::Start {
+                expected_generation,
+                expected_configuration_id,
                 expected_revision,
                 server_instance_id,
                 ..
@@ -969,7 +1022,13 @@ pub(crate) async fn cloudflare_control_handler(
                 if server_instance_id != control.instance_id {
                     return Err("cloudflare_stale_attempt");
                 }
-                control.start(&id, expected_revision, true)?;
+                control.start(
+                    &id,
+                    expected_revision,
+                    true,
+                    expected_generation,
+                    expected_configuration_id.as_deref(),
+                )?;
             }
             ControlRequest::Prepare {
                 expected_revision,
@@ -980,8 +1039,14 @@ pub(crate) async fn cloudflare_control_handler(
                     return Err("cloudflare_stale_attempt");
                 }
                 control.verify_owner(&profile).await?;
-                return serde_json::to_value(control.prepare(&id, expected_revision, true)?)
-                    .map_err(|_| "cloudflare_state_unavailable");
+                return serde_json::to_value(control.prepare(
+                    &id,
+                    expected_revision,
+                    true,
+                    None,
+                    None,
+                )?)
+                .map_err(|_| "cloudflare_state_unavailable");
             }
             ControlRequest::Activate {
                 expected_revision,
@@ -1487,9 +1552,9 @@ impl CloudflareOwner {
             for profile in profiles.into_iter().filter(|profile| {
                 profile.autostart && profile.host_mode == TunnelHostMode::Embedded
             }) {
-                let _ = self
-                    .control
-                    .start(&profile.profile_id, profile.revision, false);
+                let _ =
+                    self.control
+                        .start(&profile.profile_id, profile.revision, false, None, None);
             }
         }
         loop {

@@ -997,7 +997,12 @@ impl DesktopCore {
         let store = store()?;
         let mut setup = EnvironmentSetup::new(NativeEnvironment::new().map_err(desktop_error)?);
         let result = setup
-            .resume(&store, &SetupSecrets::default(), self.setup_progress_sink())
+            .resume_if_current(
+                &store,
+                self.config.persistent_environment.as_deref(),
+                &SetupSecrets::default(),
+                self.setup_progress_sink(),
+            )
             .await
             .map_err(desktop_error)?;
         cancellation.check()?;
@@ -1452,9 +1457,17 @@ impl DesktopCore {
         self.snapshot.topology = self.config.topology.clone();
         self.snapshot.project = project;
         let service_running = |component: &str| {
-            observation.local.as_ref()?.components.iter()
-                .find(|row| row.component == component)?.service.as_ref()
-                .filter(|service| service.ownership == webcodex_environment::service::Ownership::Owned)?
+            observation
+                .local
+                .as_ref()?
+                .components
+                .iter()
+                .find(|row| row.component == component)?
+                .service
+                .as_ref()
+                .filter(|service| {
+                    service.ownership == webcodex_environment::service::Ownership::Owned
+                })?
                 .running
         };
         let server = if observation.server_reachable && observation.authenticated {

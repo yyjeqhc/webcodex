@@ -1051,6 +1051,20 @@ fn desired_ingress_port(store: &EnvironmentStore, requested: Option<u16>) -> Set
     Ok(port)
 }
 
+/// A newly installed user Server can accept a later interactive connection
+/// without interrupting other clients. This only binds a second loopback
+/// listener. Admission still requires a configured profile and verified attempt.
+pub(crate) fn prepare_user_ingress(store: &EnvironmentStore) -> SetupResultValue<()> {
+    let port = desired_ingress_port(store, None)?;
+    if cloudflare_ingress_port(store)?.is_none() {
+        store.write_json(
+            "server/cloudflare-ingress.json",
+            &IngressConfiguration { port },
+        )?;
+    }
+    crate::tunnel::ensure_server_tunnel_environment(store)
+}
+
 fn updated_record(
     existing: Option<&TunnelRecord>,
     request: &CloudflareTunnelProfileRequest<'_>,
@@ -1352,6 +1366,12 @@ impl NativeEnvironment {
                 return Err(invalid("tunnel_profile_recovery_required", "The previous Cloudflare binding could not be restored after an interrupted catalog update"));
             }
             return Err(error);
+        }
+        // A user-owned Windows Server reads these protected files on each
+        // control request. SCM bindings retain the stopped-service ACL path.
+        #[cfg(windows)]
+        if environment.request.service_scope == service::ServiceScope::User {
+            materialize_cloudflare_tunnel_profiles(store)?;
         }
         let running = owner_status.ownership == service::Ownership::Owned
             && owner_status.running == Some(true);

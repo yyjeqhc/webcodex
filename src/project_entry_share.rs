@@ -756,7 +756,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     // Resolve managed transport dependencies before project setup/state creation.
     let cloudflared_binary = match options.tunnel {
         TunnelProvider::CloudflareQuick => {
-            Some(super::cloudflared_service::resolve_cloudflared().await?)
+            Some(super::cloudflared_service::resolve_cloudflared(|_| {}).await?)
         }
         TunnelProvider::OpenAiSecure | TunnelProvider::None => None,
     };

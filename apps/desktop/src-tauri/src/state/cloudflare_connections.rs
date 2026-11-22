@@ -4,6 +4,9 @@ use super::*;
 use serde::{Deserialize, Serialize, Serializer};
 use webcodex_environment::{Secret, TunnelProvider};
 
+mod gemini;
+pub use gemini::GeminiConnectionRequest;
+
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CloudflareConnectionRequest {
@@ -14,6 +17,8 @@ pub enum CloudflareConnectionRequest {
         profile_id: String,
         server_instance_id: String,
         expected_revision: u64,
+        expected_generation: u64,
+        expected_configuration_id: String,
     },
     Stop {
         profile_id: String,
@@ -52,6 +57,7 @@ impl CloudflareConnectionRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudflareConnectionStatus {
+    pub configuration_id: String,
     pub profile_id: String,
     pub server_instance_id: String,
     pub process_generation: u64,
@@ -168,6 +174,15 @@ impl AppState {
         }
         let profile = webcodex_environment::cloudflare_tunnel_profile(&store, request.profile_id())
             .map_err(environment::desktop_error)?;
+        if let CloudflareConnectionRequest::Start {
+            expected_configuration_id,
+            ..
+        } = &request
+        {
+            if *expected_configuration_id != profile.configuration_id {
+                return Err(stale_revision(request.stage(), &profile.profile_id));
+            }
+        }
         if profile.provider == TunnelProvider::Openai {
             return Err(unavailable());
         }
@@ -189,12 +204,13 @@ impl AppState {
                     CloudflareConnectionRequest::Start {
                         server_instance_id,
                         expected_revision,
+                        expected_generation,
                         ..
                     } => Some((
                         webcodex_environment::ServiceOperation::Start,
                         server_instance_id.as_str(),
                         Some(*expected_revision),
-                        None,
+                        Some(*expected_generation),
                     )),
                     CloudflareConnectionRequest::Stop {
                         server_instance_id,
@@ -233,7 +249,8 @@ impl AppState {
                             Some("invalid_response"),
                         )
                     })?;
-                if observed.profile_id != profile.profile_id
+                if observed.configuration_id != profile.configuration_id
+                    || observed.profile_id != profile.profile_id
                     || observed.server_instance_id != expected_instance
                     || expected_revision.is_some_and(|revision| {
                         revision != observed.configured_revision || revision != profile.revision
@@ -297,6 +314,9 @@ impl AppState {
             )
         {
             return Err(unavailable());
+        }
+        if status.configuration_id != profile.configuration_id {
+            return Err(stale_revision(request.stage(), &profile.profile_id));
         }
         status.check_materialized_revision(profile.revision);
         Ok(CloudflareConnectionResponse::Status(status))

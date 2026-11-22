@@ -39,11 +39,24 @@ fn task_request(spec: &ServiceSpec, operation: &str) -> Result<Value, ServiceErr
         .collect::<Vec<_>>()
         .join(" ");
     let host = desktop_task_host(&spec.program);
-    let program = spec.program.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec, "Task executable must be UTF-8"))?;
-    let directory = spec.working_directory.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec, "Task directory must be UTF-8"))?;
+    let program = spec.program.to_str().ok_or_else(|| {
+        ServiceError::new(
+            ServiceErrorCode::InvalidSpec,
+            "Task executable must be UTF-8",
+        )
+    })?;
+    let directory = spec.working_directory.to_str().ok_or_else(|| {
+        ServiceError::new(
+            ServiceErrorCode::InvalidSpec,
+            "Task directory must be UTF-8",
+        )
+    })?;
     let host_arguments = format!(
         "--user-task {} {} {} {} {}",
-        quote(spec.component.as_str()), quote(&spec.config_identity), quote(directory), quote(program),
+        quote(spec.component.as_str()),
+        quote(&spec.config_identity),
+        quote(directory),
+        quote(program),
         arguments
     );
     Ok(json!({"operation":operation, "name":name,

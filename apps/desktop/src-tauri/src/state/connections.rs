@@ -775,9 +775,10 @@ fn persistent_connection_projection(
         webcodex_environment::TunnelRuntimeObservation,
     >,
 ) -> TunnelConnectionSnapshot {
-    let server_restart_required = observation
-        .as_ref()
-        .is_ok_and(|status| status.server_restart_required);
+    let server_restart_required = profile.provider == webcodex_environment::TunnelProvider::Openai
+        && observation
+            .as_ref()
+            .is_ok_and(|status| status.server_restart_required);
     let enabled = match profile.host_mode {
         webcodex_environment::TunnelHostMode::Embedded => profile.autostart,
         webcodex_environment::TunnelHostMode::Standalone => observation

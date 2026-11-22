@@ -277,6 +277,7 @@ impl AppState {
                 };
                 if self.operations.current().is_some()
                     || self.operations.generation() != start_op_generation
+                    || observed.environment.environment_id != environment_id
                     || core.config.persistent_environment.as_deref()
                         != Some(environment_id.as_str())
                 {

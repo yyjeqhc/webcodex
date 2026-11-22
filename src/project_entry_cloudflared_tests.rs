@@ -105,7 +105,7 @@ fn release_assets_are_pinned_per_supported_platform() {
     assert!(!windows_amd64.gzip_archive);
 
     let windows_arm64 = cloudflared_asset_for("windows", "aarch64").unwrap_err();
-    assert_eq!(windows_arm64.code, "tunnel_unavailable");
+    assert_eq!(windows_arm64.code, "cloudflare_platform_unsupported");
     assert!(windows_arm64.message.contains("no Windows ARM64 artifact"));
 }
 
@@ -131,7 +131,7 @@ fn explicit_override_is_authoritative_then_path_is_used() {
 
     let missing = temp.path().join("missing");
     let error = existing_cloudflared_from(Some(&missing), Some(&path)).unwrap_err();
-    assert_eq!(error.code, "tunnel_unavailable");
+    assert_eq!(error.code, "cloudflare_binary_unavailable");
     assert!(error.message.contains("WEBCODEX_CLOUDFLARED_BIN"));
 }
 
@@ -160,7 +160,7 @@ fn managed_root_prefers_xdg_then_home_and_requires_private_user_base() {
         local.join("WebCodex/tools/cloudflared")
     );
     let error = managed_cloudflared_root_from(None, None, None).unwrap_err();
-    assert_eq!(error.code, "tunnel_unavailable");
+    assert_eq!(error.code, "cloudflare_storage_unavailable");
     assert!(error.message.contains("private user directory"));
     let relative_xdg = managed_cloudflared_root_from(
         Some(OsStr::new("relative-state")),
@@ -362,7 +362,7 @@ async fn managed_binary_is_downloaded_verified_and_reused_without_network() {
     let state = crate::test_support::executable_tempdir();
     let (url, requests, server) = serve_once(bytes.clone()).await;
 
-    let installed = ensure_managed_cloudflared_at(state.path(), asset, &url)
+    let installed = ensure_managed_cloudflared_at(state.path(), asset, &url, |_| {})
         .await
         .unwrap();
     server.await.unwrap();
@@ -378,6 +378,7 @@ async fn managed_binary_is_downloaded_verified_and_reused_without_network() {
         state.path(),
         asset,
         "http://127.0.0.1:9/should-not-be-requested",
+        |_| {},
     )
     .await
     .unwrap();
@@ -399,11 +400,11 @@ async fn checksum_failure_never_installs_downloaded_binary() {
     let state = tempfile::tempdir().unwrap();
     let (url, _requests, server) = serve_once(bytes).await;
 
-    let error = ensure_managed_cloudflared_at(state.path(), asset, &url)
+    let error = ensure_managed_cloudflared_at(state.path(), asset, &url, |_| {})
         .await
         .unwrap_err();
     server.await.unwrap();
-    assert_eq!(error.code, "tunnel_unavailable");
+    assert_eq!(error.code, "cloudflare_verification_failed");
     assert!(error.message.contains("SHA-256 verification"));
     assert!(!managed_binary_path(state.path(), asset).exists());
 }
@@ -440,7 +441,7 @@ async fn verified_darwin_style_archive_extracts_only_before_binary_verification(
     let state = crate::test_support::executable_tempdir();
     let (url, _requests, server) = serve_once(archive_bytes).await;
 
-    let installed = ensure_managed_cloudflared_at(state.path(), asset, &url)
+    let installed = ensure_managed_cloudflared_at(state.path(), asset, &url, |_| {})
         .await
         .unwrap();
     server.await.unwrap();

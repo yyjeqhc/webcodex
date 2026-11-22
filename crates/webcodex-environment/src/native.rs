@@ -1643,6 +1643,11 @@ impl EnvironmentBackend for NativeEnvironment {
                 } else {
                     Component::Runner
                 };
+                if component == Component::Server
+                    && record.request.service_scope == service::ServiceScope::User
+                {
+                    crate::cloudflare_tunnel::prepare_user_ingress(store)?;
+                }
                 let credential = secrets
                     .service_password
                     .as_ref()
@@ -1680,7 +1685,8 @@ impl EnvironmentBackend for NativeEnvironment {
                         tokio::time::timeout_at(deadline, self.observe(store, record)).await;
                     if let Ok(Ok(observation)) = observed {
                         if observation.authenticated
-                            && (!record.request.local_runner() || observation.runner_online == Some(true))
+                            && (!record.request.local_runner()
+                                || observation.runner_online == Some(true))
                             && record
                                 .projects
                                 .iter()

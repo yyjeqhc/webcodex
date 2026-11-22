@@ -65,6 +65,8 @@ export const desktopApi = {
   registerSshResource: (request: SshRegisterRequest) => invoke<SshMutationResult>("ssh_resource_register", { request }),
   removeSshResource: (expected: SettingsTarget, observationId: string, name: string) =>
     invoke<SshMutationResult>("ssh_resource_remove", { request: { expected, observation_id: observationId, name } }),
+  connectGemini: (request: {environment_id: string; profile: {id: string; configuration_id: string; revision: number} | null}) =>
+    invoke<DesktopState>("connect_gemini", { request }),
   cloudflareConnection: <T extends CloudflareConnectionStatus | CloudflareOAuthHandoff = CloudflareConnectionStatus>(request: CloudflareConnectionRequest) => invoke<T>("cloudflare_connection", { request }),
   saveTunnelProfile: (request: TunnelProfileRequest) => invoke<DesktopState>("save_tunnel_profile", { request }),
   tunnelProfileAction: (profileId: string, action: TunnelProfileAction, expectedRevision?: number, expectedConfigurationId?: string | null) => invoke<DesktopState>("tunnel_profile_action", { profileId, action, ...(expectedRevision === undefined ? {} : { expectedRevision }), ...(expectedConfigurationId == null ? {} : { expectedConfigurationId }) }),

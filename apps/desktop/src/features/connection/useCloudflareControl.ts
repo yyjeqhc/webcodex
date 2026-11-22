@@ -22,7 +22,7 @@ export function useCloudflareControl(profile: TunnelConnection, canStart: boolea
     try {
       const next = await desktopApi.cloudflareConnection({ action: "status", profile_id: profile.id });
       if (attempt !== sequence.current) return;
-      if (next.profile_id !== profile.id) throw new Error();
+      if (next.profile_id !== profile.id || next.configuration_id !== profile.configuration_id) throw {code: "cloudflare_revision_stale"};
       setStatus(next);
       setReadFailure(null);
       if (next.lifecycle === "running") setActionFailure(null);
@@ -33,7 +33,7 @@ export function useCloudflareControl(profile: TunnelConnection, canStart: boolea
     } finally {
       reading.current = false;
     }
-  }, [canStart, profile.id]);
+  }, [canStart, profile.id, profile.configuration_id]);
 
   useEffect(() => {
     if (!canStart) return;
@@ -46,7 +46,7 @@ export function useCloudflareControl(profile: TunnelConnection, canStart: boolea
   }, [canStart, refresh]);
 
   const run = async (action: "start" | "stop" | "restart") => {
-    if (!status || mutating.current || !canStart) return;
+    if (!status || (action !== "stop" && !profile.configuration_id) || mutating.current || !canStart) return;
     mutating.current = true;
     const attempt = ++sequence.current;
     setActionPending(action);
@@ -66,10 +66,10 @@ export function useCloudflareControl(profile: TunnelConnection, canStart: boolea
             stopped.lifecycle !== "stopped") throw new Error();
       }
       const next = await desktopApi.cloudflareConnection(action === "stop" ? stop : {
-        action: "start", profile_id: profile.id, server_instance_id: status.server_instance_id, expected_revision: profile.revision,
+        action: "start", profile_id: profile.id, server_instance_id: status.server_instance_id, expected_revision: profile.revision, expected_generation: status.process_generation, expected_configuration_id: profile.configuration_id!,
       });
       if (attempt !== sequence.current) return;
-      if (next.profile_id !== profile.id || next.server_instance_id !== status.server_instance_id) throw new Error();
+      if (next.configuration_id !== profile.configuration_id || next.profile_id !== profile.id || next.server_instance_id !== status.server_instance_id) throw new Error();
       setStatus(next);
     } catch (error) {
       if (attempt === sequence.current) setActionFailure(normalizeDesktopError(error));

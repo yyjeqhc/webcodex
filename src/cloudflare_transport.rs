@@ -60,8 +60,10 @@ pub(crate) async fn prepare_cloudflared() -> Result<PathBuf, ProductError> {
 /// Interactive user-initiated connection start may download the pinned,
 /// SHA256-verified managed cloudflared binary when no local binary is present.
 /// Unattended boot autostart keeps using `prepare_cloudflared()`.
-pub(crate) async fn prepare_cloudflared_interactive() -> Result<PathBuf, ProductError> {
-    super::cloudflared_service::resolve_cloudflared().await
+pub(crate) async fn prepare_cloudflared_interactive(
+    progress: impl Fn(&'static str),
+) -> Result<PathBuf, ProductError> {
+    super::cloudflared_service::resolve_cloudflared(progress).await
 }
 
 pub(crate) fn valid_quick_origin(origin: &str) -> bool {
@@ -422,8 +424,10 @@ async fn cloudflared_binary_version_until(
 async fn verify_supported_binary(binary: &Path, deadline: Instant) -> Result<(), ProductError> {
     let deadline = deadline.min(Instant::now() + VERSION_TIMEOUT);
     if cloudflared_binary_version_until(binary, deadline).await? < MIN_VERSION {
-        return Err(transport_error(
+        return Err(ProductError::new(
+            "cloudflare_version_unsupported",
             "Cloudflare requires cloudflared 2025.4.0 or later",
+            Some("Update cloudflared and reconnect."),
         ));
     }
     Ok(())

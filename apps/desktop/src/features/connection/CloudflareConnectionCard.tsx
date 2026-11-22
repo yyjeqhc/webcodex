@@ -6,6 +6,7 @@ import { safeIdentifier } from "../../lib/desktop-errors";
 import { useCloudflareControl } from "./useCloudflareControl";
 import type { CloudflareConnectionStatus, CloudflareOAuthHandoff, TunnelConnection } from "../../models/connections-tools";
 import { useConnectionsTools } from "../../i18n/connections-tools";
+import { useLocale, type MessageKey } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
@@ -76,8 +77,24 @@ export function CloudflareConnectionCard(props: CardProps) {
   return <CloudflareProfile key={JSON.stringify([profile.id, profile.configuration_id, profile.revision, canStart])} {...props} />;
 }
 
+const preparationMessages: Record<string, MessageKey> = {
+  cloudflare_component_check: "gemini.check",
+  cloudflare_component_download: "gemini.download",
+  cloudflare_component_verify: "gemini.verify",
+  cloudflare_transport_start: "gemini.start",
+  cloudflare_network_unavailable: "gemini.networkFailure",
+  cloudflare_download_failed: "gemini.downloadFailure",
+  cloudflare_proxy_invalid: "gemini.proxyFailure",
+  cloudflare_storage_unavailable: "gemini.storageFailure",
+  cloudflare_version_unsupported: "gemini.versionFailure",
+  cloudflare_platform_unsupported: "gemini.platformFailure",
+  cloudflare_verification_failed: "gemini.verifyFailure",
+  cloudflare_extraction_failed: "gemini.extractFailure",
+  cloudflare_start_failed: "gemini.startFailure",
+};
 function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair, onRestartServer, onEnableRegistration }: CardProps) {
   const c = useConnectionsTools(); const p = useProduct();
+  const { t } = useLocale();
   const { status, failure, failureCode, actionPending, run, refresh } = useCloudflareControl(profile, canStart);
   const [oauth, setOauth] = useState<CloudflareConnectionStatus | null>(null);
   const [handoffFeedback, setHandoffFeedback] = useState<{origin: string; generation: number; instance: string; kind: "copied" | "clipboardRecovery" | "openGeminiFailed"} | null>(null);
@@ -103,13 +120,21 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
           (profile.provider?.kind !== "cloudflare_named" || profile.provider.public_origin === observedOrigin)) candidateOrigin = observedOrigin;
     } catch { /* Untrusted or malformed observations are never displayed. */ }
   }
-  const origin = running && candidateOrigin && (!dcr || status.registration_available) ? candidateOrigin : null;
+  const origin = running && candidateOrigin && (!dcr || (status.registration_available && status.applied_revision === profile.revision)) ? candidateOrigin : null;
   const feedback = handoffFeedback?.origin === origin && handoffFeedback?.generation === status?.process_generation &&
     handoffFeedback?.instance === status?.server_instance_id ? handoffFeedback?.kind : null;
   const handoff = async (action: "copy" | "open") => {
     if (!origin || !status) return;
     let kind: "copied" | "clipboardRecovery" | "openGeminiFailed";
     try {
+      const now = await desktopApi.cloudflareConnection({action: "status", profile_id: profile.id});
+      if (!alive.current || now.profile_id !== profile.id || now.configuration_id !== profile.configuration_id || now.lifecycle !== "running" ||
+          now.server_instance_id !== status.server_instance_id || now.process_generation !== status.process_generation ||
+          now.configured_revision !== profile.revision || now.public_origin !== origin ||
+          (dcr && (!now.registration_available || now.applied_revision !== profile.revision))) {
+        if (alive.current) void refresh();
+        return;
+      }
       if (action === "copy") { await writeText(origin + "/mcp"); kind = "copied"; }
       else { await desktopApi.openDiagnosticResource("gemini_apps"); return; }
     } catch { kind = action === "copy" ? "clipboardRecovery" : "openGeminiFailed"; }
@@ -131,7 +156,8 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     </div>;
   const advanced = dcr || Boolean(onEnableRegistration);
   const awaitingGeminiUrl = Boolean(onEnableRegistration || dcr) && !origin;
-  const missingUrlReason = onEnableRegistration && !dcr ? c("publicUrlRegistration")
+  const missingUrlReason = reason && preparationMessages[reason] ? t(preparationMessages[reason])
+    : onEnableRegistration && !dcr ? c("publicUrlRegistration")
     : !canStart ? c("publicUrlServer")
     : ingressNotApplied || profile.server_restart_required ? c("serverRestartHelp")
     : identityRepair ? c("cloudflareIdentityRepair")
@@ -152,12 +178,13 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     : status?.lifecycle === "stopped" ? p("stopped") : c("awaitingStatus");
   return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
     <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{quick ? c("cloudflareQuick") : c("cloudflareNamed")}</span></div><span role="status" className="connection-state">{stateText}</span></header>
-    {onEnableRegistration && !dcr && <div><p>{c("dcrHelp")}</p><button type="button" className="primary-button" disabled={disabled} onClick={onEnableRegistration}>{c("enableForGemini")}</button></div>}
+    {onEnableRegistration && !dcr && <div><p>{c("dcrHelp")}</p><button type="button" className="primary-button" disabled={disabled} onClick={onEnableRegistration}>{c("connectGemini")}</button></div>}
+    {onEnableRegistration && dcr && !active && !ingressNotApplied && !identityRepair && <button className="primary-button"
+      disabled={disabled || unselectedService || (canStart && !status)} onClick={onEnableRegistration}>{c("connectGemini")}</button>}
     {(!onEnableRegistration || dcr) && address}
     {awaitingGeminiUrl && <div className="gemini-endpoint-pending" role="status">
       <strong>{c("publicUrlMissing")}</strong>
       <p>{missingUrlReason}</p>
-      {candidateOrigin && <p>{c("candidatePublicUrl")}: <code>{candidateOrigin}/mcp</code> — {c("publicUrlUnverified")}</p>}
     </div>}
     {origin && dcr && !status?.observed_authorization && <p>{c("addInGemini")}</p>}
     {feedback && feedback !== "copied" && <p role="alert">{c(feedback)}</p>}
@@ -182,7 +209,7 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     {identityRepair && !awaitingGeminiUrl && <p role="alert">{c("cloudflareIdentityRepair")}</p>}
     {(failed || identityRepair || (registrationUnavailable && !discoveryRetry) || reason === "cloudflare_binary_unavailable") && onRepair && <button type="button" className="secondary-button" disabled={disabled} onClick={onRepair}>{c("openRuntimeSetup")}</button>}
     <div className="connection-actions">
-      <button type="button" className={active ? "secondary-button" : "primary-button"} disabled={disabled || !status || !canStart || unselectedService || profile.server_restart_required || status.configured_revision !== profile.revision || (!quick && !profile.credential_present)} onClick={() => void run(active ? "restart" : "start")}>{active ? c("reconnect") : dcr ? c("startPublicTunnel") : p("start")}</button>
+      {(!onEnableRegistration || active) && <button type="button" className={active ? "secondary-button" : "primary-button"} disabled={disabled || !status || !canStart || unselectedService || profile.server_restart_required || status.configured_revision !== profile.revision || (!quick && !profile.credential_present)} onClick={() => void run(active ? "restart" : "start")}>{active ? c("reconnect") : dcr ? c("startPublicTunnel") : p("start")}</button>}
       {active && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run("stop")}>{p("stop")}</button>}
       {!advanced && manualButton}
     </div>

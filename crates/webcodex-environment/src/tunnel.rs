@@ -262,7 +262,7 @@ fn profile_directory(store: &EnvironmentStore, profile_id: &str) -> std::path::P
     store.root().join("server/tunnels").join(profile_id)
 }
 
-fn validate_name(name: &str) -> SetupResultValue<String> {
+pub(crate) fn validate_name(name: &str) -> SetupResultValue<String> {
     let name = name.trim();
     if name.is_empty() || name.len() > 160 || name.chars().any(|value| value.is_control()) {
         return Err(diagnostic(
@@ -785,6 +785,7 @@ impl NativeEnvironment {
         store: &EnvironmentStore,
         lock: &crate::storage::EnvironmentLock,
         profile_id: &str,
+        name: Option<&str>,
         credentials: Option<&TunnelCredentials>,
         start: bool,
     ) -> SetupResultValue<service::ServiceStatus> {
@@ -793,7 +794,7 @@ impl NativeEnvironment {
                 store,
                 lock,
                 profile_id,
-                None,
+                name,
                 TunnelHostMode::Standalone,
                 None,
                 None,

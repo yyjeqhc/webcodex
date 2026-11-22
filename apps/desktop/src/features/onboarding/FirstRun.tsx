@@ -9,6 +9,8 @@ import { useLocale, type MessageKey } from "../../i18n/locale";
 import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
 import type { DesktopError, DesktopState, SetupProgressStep } from "../../models/topology";
 import { PowerShellInstallGuidance } from "../settings/PowerShellInstallGuidance";
+import { LocalMigrationSetup } from "./LocalMigrationSetup";
+import { desktopIdentity } from "../../lib/desktop-observation";
 import { QuickShareSetup } from "./QuickShareSetup";
 
 type SetupMode = "create" | "join" | "share";
@@ -41,10 +43,12 @@ interface FirstRunProps {
   state: DesktopState;
   onState: (state: DesktopState) => void;
   chooseModeFirst?: boolean;
+  onCancelLocal?: () => void;
+  onDiagnostics?: () => void;
   onComplete?: (state?: DesktopState) => void;
 }
 
-export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }: FirstRunProps) {
+export function FirstRun({ state, onState, chooseModeFirst = false, onComplete, onCancelLocal, onDiagnostics }: FirstRunProps) {
   const { t } = useLocale();
   const scopeText = useServiceScopeText();
   const setup = state.environment_setup;
@@ -55,15 +59,18 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   const savedProject = setup ? setup.project_path : (!state.persistent_environment && savedMode ? state.project?.path ?? null : null);
   const pending = Boolean(setup && !setup.configured);
   const contextKey = JSON.stringify([setup ?? null, savedMode, savedRunner, savedServer, savedProject, state.persistent_environment]);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [activeContext, setActiveContext] = useState(contextKey);
   const [serviceScope, setServiceScope] = useState<"user" | "system">(setup?.service_scope ?? "user");
-  const [mode, setMode] = useState<SetupMode | null>(chooseModeFirst ? null : savedMode);
+  const [mode, setMode] = useState<SetupMode | null>(chooseModeFirst ? null : savedMode ?? "create");
   useEffect(() => { headingRef.current?.focus(); }, [mode]);
   const [runner, setRunner] = useState(savedRunner);
   const [serverUrl, setServerUrl] = useState(savedServer);
   const [runnerName, setRunnerName] = useState(setup?.runner_display_name ?? "");
   const [projectPath, setProjectPath] = useState<string | null>(savedProject);
+  const [advancedRole, setAdvancedRole] = useState(false);
   const [advanced, setAdvanced] = useState(Boolean(savedMode && !savedRunner));
   const [pairingCode, setPairingCode] = useState("");
   const [replacePairingCode, setReplacePairingCode] = useState(false);
@@ -76,9 +83,9 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   currentSetup.current = setup;
   useEffect(() => {
     if (activeContext === contextKey) return;
-    setActiveContext(contextKey); setMode(chooseModeFirst && !pending && !busy ? null : savedMode);
+    setActiveContext(contextKey); setMode(chooseModeFirst && !pending && !busy ? null : savedMode ?? "create");
     setRunner(savedRunner); setServerUrl(savedServer); setProjectPath(savedProject); setRunnerName(setup?.runner_display_name ?? "");
-    setServiceScope(setup?.service_scope ?? "user"); setAdvanced(Boolean(savedMode && !savedRunner));
+    setAdvancedRole(false); setServiceScope(setup?.service_scope ?? "user"); setAdvanced(Boolean(savedMode && !savedRunner));
     setPairingCode(""); setUserToken(""); setReplacePairingCode(false); setError(null);
   }, [activeContext, contextKey, chooseModeFirst, savedMode, savedRunner, savedServer, savedProject, setup?.service_scope, pending, busy]);
   const mutationBusy = busy || Boolean(state.current_operation) || activeContext !== contextKey;
@@ -93,7 +100,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   const needsCode = mode === "join" && runner && !reuseRunner;
   const needsToken = mode === "join" && !runner && !reuseViewer;
   const address = runnerServerAddress(serverUrl);
-  const addressIssue = mode === "join" && !advanced && !savedMode ? address.issue : null;
+  const addressIssue = mode === "join" && !advancedRole && !savedMode ? address.issue : null;
   const canChooseName = !pending && !savedMode && !state.persistent_environment;
   const nameInvalid = Array.from(runnerName).length > 200 || runnerName.includes("\0");
   const canSubmit = !(runner && canChooseName && nameInvalid) && !mutationBusy && !addressIssue && (mode === "create" || mode === "join" && origin !== null
@@ -107,6 +114,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
     if (pending && next && next !== savedMode) return;
     clearInputs(); setMode(next);
     if (next) {
+      setAdvancedRole(advancedChoice);
       setAdvanced(advancedChoice || Boolean(savedMode && !savedRunner));
       if (!savedMode) setRunner(!advancedChoice);
       else if (advancedChoice && !pending && !savedRunner) setRunner(false);
@@ -133,6 +141,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
     const credential = userToken.trim();
     const submittedIntent = { environmentId: setup?.environment_id, mode, runner, projectPath: runner ? projectPath : null, origin, serviceScope };
     const stillCurrent = () => {
+      if (!mounted.current) return false;
       if (currentContext.current === expectedContext) return true;
       const projected = currentSetup.current;
       return Boolean(projected && (!submittedIntent.environmentId || projected.environment_id === submittedIntent.environmentId) && projected.mode === submittedIntent.mode && projected.runner === submittedIntent.runner
@@ -142,6 +151,9 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
     setPairingCode(""); setUserToken("");
     try {
       const next = await desktopApi.configureEnvironment({
+        ...(mode === "create" && !state.topology && !state.persistent_environment ? {
+          expectedLocalTarget: setup ? { kind: "pending" as const, environment_id: setup.environment_id } : { kind: "fresh" as const },
+        } : {}),
         ...((canChooseServiceScope || pending) ? { serviceScope } : {}),
         mode, serverUrl: mode === "join" ? origin : null,
         projectPath: runner ? projectPath : null,
@@ -196,47 +208,22 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
     {state.persistent_environment && <p className="field-help">{t("setup.savedEnvironment")}</p>}
   </section>;
 
+  if (mode === "create" && savedMode === "create" && state.topology?.experience === "full" && !state.persistent_environment) {
+    return <><LocalMigrationSetup key={desktopIdentity(state)} state={state} onDiagnostics={onDiagnostics}
+      onCancel={onCancelLocal ?? (() => chooseMode(null))} onComplete={next => { onState(next); onComplete?.(next); }} />
+      {runner && <PowerShellInstallGuidance state={state} onState={onState} />}
+    </>;
+  }
+
   const presentation = error ? desktopErrorPresentation(error, t) : null;
   return <>
     <form className="setup-shell" aria-labelledby="setup-title" aria-busy={mutationBusy}
       data-webcodex-page="setup" onSubmit={event => { event.preventDefault(); void run(); }}>
-      <button type="button" className="back-button" disabled={mutationBusy} onClick={() => chooseMode(null)}
-        data-webcodex-action="show-setup-options">{t("setup.back")}</button>
-      <ol className="setup-route" aria-label={t("completion.title")}>
-        <li aria-current="step">{t("completion.role")}</li><li>{t("completion.connection")}</li><li>{t("completion.read")}</li>
-      </ol>
-      <div className="eyebrow">{mode === "create" ? t("setup.localLabel") : t("setup.remoteLabel")}</div>
-      <h1 id="setup-title" tabIndex={-1} ref={headingRef}>{mode === "create" ? t("setup.localTitle") : t("setup.remoteTitle")}</h1>
+      <button type="button" className="back-button" disabled={mutationBusy} onClick={onCancelLocal ?? (() => chooseMode(null))}
+        data-webcodex-action="show-setup-options">{t(onCancelLocal ? "setup.backGemini" : "setup.back")}</button>
+      <h1 id="setup-title" tabIndex={-1} ref={headingRef}>{mode === "create" ? t(pending ? "setup.resumeLocal" : "setup.localTitle") : t("setup.remoteTitle")}</h1>
       <p className="lede">{mode === "create" ? t(runner ? "setup.localDescription" : "setup.serverOnly") : t(runner ? "setup.remoteDescription" : "setup.viewerOnly")}</p>
-      {savedMode && !state.persistent_environment && <p className="workspace-notice" role="note">{scopeText("migrationHelp")}</p>}
-      <div className="form-card">
-        <p className="field-help">{runner ? t("setup.localRunnerHelp") : t(mode === "create" ? "setup.serverOnly" : "setup.viewerOnly")}</p>
-        <details open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)}>
-          <summary>{t("first.advanced")}</summary>
-          <label className="checkbox-row"><input type="checkbox" checked={runner}
-            disabled={mutationBusy || pending || Boolean(savedMode && savedRunner)}
-            onChange={event => { clearInputs(); setRunner(event.target.checked); }} />{t("setup.localRunner")}</label>
-        </details>
-      </div>
-      {runner && canChooseName && <div className="form-card field-group">
-        <label htmlFor="setup-runner-name">{t("setup.runnerName")}</label>
-        <input id="setup-runner-name" value={runnerName} disabled={mutationBusy} onChange={event => setRunnerName(event.target.value)} aria-describedby="setup-runner-name-help" />
-        <span id="setup-runner-name-help" className="field-help">{t("setup.runnerNameHelp")}</span>
-        {nameInvalid && <span role="alert" className="field-help">{t("setup.runnerNameInvalid")}</span>}
-      </div>}
-      {runner && canChooseProject && <div className="project-picker-card">
-        <div>
-          <strong>{t("setup.initialProject")}</strong>
-          <p className="field-help">{t("setup.initialProjectHelp")}</p>
-          {projectPath && <code>{projectPath}</code>}
-        </div>
-        <div className="setup-project-actions">
-          <button type="button" className="secondary-button" disabled={mutationBusy} onClick={() => void chooseProject()}
-            data-webcodex-action="choose-project">{t(projectPath ? "setup.changeFolder" : "setup.chooseFolder")}</button>
-          {projectPath && <button type="button" className="secondary-button" disabled={mutationBusy} onClick={() => setProjectPath(null)}
-            data-webcodex-action="clear-project">{t("setup.clearInitialProject")}</button>}
-        </div>
-      </div>}
+      {savedMode && state.topology?.experience === "full" && !state.persistent_environment && <p className="workspace-notice" role="note">{scopeText("migrationHelp")}</p>}
       {mode === "join" && <div className="form-card">
         <div className="field-group">
           <label htmlFor="setup-server-url">{t("setup.serverUrl")}</label>
@@ -261,20 +248,43 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
         </div> : <div className="field-help"><strong>{t(runner ? "setup.reuseEnrollment" : "setup.reuseViewerCredential")}</strong>
           <p>{t(runner ? "setup.reuseRunnerRegistrationHelp" : "setup.reuseViewerCredentialHelp")}</p></div>}
       </div>}
-      {(runner || mode === "create") && (canChooseServiceScope
-        ? <div className="form-card">
-            <strong>{scopeText(serviceScope)}</strong>
+      {(runner || mode === "create") && (canChooseServiceScope || pending) && <p className="setup-default">{scopeText(serviceScope)}</p>}
+      <details className="setup-options" open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)}>
+        <summary>{t("first.advanced")}</summary>
+        <div className="setup-fields">
+          <label className="checkbox-row"><input type="checkbox" checked={runner}
+            disabled={mutationBusy || pending || Boolean(onCancelLocal) || Boolean(savedMode && savedRunner)}
+            onChange={event => { clearInputs(); setRunner(event.target.checked); }} />{t("setup.localRunner")}</label>
+          {runner && canChooseName && <div className="field-group">
+            <label htmlFor="setup-runner-name">{t("setup.runnerName")}</label>
+            <input id="setup-runner-name" value={runnerName} disabled={mutationBusy} onChange={event => setRunnerName(event.target.value)} aria-describedby="setup-runner-name-help" />
+            <span id="setup-runner-name-help" className="field-help">{t("setup.runnerNameHelp")}</span>
+            {nameInvalid && <span role="alert" className="field-help">{t("setup.runnerNameInvalid")}</span>}
+          </div>}
+          {runner && canChooseProject && <div className="setup-project">
+            <div>
+              <strong>{t("setup.initialProject")}</strong>
+              <p className="field-help">{t("setup.initialProjectHelp")}</p>
+              {projectPath && <code>{projectPath}</code>}
+            </div>
+            <div className="setup-project-actions">
+              <button type="button" className="secondary-button" disabled={mutationBusy} onClick={() => void chooseProject()}
+                data-webcodex-action="choose-project">{t(projectPath ? "setup.changeFolder" : "setup.chooseFolder")}</button>
+              {projectPath && <button type="button" className="secondary-button" disabled={mutationBusy} onClick={() => setProjectPath(null)}
+                data-webcodex-action="clear-project">{t("setup.clearInitialProject")}</button>}
+            </div>
+          </div>}
+          {(runner || mode === "create") && (canChooseServiceScope ? <div className="field-group">
+            <Select label={scopeText("title")} value={serviceScope} disabled={mutationBusy}
+              data={[{value:"user",label:scopeText("user")},{value:"system",label:scopeText("system")}]}
+              allowDeselect={false} onChange={value => { if (value === "user" || value === "system") setServiceScope(value); }} />
             <p className="field-help">{scopeText(serviceScope === "user" ? "userHelp" : "systemHelp")}</p>
-            <details><summary>{scopeText("advanced")}</summary>
-              <Select label={scopeText("title")} value={serviceScope} disabled={mutationBusy}
-                data={[{value:"user",label:scopeText("user")},{value:"system",label:scopeText("system")}]}
-                allowDeselect={false} onChange={value => { if (value === "user" || value === "system") setServiceScope(value); }} />
-            </details>
-          </div>
-        : <p className="field-help">{t("setup.serviceConsent")}</p>)}
+          </div> : <p className="field-help">{t("setup.serviceConsent")}</p>)}
+        </div>
+      </details>
       {error && <div className="error-card" role="alert" id="setup-error">
         <strong>{presentation?.title}</strong><span>{presentation?.action}</span>
-        <details><summary>{t("common.details")}</summary><code>{error.code}</code><p>{error.message}</p></details>
+        <details><summary>{t("common.details")}</summary><code>{error.code}</code><p>{error.message}</p><p>{error.next_action}</p></details>
         {error.code === "pairing_recovery_required" && <button type="button" className="secondary-button" disabled={mutationBusy}
           onClick={() => { setReplacePairingCode(true); setError(null); }}>{t("setup.useNewPairingCode")}</button>}
       </div>}
@@ -284,9 +294,9 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
       <div className="setup-actions">
         <button type="submit" className="primary-button" disabled={!canSubmit}
           data-webcodex-action={mode === "create" ? "configure-local" : "configure-remote"}>
-          {mutationBusy ? t("common.checking") : mode === "create" ? t("setup.setUp") : t("setup.connect")}
+          {mutationBusy ? t("common.checking") : mode === "create" ? t(pending ? "setup.resumeLocal" : "setup.setUp") : t("setup.connect")}
         </button>
-        <span className="action-help">{mutationBusy ? t("setup.verifying") : t("setup.noTerminal")}</span>
+        {mutationBusy && !state.setup_progress && <span role="status" className="action-help">{t("setup.verifying")}</span>}
       </div>
     </form>
     {runner && <PowerShellInstallGuidance state={state} onState={onState} />}

@@ -49,6 +49,71 @@ fn mcp(access: &str, method: &str, params: Value) -> RequestBuilder {
 }
 
 #[tokio::test]
+async fn discovery_recovers_after_a_failed_read_and_discards_stale_results() {
+    let fixture = Fixture::new();
+    let control = &fixture.control;
+    enable_dcr(&fixture);
+    let (prepared, entry) = activate_quick_fixture(control, ORIGIN);
+    let now = Instant::now();
+    // Schedule without the public network, then deliver each metadata result
+    // through the same completion path used by the owner.
+    let schedule = |time| {
+        let mut guard = control.attempt.lock().unwrap();
+        let attempt = guard.as_mut().unwrap();
+        attempt.next_discovery_probe(time)?;
+        attempt.discovery_task = Some(OwnedTask(tokio::spawn(async {})));
+        Some(attempt.discovery_next_check)
+    };
+    let first = schedule(now).unwrap();
+    control.record_discovery(&entry, first, false);
+    assert_eq!(
+        control.status("quick").unwrap().reason_code.as_deref(),
+        Some("cloudflare_discovery_unavailable")
+    );
+    control
+        .attempt
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .discovery_task
+        .take();
+    assert!(schedule(now).is_none());
+    let retry = schedule(first).unwrap();
+    control.record_discovery(&entry, retry, true);
+    assert!(control.status("quick").unwrap().registration_available);
+    {
+        let mut guard = control.attempt.lock().unwrap();
+        let attempt = guard.as_mut().unwrap();
+        attempt.observe_forwarding(false);
+        attempt.observe_forwarding(true);
+    }
+    control.record_discovery(&entry, retry, true);
+    assert_eq!(
+        control.status("quick").unwrap().reason_code.as_deref(),
+        Some("cloudflare_discovery_pending")
+    );
+    let reconnect = schedule(retry).unwrap();
+    control.record_discovery(&entry, retry, true);
+    assert!(!control.status("quick").unwrap().registration_available);
+    control.record_discovery(&entry, reconnect, true);
+    assert!(control.status("quick").unwrap().registration_available);
+
+    control
+        .stop(
+            "quick",
+            &control.instance_id,
+            prepared.process_generation,
+            None,
+        )
+        .unwrap();
+    activate_quick_fixture(control, ORIGIN);
+    let current = schedule(retry).unwrap();
+    control.record_discovery(&entry, current, true);
+    assert!(!control.status("quick").unwrap().registration_available);
+}
+
+#[tokio::test]
 async fn cloudflare_dcr_metadata_and_registration_require_admission_policy_owner_and_authority() {
     let fixture = Fixture::new();
     let db = &fixture.control.db;

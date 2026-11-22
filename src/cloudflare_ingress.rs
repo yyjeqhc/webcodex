@@ -17,6 +17,9 @@ const PROBE_PATH: &str = "/.well-known/webcodex-connection";
 const START_TIMEOUT: Duration = Duration::from_secs(60);
 const LEASE_TIMEOUT: Duration = Duration::from_secs(8);
 
+const DISCOVERY_MIN_INTERVAL: Duration = Duration::from_secs(15);
+const DISCOVERY_MAX_INTERVAL: Duration = Duration::from_secs(120);
+
 struct OwnedTask(tokio::task::JoinHandle<()>);
 impl Drop for OwnedTask {
     fn drop(&mut self) {
@@ -50,6 +53,9 @@ struct Attempt {
     network_ready: bool,
     observed_tool_call: bool,
     discovery_verified: Option<bool>,
+    discovery_task: Option<OwnedTask>,
+    discovery_next_check: Instant,
+    discovery_retry_delay: Duration,
     generation: i64,
     probe_nonce: String,
     entry: Option<PublicIngressEntry>,
@@ -58,6 +64,38 @@ struct Attempt {
     lifecycle: &'static str,
     reason: Option<&'static str>,
     task: Option<OwnedTask>,
+}
+
+impl Attempt {
+    fn observe_forwarding(&mut self, ready: bool) {
+        self.network_ready = ready;
+        if !ready {
+            self.discovery_task.take();
+            self.discovery_verified = None;
+            self.discovery_retry_delay = DISCOVERY_MIN_INTERVAL;
+        }
+    }
+
+    // The network observer is the only scheduler. Status polls never create work.
+    fn next_discovery_probe(&mut self, now: Instant) -> Option<PublicIngressEntry> {
+        if !self.network_ready
+            || self.lifecycle != "running"
+            || self.discovery_verified == Some(true)
+            || self
+                .discovery_task
+                .as_ref()
+                .is_some_and(|task| !task.0.is_finished())
+            || now < self.discovery_next_check
+        {
+            return None;
+        }
+        let entry = self
+            .entry
+            .as_ref()
+            .filter(|entry| entry.oauth_dynamic_registration_enabled)?;
+        self.discovery_next_check = now + self.discovery_retry_delay;
+        Some(entry.clone())
+    }
 }
 
 pub(crate) struct CloudflareControl {
@@ -331,6 +369,9 @@ impl CloudflareControl {
             network_ready: false,
             observed_tool_call: false,
             discovery_verified: None,
+            discovery_task: None,
+            discovery_next_check: Instant::now(),
+            discovery_retry_delay: DISCOVERY_MIN_INTERVAL,
             generation,
             probe_nonce: probe_nonce.clone(),
             entry: Some(entry),
@@ -350,35 +391,6 @@ impl CloudflareControl {
     }
 
     async fn activate(
-        &self,
-        prepared: &PreparedIngress,
-        revision: u64,
-        origin: &str,
-    ) -> Result<PublicIngressEntry, &'static str> {
-        let entry = self.admit(prepared, revision, origin).await?;
-        if entry.oauth_dynamic_registration_enabled {
-            // Once per admission, outside the catalog/attempt locks. Never register
-            // a client, send a credential or follow a discovered URL here.
-            let verified = verify_discovery(origin).await;
-            let mut guard = self
-                .attempt
-                .lock()
-                .map_err(|_| "ingress_state_unavailable")?;
-            let attempt = guard
-                .as_mut()
-                .filter(|attempt| {
-                    attempt
-                        .entry
-                        .as_ref()
-                        .is_some_and(|running| running.fence() == entry.fence())
-                })
-                .ok_or("cloudflare_stale_attempt")?;
-            attempt.discovery_verified = Some(verified);
-        }
-        Ok(entry)
-    }
-
-    async fn admit(
         &self,
         prepared: &PreparedIngress,
         revision: u64,
@@ -532,6 +544,7 @@ impl CloudflareControl {
         attempt.entry = None;
         attempt.network_ready = false;
         attempt.task.take();
+        attempt.discovery_task.take();
         let _ = webcodex_environment::write_embedded_tunnel_health(
             &attempt.readiness_path,
             attempt.runtime_revision,
@@ -736,7 +749,46 @@ async fn verify_forwarding(origin: &str, prepared: &PreparedIngress) -> Result<(
 }
 
 impl CloudflareControl {
-    async fn observe_network(&self) {
+    fn record_discovery(&self, entry: &PublicIngressEntry, check: Instant, verified: bool) {
+        let Ok(profile) = self.profile(&entry.profile_id) else {
+            return;
+        };
+        let Ok(mut guard) = self.attempt.lock() else {
+            return;
+        };
+        let Some(attempt) = guard.as_mut().filter(|attempt| {
+            profile.oauth_dynamic_registration_enabled
+                && attempt.lifecycle == "running"
+                && attempt.network_ready
+                && attempt.discovery_task.is_some()
+                && attempt.discovery_next_check == check
+                && attempt.profile_id == entry.profile_id
+                && attempt.configuration_id == profile.configuration_id
+                && attempt.runtime_revision == profile.runtime_revision
+                && attempt
+                    .entry
+                    .as_ref()
+                    .is_some_and(|running| running.fence() == entry.fence())
+        }) else {
+            return;
+        };
+        if !self
+            .db
+            .get_public_ingress_entry_for_profile(&entry.profile_id)
+            .ok()
+            .flatten()
+            .is_some_and(|live| live.active && live.admission_open && live.fence() == entry.fence())
+        {
+            return;
+        }
+        attempt.discovery_verified = Some(verified);
+        if !verified {
+            attempt.discovery_retry_delay =
+                (attempt.discovery_retry_delay * 2).min(DISCOVERY_MAX_INTERVAL);
+        }
+    }
+
+    async fn observe_network(self: &Arc<Self>) {
         let target = self.attempt.lock().ok().and_then(|guard| {
             guard
                 .as_ref()
@@ -771,7 +823,17 @@ impl CloudflareControl {
                     && attempt.generation == prepared.process_generation
                     && attempt.lifecycle == "running"
             }) {
-                attempt.network_ready = ready;
+                attempt.observe_forwarding(ready);
+                if let Some(entry) = attempt.next_discovery_probe(Instant::now()) {
+                    let check = attempt.discovery_next_check;
+                    let control = Arc::downgrade(self);
+                    attempt.discovery_task = Some(OwnedTask(tokio::spawn(async move {
+                        let verified = verify_discovery(&entry.origin).await;
+                        if let Some(control) = control.upgrade() {
+                            control.record_discovery(&entry, check, verified);
+                        }
+                    })));
+                }
                 let _ = webcodex_environment::write_embedded_tunnel_health(
                     &attempt.readiness_path,
                     attempt.runtime_revision,

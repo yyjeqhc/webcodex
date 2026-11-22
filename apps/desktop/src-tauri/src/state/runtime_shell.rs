@@ -8,7 +8,7 @@ use webcodex_core::desktop_runtime_contract::{ProtocolCompatibility, DESKTOP_RUN
 #[cfg(test)]
 mod tests;
 
-async fn observe_runtime_runner(config: &StoredDesktopConfig) -> DesktopResult<Value> {
+pub(super) async fn observe_runtime_runner(config: &StoredDesktopConfig) -> DesktopResult<Value> {
     // Fleet overview reports Server identity and aggregate jobs. Selection must
     // observe the exact saved Runner for both interruption and build checks.
     let mut runtime = config

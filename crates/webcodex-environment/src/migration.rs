@@ -51,6 +51,11 @@ impl LegacyOwnerSnapshot {
 /// were captured before handoff. Core controls native services separately.
 pub trait LegacyOwner {
     async fn inspect(&mut self) -> SetupResultValue<LegacyOwnerSnapshot>;
+    /// Read-only interruption check after service preflight. A rejection leaves
+    /// the captured owner running and the same journal available for recovery.
+    async fn check_before_stop(&mut self, _observed: &LegacyOwnerSnapshot) -> SetupResultValue<()> {
+        Ok(())
+    }
     async fn stop(&mut self, expected: &LegacyOwnerSnapshot) -> SetupResultValue<()>;
     async fn restore(&mut self, expected: &LegacyOwnerSnapshot) -> SetupResultValue<()>;
     async fn verify_imported_data(&mut self) -> SetupResultValue<()> {
@@ -75,6 +80,8 @@ pub trait LegacyOwner {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LegacyTunnelProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub profile_id: String,
     pub start: bool,
 }
@@ -156,6 +163,12 @@ fn verify_legacy(
         }
     }
     Ok(())
+}
+
+impl MigrationJournal {
+    pub fn verify_current_owner(&self, observed: &LegacyOwnerSnapshot) -> SetupResultValue<()> {
+        verify_legacy(&self.captured, observed)
+    }
 }
 
 fn stopped_legacy(
@@ -267,7 +280,7 @@ pub async fn migrate_legacy_environment(
     }
 
     let observed = owner.inspect().await?;
-    verify_legacy(&migration.captured, &observed)?;
+    migration.verify_current_owner(&observed)?;
     if migration.phase == MigrationPhase::Prepared {
         // Reject service ownership and account conflicts before touching the
         // original processes. On Windows this also reserves the disabled
@@ -299,6 +312,7 @@ pub async fn migrate_legacy_environment(
     }
     if migration.phase == MigrationPhase::OldStopRequested {
         if !stopped_legacy(&migration.captured, &observed)? {
+            owner.check_before_stop(&observed).await?;
             if let Err(error) = owner.stop(&migration.captured).await {
                 migration.phase = MigrationPhase::Restoring;
                 migration.last_diagnostic = Some(error.clone());
@@ -463,6 +477,7 @@ async fn finish_tunnels(
                 store,
                 lock,
                 &profile.profile_id,
+                profile.name.as_deref(),
                 Some(&credentials),
                 profile.start,
             )
@@ -738,6 +753,11 @@ fn validate_import(request: &SetupRequest, import: &LegacyImport) -> SetupResult
             "legacy_tunnel_owner",
             "A Runner-only machine cannot import Server Tunnel profiles",
         ));
+    }
+    for profile in &import.tunnel_profiles {
+        if let Some(name) = &profile.name {
+            crate::tunnel::validate_name(name)?;
+        }
     }
     if import.tunnel_profiles.iter().any(|profile| {
         profile.profile_id.is_empty()
@@ -1114,6 +1134,19 @@ fn copy_data_tree(source: &Path, target: &Path) -> SetupResultValue<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_tunnel_receipts_retain_the_original_wire_format_without_a_name() {
+        let original = serde_json::json!({"profile_id": "primary", "start": true});
+        let mut profile: LegacyTunnelProfile = serde_json::from_value(original.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&profile).unwrap(), original);
+        profile.name = Some("ChatGPT Personal".into());
+        let encoded = serde_json::to_vec(&profile).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<LegacyTunnelProfile>(&encoded).unwrap(),
+            profile
+        );
+    }
+
     #[test]
     fn rejects_changed_owner_generation_and_unknown_process() {
         let initial = LegacyOwnerSnapshot {

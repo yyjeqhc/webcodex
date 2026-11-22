@@ -112,7 +112,8 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
   };
   const reason = status?.reason_code ?? failureCode;
   const identityRepair = reason === "cloudflare_identity_repair_required" || reason === "cloudflare_owner_repair_required" || reason === "cloudflare_runner_unavailable";
-  const routeMismatch = reason === "cloudflare_forwarding_mismatch" || reason === "cloudflare_forwarding_timeout" || reason === "cloudflare_discovery_unavailable";
+  const routeMismatch = reason === "cloudflare_forwarding_mismatch" || reason === "cloudflare_forwarding_timeout";
+  const discoveryRetry = reason === "cloudflare_discovery_unavailable";
   const verifying = reason === "cloudflare_discovery_pending";
   const registrationUnavailable = dcr && running && !verifying && !status.registration_available;
   const manualButton = <button type="button" className="secondary-button" disabled={disabled || !running || !observedOrigin} onClick={() => setOauth(status)}>{c("configureOauth")}</button>;
@@ -131,18 +132,17 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     : status?.lifecycle === "disconnected" ? c("cloudflareDisconnected")
     : status?.lifecycle === "stopped" ? p("stopped") : c("awaitingStatus");
   return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
-    <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{quick ? c("cloudflareQuick") : c("cloudflareNamed")} · {profile.host_mode === "embedded" ? c("serverOwned") : c("separateService")}</span></div><span role="status" className="connection-state">{stateText}</span></header>
+    <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{quick ? c("cloudflareQuick") : c("cloudflareNamed")}</span></div><span role="status" className="connection-state">{stateText}</span></header>
     {onEnableRegistration && !dcr && <div><p>{c("dcrHelp")}</p><button type="button" className="primary-button" disabled={disabled} onClick={onEnableRegistration}>{c("enableForGemini")}</button></div>}
     {(!onEnableRegistration || dcr) && address}
     {origin && dcr && !status?.observed_authorization && <p>{c("addInGemini")}</p>}
     {feedback && feedback !== "copied" && <p role="alert">{c(feedback)}</p>}
-    {status && (!dcr || !quick) && <p>{c("localForwardingTarget")}: <code>{status.local_target}</code></p>}
     {quick && <p className="workspace-notice">{c("quickReauthorize")}</p>}
     {unselectedService && <p className="workspace-notice">{c("cloudflareSelectService")}</p>}
     {!advanced && <p>{status?.oauth_configured ? c("oauthConfigured") : c("oauthNotConfigured")}</p>}
     {((origin && dcr) || !advanced) && <p>{status?.observed_authorization ? c("oauthObserved") : c(dcr ? "awaitAuthorization" : "oauthNotObserved")}</p>}
     {origin && status?.observed_tool_call && <p>{c("toolObserved")}</p>}
-    {registrationUnavailable && <p role="alert">{c("registrationUnavailable")}</p>}
+    {registrationUnavailable && <p role="status">{c(discoveryRetry ? "discoveryRetry" : "registrationUnavailable")}</p>}
     {reason === "cloudflare_binary_unavailable" && <p role="alert">{c("installCloudflared")}</p>}
     {routeMismatch && !quick && <p role="alert">{c("namedRouteHelp")}</p>}
     {reason === "cloudflare_already_active" && <p role="alert">{c("otherCloudflareActive")}</p>}
@@ -150,15 +150,21 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     {ingressNotApplied && <div className="server-owned-apply shell-notice warning" role="status"><strong>{c("serverRestartRequired")}</strong><p>{c("serverRestartHelp")}</p>{onRestartServer && <button type="button" className="primary-button" disabled={disabled} onClick={onRestartServer}>{c("restartServer")}</button>}</div>}
     {failed && !identityRepair && reason !== "cloudflare_already_active" && !ingressNotApplied && <p role="alert">{c("operationFailed")}</p>}
     {identityRepair && <p role="alert">{c("cloudflareIdentityRepair")}</p>}
-    {(failed || identityRepair || registrationUnavailable || reason === "cloudflare_binary_unavailable") && onRepair && <button type="button" className="secondary-button" disabled={disabled} onClick={onRepair}>{c("openRuntimeSetup")}</button>}
+    {(failed || identityRepair || (registrationUnavailable && !discoveryRetry) || reason === "cloudflare_binary_unavailable") && onRepair && <button type="button" className="secondary-button" disabled={disabled} onClick={onRepair}>{c("openRuntimeSetup")}</button>}
     <div className="connection-actions">
-      <button type="button" className="secondary-button" disabled={disabled} onClick={onEdit}>{p("edit")}</button>
       <button type="button" className={active ? "secondary-button" : "primary-button"} disabled={disabled || !status || !canStart || unselectedService || profile.server_restart_required || status.configured_revision !== profile.revision || (!quick && !profile.credential_present)} onClick={() => void run(active ? "restart" : "start")}>{active ? c("reconnect") : dcr ? c("connectGemini") : p("start")}</button>
       {active && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run("stop")}>{p("stop")}</button>}
       {!advanced && manualButton}
-      <button type="button" className="text-button" disabled={disabled} onClick={onDelete}>{c("delete")}</button>
     </div>
-    {advanced && <details className="connection-details"><summary>{c("manualOauth")}</summary>{!dcr && address}<p>{status?.oauth_configured ? c("oauthConfigured") : c("oauthNotConfigured")}</p>{manualButton}</details>}
+    <details className="connection-details"><summary>{c("profileDetails")}</summary>
+      <p>{profile.host_mode === "embedded" ? c("serverOwned") : c("separateService")}</p>
+      {status && <p>{c("localForwardingTarget")} <code>{status.local_target}</code></p>}
+      {advanced && <>{!dcr && address}<p>{status?.oauth_configured ? c("oauthConfigured") : c("oauthNotConfigured")}</p>{manualButton}</>}
+      <div className="connection-actions">
+        <button type="button" className="secondary-button" disabled={disabled} onClick={onEdit}>{p("edit")}</button>
+        <button type="button" className="text-button" disabled={disabled} onClick={onDelete}>{c("delete")}</button>
+      </div>
+    </details>
     {oauth && running && status && oauth.server_instance_id === status.server_instance_id && oauth.process_generation === status.process_generation && oauth.public_origin === observedOrigin && <OAuthHandoff key={`${status.server_instance_id}:${status.process_generation}:${status.public_origin}`} profile={profile} status={status} onClose={() => { setOauth(null); void refresh(); }} />}
   </article>;
 }

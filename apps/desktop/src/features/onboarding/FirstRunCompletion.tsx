@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { useConnectionsTools } from "../../i18n/connections-tools";
 import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import type { DesktopState } from "../../models/topology";
-import { ConnectionEditor } from "../connection/ConnectionEditor";
-import { ChatgptObservation, WorkspaceStatus } from "../workspace/WorkspaceStatus";
+import { ChatgptObservation } from "../workspace/WorkspaceStatus";
 
 // Runtime IDs, never an inferred folder name or user-provided label.
 export function firstReadTarget(state: DesktopState) {
@@ -45,28 +43,19 @@ export function FirstReadGuide({ state, onProjects }: { state: DesktopState; onP
     <ChatgptObservation state={state} />
   </section>;
 }
-export function FirstRunCompletion({ state, onState, onComplete, onProjects, onConnection, onRuntime }: {
-  state: DesktopState; onState: (state: DesktopState) => void; onComplete: () => void;
-  onProjects: () => void; onConnection: () => void; onRuntime?: () => void;
+export function FirstRunCompletion({ onComplete, onProjects, onConnection }: {
+  onComplete: () => void; onProjects: () => void; onConnection: () => void;
 }) {
-  const { t } = useLocale(); const c = useConnectionsTools();
-  const [editor, setEditor] = useState(false);
+  const { t } = useLocale();
+  const p = useProduct();
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus(); }, []);
-  const create = state.topology?.experience === "full" && state.topology.server.kind === "local";
-  const busy = Boolean(state.current_operation);
-  const connected = Boolean(state.connections?.profiles.some(profile => profile.ready));
   return <section className="setup-shell first-run-completion" aria-labelledby="completion-title" data-webcodex-page="setup-completion">
     <h1 id="completion-title" ref={heading} tabIndex={-1}>{t("completion.title")}</h1>
-    <section className="form-card"><h2>{t("completion.role")}</h2><WorkspaceStatus state={state} /></section>
-    <section className="form-card"><h2>{t("completion.connection")}</h2><p>{t(create ? "completion.createHelp" : "completion.joinHelp")}</p>
-      {create && <div className="setup-actions">
-        <button type="button" className="primary-button" disabled={busy || state.connections?.config_error} onClick={() => setEditor(true)}>{t("completion.addTunnel")}</button>
-        <button type="button" className="secondary-button" disabled={busy} onClick={onConnection}>{c("connections")}</button>
-      </div>}
-    </section>
-    <FirstReadGuide state={state} onProjects={onProjects} />
-    <div className="setup-actions"><button type="button" className="primary-button" disabled={busy} onClick={onComplete}>{t(create && !connected ? "completion.later" : "completion.overview")}</button></div>
-    {create && editor && <ConnectionEditor profile={null} persistentLocal={Boolean(state.persistent_environment)} onSetup={onRuntime ?? onConnection} onState={onState} onClose={() => setEditor(false)} />}
+    <div className="setup-actions">
+      <button type="button" className="primary-button" onClick={onConnection}>{t("completion.connectApps")}</button>
+      <button type="button" className="secondary-button" onClick={onProjects}>{p("projects")}</button>
+      <button type="button" className="text-button" onClick={onComplete}>{t("completion.overview")}</button>
+    </div>
   </section>;
 }

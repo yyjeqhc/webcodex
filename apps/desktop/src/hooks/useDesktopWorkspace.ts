@@ -12,12 +12,20 @@ const ACTIVE_OPERATION_OBSERVATION_INTERVAL_MS = 1_000;
 export function useDesktopWorkspace() {
   const [state, setState] = useState<DesktopState | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
-  const [navigation, setNavigation] = useState<Navigation>("home");
+  const [{navigation, previousPage}, setPage] = useState<{navigation: Navigation; previousPage?: Navigation}>({navigation: "home"});
+  const selectPage = useCallback((page: Navigation) => {
+    setPage(current => current.navigation === page ? current : { navigation: page, previousPage: current.navigation });
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [runtimeObservations, setRuntimeObservations] = useState(0);
   const [error, setError] = useState<DesktopError | null>(null);
   const [cancelSubmittingId, setCancelSubmittingId] = useState<string | null>(null);
-  const [showSetup, setShowSetup] = useState(false);
+  const [setupOrigin, setSetupOrigin] = useState<"home" | "settings" | "connection" | null>(null);
+  const showSetup = setupOrigin !== null;
+  const setNavigation = useCallback((page: Navigation) => {
+    setSetupOrigin(null);
+    selectPage(page);
+  }, [selectPage]);
   const [startupAttempt, setStartupAttempt] = useState(0);
   const [windowFocused, setWindowFocused] = useState(true);
   const stateVersionRef = useRef(0);
@@ -51,9 +59,8 @@ export function useDesktopWorkspace() {
   }, [navigation, showSetup]);
 
   useEffect(() => subscribeDesktopNavigation((target) => {
-    setShowSetup(false);
     setNavigation(target === "connections" ? "connection" : target);
-  }), []);
+  }), [setNavigation]);
 
   useEffect(() => {
     const navigateWithKeyboard = (event: KeyboardEvent) => {
@@ -66,12 +73,14 @@ export function useDesktopWorkspace() {
     };
     window.addEventListener("keydown", navigateWithKeyboard);
     return () => window.removeEventListener("keydown", navigateWithKeyboard);
-  }, []);
+  }, [setNavigation]);
 
   const openSetup = () => {
-    setShowSetup(true);
-    setNavigation("home");
+    setSetupOrigin(navigation === "settings" && previousPage === "connection" ? "connection" : navigation === "settings" ? "settings" : "home");
+    selectPage("home");
   };
+
+  const closeSetup = () => setNavigation(setupOrigin ?? "home");
 
   const commitState = useCallback((next: DesktopState) => {
     stateVersionRef.current += 1;
@@ -117,7 +126,7 @@ export function useDesktopWorkspace() {
           return;
         }
 
-        // Fresh setup starts with an explicit Create/Join choice. Reading state
+        // Fresh setup presents local defaults. Reading state
         // must never enroll a Runner or install/start services on mount.
         commitState(initial);
         if (!initial.topology) {
@@ -329,5 +338,5 @@ export function useDesktopWorkspace() {
     }
   };
 
-  return { state, activity, navigation, setNavigation, refreshing: refreshing || runtimeObservations > 0, preserveWorkspacePollDeadline: runtimeObservations > 0 && !refreshing, error, setError, cancelSubmittingId, showSetup, setShowSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation };
+  return { state, activity, navigation, previousPage, setNavigation, refreshing: refreshing || runtimeObservations > 0, preserveWorkspacePollDeadline: runtimeObservations > 0 && !refreshing, error, setError, cancelSubmittingId, showSetup, setupOrigin, closeSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation };
 }

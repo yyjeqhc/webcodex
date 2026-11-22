@@ -429,7 +429,137 @@ pub(super) fn migration_in_progress() -> bool {
         })
 }
 
+fn migration_fingerprint(value: &impl serde::Serialize) -> DesktopResult<String> {
+    let bytes = serde_json::to_vec(value).map_err(|_| migration_target_conflict())?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn require_idle_runner(inventory: &Value) -> DesktopResult<()> {
+    if runtime_shell::observed_active_jobs(inventory) == Some(0) {
+        return Ok(());
+    }
+    Err(DesktopError::new(
+        "migration_runner_busy",
+        "The original Runner has queued or running work, or its job count is unknown",
+        "Wait for its jobs to finish and check the connected Runner again.",
+    ))
+}
+
+impl AppState {
+    pub async fn inspect_local_migration(
+        &self,
+    ) -> DesktopResult<crate::models::LocalMigrationPreview> {
+        let mut slot = self.core.lock().await;
+        let core = slot
+            .as_mut()
+            .ok_or_else(|| crate::runtime_selection::error("desktop_operation_busy"))?;
+        if core.configuration_issue.is_some()
+            || persisted_environment(&core.config)
+            || !core.config.topology.as_ref().is_some_and(|t| {
+                t.experience == Experience::Full && t.server == ServerTopology::Local
+            })
+        {
+            return Err(migration_target_conflict());
+        }
+        validate_legacy_runner_layout(&core.config)?;
+        core.preflight_providers()?;
+        let root = default_environment_dir().map_err(desktop_error)?;
+        if let Some(store) = EnvironmentStore::open_existing(root).map_err(desktop_error)? {
+            if let Some(journal) = migration_journal(&store).map_err(desktop_error)? {
+                return Ok(crate::models::LocalMigrationPreview {
+                    fingerprint: core.check_migration_journal(&journal).await?,
+                    resuming: true,
+                });
+            }
+            if store.load_environment().map_err(desktop_error)?.is_some()
+                || store.load_journal().map_err(desktop_error)?.is_some()
+            {
+                return Err(migration_target_conflict());
+            }
+        }
+        let project = core
+            .config
+            .project
+            .as_ref()
+            .map(|p| std::fs::canonicalize(&p.path))
+            .transpose()
+            .map_err(|_| migration_target_conflict())?;
+        let import = core.collect_legacy_import(true, project.as_deref()).await?;
+        Ok(crate::models::LocalMigrationPreview {
+            fingerprint: core.import_fingerprint(&import).await?,
+            resuming: false,
+        })
+    }
+}
+
 impl DesktopCore {
+    async fn import_fingerprint(&mut self, import: &LegacyImport) -> DesktopResult<String> {
+        let owner = LegacyOwner::inspect(self).await.map_err(desktop_error)?;
+        migration_fingerprint(&(
+            owner,
+            import,
+            &self.config.project,
+            self.config.runtime_selection_revision,
+            self.tunnel_config.profiles(),
+        ))
+    }
+
+    async fn check_migration_journal(
+        &mut self,
+        journal: &webcodex_environment::MigrationJournal,
+    ) -> DesktopResult<String> {
+        use webcodex_environment::MigrationPhase;
+        if !journal.request.local_server()
+            || self
+                .config
+                .runtime
+                .as_ref()
+                .is_none_or(|runtime| runtime.server_url != journal.request.server_url)
+        {
+            return Err(migration_target_conflict());
+        }
+        if journal.phase == MigrationPhase::RecoveryRequired {
+            return Err(DesktopError::new(
+                "migration_recovery_required",
+                "Migration requires an explicit review of the original and installed services",
+                journal
+                    .last_diagnostic
+                    .as_ref()
+                    .map_or("Inspect both owners before resuming.", |d| {
+                        d.recovery.as_str()
+                    }),
+            ));
+        }
+        // These phases have their own recovery reconciliation. A committed
+        // handoff does not require the retired files or Desktop processes.
+        let owner = match journal.phase {
+            MigrationPhase::Restoring | MigrationPhase::Committed => None,
+            _ => {
+                let owner = LegacyOwner::inspect(self).await.map_err(desktop_error)?;
+                journal
+                    .verify_current_owner(&owner)
+                    .map_err(desktop_error)?;
+                if matches!(
+                    journal.phase,
+                    MigrationPhase::Prepared | MigrationPhase::OldStopRequested
+                ) {
+                    self.check_before_stop(&owner)
+                        .await
+                        .map_err(desktop_error)?;
+                }
+                Some(owner)
+            }
+        };
+        migration_fingerprint(&(
+            &journal.operation_id,
+            journal.phase,
+            &journal.request,
+            &journal.import,
+            &journal.captured,
+            owner,
+        ))
+    }
+
     fn setup_progress_sink(&self) -> impl FnMut(SetupProgress) + Send + 'static {
         let published = Arc::clone(&self.published);
         move |progress| {
@@ -454,6 +584,26 @@ impl DesktopCore {
             .as_ref()
             .is_some_and(|topology| topology.experience == Experience::Full)
             && !persisted_environment(&self.config);
+        use crate::models::LocalSetupTarget;
+        let migration_fence = match &input.expected_local_target {
+            None => None,
+            Some(_)
+                if input.mode != "create"
+                    || persisted_environment(&self.config)
+                    || self.configuration_issue.is_some() =>
+            {
+                return Err(migration_target_conflict())
+            }
+            Some(LocalSetupTarget::Legacy { fingerprint }) if legacy => Some(fingerprint.as_str()),
+            Some(LocalSetupTarget::Fresh | LocalSetupTarget::Pending { .. })
+                if self.config.topology.is_none()
+                    && self.config.runtime.is_none()
+                    && self.snapshot.quick_share.is_none() =>
+            {
+                None
+            }
+            Some(_) => return Err(migration_target_conflict()),
+        };
         let project = input
             .project_path
             .as_deref()
@@ -627,7 +777,7 @@ impl DesktopCore {
         let store = store()?;
         if legacy {
             return self
-                .migrate_environment(&store, request, &secrets, cancellation)
+                .migrate_environment(&store, request, &secrets, migration_fence, cancellation)
                 .await;
         }
         if persisted_environment(&self.config) {
@@ -683,10 +833,28 @@ impl DesktopCore {
         let mut setup = EnvironmentSetup::new(NativeEnvironment::new().map_err(desktop_error)?);
         // Core owns the persisted step journal and reconciliation. Do not log
         // transient one-time credentials or duplicate its step implementation.
-        let result = setup
-            .configure(&store, request, &secrets, self.setup_progress_sink())
-            .await
-            .map_err(desktop_error)?;
+        let progress = self.setup_progress_sink();
+        let result = match input.expected_local_target {
+            Some(LocalSetupTarget::Fresh) => {
+                setup
+                    .configure_local_if_current(&store, None, request, &secrets, progress)
+                    .await
+            }
+            Some(LocalSetupTarget::Pending { environment_id }) => {
+                setup
+                    .configure_local_if_current(
+                        &store,
+                        Some(&environment_id),
+                        request,
+                        &secrets,
+                        progress,
+                    )
+                    .await
+            }
+            Some(LocalSetupTarget::Legacy { .. }) => return Err(migration_target_conflict()),
+            None => setup.configure(&store, request, &secrets, progress).await,
+        }
+        .map_err(desktop_error)?;
         cancellation.check()?;
         self.project_environment_result(&store, result).await
     }
@@ -754,26 +922,11 @@ impl DesktopCore {
         self.project_environment_result(&store, result).await
     }
 
-    async fn migrate_environment(
-        &mut self,
-        store: &EnvironmentStore,
-        request: SetupRequest,
-        secrets: &SetupSecrets,
-        cancellation: &CancellationContext,
-    ) -> DesktopResult<DesktopStateSnapshot> {
-        cancellation.check()?;
-        if let Some(journal) = migration_journal(store).map_err(desktop_error)? {
-            if journal.request != request {
-                return Err(migration_target_conflict());
-            }
-            let progress = self.setup_progress_sink();
-            let result =
-                migrate_legacy_environment(store, request, journal.import, self, secrets, progress)
-                    .await
-                    .map_err(desktop_error)?;
-            cancellation.check()?;
-            return self.project_environment_result(store, result).await;
-        }
+    async fn collect_legacy_import(
+        &self,
+        local_server: bool,
+        selected_project: Option<&Path>,
+    ) -> DesktopResult<LegacyImport> {
         if self.snapshot.quick_share.is_some() {
             return Err(DesktopError::new(
                 "quick_share_active",
@@ -795,12 +948,12 @@ impl DesktopCore {
                 )
         }) {
             return Err(DesktopError::new(
-                "legacy_owner_unknown",
+                "legacy_runner_owner_unknown",
                 "The running legacy Runner is not owned by this Desktop",
                 "Inspect its actual process owner before migrating this environment.",
             ));
         }
-        if request.local_server() {
+        if local_server {
             let server_owner = self.process_snapshot(ProcessKey::LocalServer).await;
             if !server_owner.is_some_and(|process| {
                 process.owned_by_desktop
@@ -810,7 +963,7 @@ impl DesktopCore {
                     )
             }) {
                 return Err(DesktopError::new(
-                    "legacy_owner_unknown",
+                    "legacy_server_owner_unknown",
                     "The running legacy Server is not owned by this Desktop",
                     "Inspect its actual process owner before migrating this environment.",
                 ));
@@ -832,17 +985,18 @@ impl DesktopCore {
             .to_owned();
         let client_id =
             stored_runner_client_id(&self.config).ok_or_else(migration_target_conflict)?;
-        let inventory = crate::workspace::query(
-            &runtime,
-            crate::workspace::WorkspaceRequest::RunnerDetails {},
-        )
-        .await?;
-        if inventory.get("connected").and_then(Value::as_bool) != Some(true)
+        let inventory = runtime_shell::observe_runtime_runner(&self.config).await?;
+        if inventory.get("client_id").and_then(Value::as_str) != Some(client_id.as_str())
+            || inventory.get("projects_available").and_then(Value::as_bool) != Some(true)
+            || inventory.get("connected").and_then(Value::as_bool) != Some(true)
             || inventory.get("projects_truncated").and_then(Value::as_bool) != Some(false)
         {
             return Err(DesktopError::new("migration_inventory_incomplete",
                 "The original Runner inventory is not complete",
                 "Restore the original Runner connection before migrating its project registrations."));
+        }
+        if local_server {
+            require_idle_runner(&inventory)?;
         }
         let rows = inventory
             .get("projects")
@@ -877,15 +1031,15 @@ impl DesktopCore {
                 path: std::fs::canonicalize(path).map_err(|_| migration_target_conflict())?,
             });
         }
-        if request.project.is_some()
+        if selected_project.is_some()
             && !projects
                 .iter()
-                .any(|project| Some(&project.path) == request.project.as_ref())
+                .any(|project| Some(project.path.as_path()) == selected_project)
         {
             return Err(migration_target_conflict());
         }
-        let import = LegacyImport {
-            server_env_file: if request.local_server() {
+        Ok(LegacyImport {
+            server_env_file: if local_server {
                 runtime.server_env_file.clone()
             } else {
                 None
@@ -898,23 +1052,78 @@ impl DesktopCore {
             username,
             runner_client_id: Some(client_id),
             projects,
-            tunnel_profiles: if request.local_server() {
+            tunnel_profiles: if local_server {
+                if self.tunnel_config.is_invalid() {
+                    return Err(DesktopError::new(
+                        "tunnel_config_invalid",
+                        "The saved Tunnel profiles cannot be read",
+                        "Restore the original connection settings before retrying.",
+                    ));
+                }
                 let mut profiles = Vec::new();
                 for profile in self.tunnel_config.profiles() {
+                    if !profile.credential_present || profile.tunnel_id.is_none() {
+                        return Err(DesktopError::new("legacy_tunnel_credentials",
+                            "A saved Tunnel has incomplete credentials",
+                            "Restore its original Tunnel ID and API key in Connections, then check again."));
+                    }
                     let id = crate::connection_id::TunnelProfileId::try_from(profile.id.clone())
                         .map_err(|_| migration_target_conflict())?;
+                    let start = process_is_active(
+                        self.process_snapshot(ProcessKey::RegularTunnel(id)).await,
+                    );
+                    if start != (profile.enabled && profile.autostart) {
+                        return Err(DesktopError::new("migration_tunnel_startup_conflict",
+                            "A Tunnel's current state differs from its saved startup policy",
+                            "Start the connections set to start automatically and stop manual-only connections, then check again."));
+                    }
                     profiles.push(LegacyTunnelProfile {
                         profile_id: profile.id,
-                        start: process_is_active(
-                            self.process_snapshot(ProcessKey::RegularTunnel(id)).await,
-                        ),
+                        name: Some(profile.name),
+                        start,
                     });
                 }
                 profiles
             } else {
                 Vec::new()
             },
-        };
+        })
+    }
+
+    async fn migrate_environment(
+        &mut self,
+        store: &EnvironmentStore,
+        request: SetupRequest,
+        secrets: &SetupSecrets,
+        expected_fingerprint: Option<&str>,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        cancellation.check()?;
+        if let Some(journal) = migration_journal(store).map_err(desktop_error)? {
+            if let Some(expected) = expected_fingerprint {
+                if self.check_migration_journal(&journal).await? != expected {
+                    return Err(migration_target_conflict());
+                }
+            }
+            if journal.request != request {
+                return Err(migration_target_conflict());
+            }
+            let progress = self.setup_progress_sink();
+            let result =
+                migrate_legacy_environment(store, request, journal.import, self, secrets, progress)
+                    .await
+                    .map_err(desktop_error)?;
+            cancellation.check()?;
+            return self.project_environment_result(store, result).await;
+        }
+        let import = self
+            .collect_legacy_import(request.local_server(), request.project.as_deref())
+            .await?;
+        if let Some(expected) = expected_fingerprint {
+            if self.import_fingerprint(&import).await? != expected {
+                return Err(migration_target_conflict());
+            }
+        }
         let progress = self.setup_progress_sink();
         let result = migrate_legacy_environment(store, request, import, self, secrets, progress)
             .await
@@ -1204,6 +1413,25 @@ impl LegacyOwner for DesktopCore {
             configuration_fingerprint,
             processes,
         })
+    }
+
+    async fn check_before_stop(&mut self, observed: &LegacyOwnerSnapshot) -> SetupResultValue<()> {
+        if self
+            .config
+            .topology
+            .as_ref()
+            .is_some_and(|t| t.server == ServerTopology::Local)
+            && observed
+                .processes
+                .iter()
+                .any(|process| process.kind == "runner")
+        {
+            let runner = runtime_shell::observe_runtime_runner(&self.config)
+                .await
+                .map_err(migration_diagnostic)?;
+            require_idle_runner(&runner).map_err(migration_diagnostic)?;
+        }
+        Ok(())
     }
 
     async fn stop(&mut self, expected: &LegacyOwnerSnapshot) -> SetupResultValue<()> {

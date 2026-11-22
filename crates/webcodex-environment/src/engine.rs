@@ -57,6 +57,37 @@ impl<B: EnvironmentBackend> EnvironmentSetup<B> {
         result
     }
 
+    /// Bind an interactive local setup to the exact unfinished journal shown to
+    /// the operator. An absent ID means the operator chose a fresh installation.
+    pub async fn configure_local_if_current(
+        &mut self,
+        store: &EnvironmentStore,
+        expected_pending_id: Option<&str>,
+        request: SetupRequest,
+        secrets: &SetupSecrets,
+        progress: impl FnMut(SetupProgress),
+    ) -> SetupResultValue<SetupResult> {
+        let lock = store.lock()?;
+        let journal = store.load_journal()?;
+        if !request.local_server()
+            || store.load_environment()?.is_some()
+            || migration_journal(store)?.is_some()
+            || journal.as_ref().is_some_and(|j| j.environment.configured)
+            || journal
+                .as_ref()
+                .map(|j| j.environment.environment_id.as_str())
+                != expected_pending_id
+        {
+            return Err(SetupDiagnostic::new(
+                "environment_changed",
+                "The local setup target has changed",
+                "Refresh the computer's setup before continuing.",
+            ));
+        }
+        self.configure_under_lock(store, &lock, request, secrets, progress)
+            .await
+    }
+
     pub(crate) async fn configure_under_lock(
         &mut self,
         store: &EnvironmentStore,

@@ -11,7 +11,7 @@ import { connectionFixture, connectionSnapshot } from "../test/connections-fixtu
 import { ConnectionPanel } from "./connection/ConnectionPanel";
 import { McpProvidersPanel } from "./extensions/McpProvidersPanel";
 
-const api = vi.hoisted(() => ({ openDiagnosticResource: vi.fn(), getState: vi.fn(), saveTunnelProfile: vi.fn(), tunnelProfileAction: vi.fn(), cloudflareConnection: vi.fn(), environmentServiceAction: vi.fn(), saveMcpProvider: vi.fn(), removeMcpProvider: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), stopQuickShare: vi.fn() }));
+const api = vi.hoisted(() => ({ openDiagnosticResource: vi.fn(), getState: vi.fn(), inspectLocalMigration: vi.fn(), configureEnvironment: vi.fn(), saveTunnelProfile: vi.fn(), tunnelProfileAction: vi.fn(), cloudflareConnection: vi.fn(), environmentServiceAction: vi.fn(), saveMcpProvider: vi.fn(), removeMcpProvider: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), stopQuickShare: vi.fn() }));
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn() }));
 const onSettings = vi.fn();
@@ -82,6 +82,7 @@ describe("Connections + Tools control surfaces", () => {
     api.saveTunnelProfile.mockResolvedValue(initial);
     api.cloudflareConnection.mockImplementation(async ({profile_id}) => ({profile_id, lifecycle: "stopped", configured_revision: 3}));
     render(<Harness mode="connections" initial={initial} />);
+    fireEvent.click(screen.getByText("Other Cloudflare connections"));
     fireEvent.click(screen.getByRole("button", {name: "Use a fixed address"}));
     expect(screen.getByRole("combobox", {name: "Saved connection"})).toHaveValue("long");
     expect(api.saveTunnelProfile).not.toHaveBeenCalled();
@@ -120,10 +121,48 @@ describe("Connections + Tools control surfaces", () => {
     expect(api.saveTunnelProfile).not.toHaveBeenCalled();
   });
 
-  it("opens Runtime setup for Gemini without a persistent local Environment", () => {
+  it.each([false, true])("confirms the inspected legacy target and returns to Gemini (resume=%s)", async resuming => {
+    api.inspectLocalMigration.mockResolvedValue({fingerprint: "original", resuming});
+    api.configureEnvironment.mockResolvedValue({...state(), persistent_environment: "saved"});
     render(<Harness mode="connections" />);
-    fireEvent.click(screen.getByRole("button", {name: "Open Runtime setup"}));
-    expect(onSettings).toHaveBeenCalledExactlyOnceWith("runtime");
+    fireEvent.click(screen.getByRole("button", { name: "Check existing setup" }));
+    const confirm = await screen.findByRole("button", {name: resuming ? "Resume saved migration" : "Save and switch services"});
+    expect(screen.getByText(resuming ? /during recovery/ : /Connections may drop briefly/)).toBeVisible();
+    expect(api.configureEnvironment).not.toHaveBeenCalled();
+    fireEvent.click(confirm);
+    expect(await screen.findByRole("button", {name: "Connect Gemini"})).toBeEnabled();
+    expect(api.configureEnvironment).toHaveBeenCalledExactlyOnceWith({
+      mode: "create", expectedLocalTarget: {kind: "legacy", fingerprint: "original"}, ...(resuming ? {} : {serviceScope: "user"}),
+    });
+    expect(screen.queryByRole("heading", {name: "Try reading a file in ChatGPT"})).toBeNull();
+    expect(api.saveTunnelProfile).not.toHaveBeenCalled();
+    expect(onSettings).not.toHaveBeenCalled();
+  });
+
+  it("offers a read-only recheck after a blocked migration", async () => {
+    api.inspectLocalMigration.mockRejectedValue({code: "migration_inventory_incomplete", message: "Incomplete", next_action: "Reconnect"});
+    render(<Harness mode="connections" />);
+    fireEvent.click(screen.getByRole("button", {name: "Check existing setup"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/full project list/);
+    expect(screen.getByRole("button", {name: "Retry"})).toBeEnabled();
+    expect(api.configureEnvironment).not.toHaveBeenCalled();
+    expect(api.tunnelProfileAction).not.toHaveBeenCalled();
+  });
+
+  it("can cancel local setup or finish with the sign-in defaults and no project", async () => {
+    api.configureEnvironment.mockResolvedValue({...state(), persistent_environment: "saved", connections: connectionSnapshot()});
+    render(<Harness mode="connections" initial={{...state(), topology: null, project: null, connections: connectionSnapshot()}} />);
+    fireEvent.click(screen.getByRole("button", {name: "Prepare this computer"}));
+    fireEvent.click(screen.getByRole("button", {name: "Back to Gemini"}));
+    expect(api.configureEnvironment).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", {name: "Prepare this computer"}));
+    expect(screen.getByText("Advanced").closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", {name: "Start setup"}));
+    expect(await screen.findByRole("button", {name: "Connect Gemini"})).toBeEnabled();
+    expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "create", expectedLocalTarget: {kind: "fresh"}, serviceScope: "user", projectPath: null, runner: true,
+    }));
+    expect(api.inspectLocalMigration).not.toHaveBeenCalled();
     expect(api.saveTunnelProfile).not.toHaveBeenCalled();
   });
 
@@ -614,6 +653,7 @@ describe("Connections + Tools control surfaces", () => {
     initial.connections = connectionSnapshot(connectionFixture({ id: "cf", name: "Quick", revision: 4, configuration_id: "displayed-configuration", provider: { kind: "cloudflare_quick" }, host_mode: "embedded" }));
     api.cloudflareConnection.mockResolvedValue({ profile_id: "cf", server_instance_id: "owner", process_generation: 7, lifecycle: "stopped", public_origin: null, oauth_configured: false, observed_authorization: false, configured_revision: 5, applied_revision: null, local_target: "http://127.0.0.1:8900", reason_code: null });
     render(<Harness mode="connections" initial={initial} />);
+    fireEvent.click(screen.getByText("Advanced connection settings"));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     const dialog = screen.getByRole("dialog", { name: "Delete Quick" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));

@@ -82,7 +82,7 @@ export function ConnectionEditor({ profile, geminiNamed = false, initialAutostar
     <form className="profile-editor connection-profile-editor" onSubmit={event => void submit(event)} aria-busy={busy}>
       <Select label={c("provider")} aria-label={c("provider")} value={providerKind} allowDeselect={false} onChange={value => { if (!value) return; setProviderKind(value as TunnelProvider["kind"]); setApiKey(""); setCloudflareToken(""); }} disabled={busy || profile !== null || geminiNamed} data={[{value:"openai",label:"OpenAI Tunnel"},{value:"cloudflare_named",label:c("cloudflareNamed")},{value:"cloudflare_quick",label:c("cloudflareQuick")}]} />
       <p className="field-help">{cloudflare ? c("cloudflareHelp") : p("tunnelCredentialHelp")}</p>
-      {cloudflare && !persistentLocal && <Alert role="status"><p>{c("cloudflareEnvironment")}</p>{onSetup && <Button variant="default" onClick={() => { onClose(); onSetup(); }}>{c("openRuntimeSetup")}</Button>}</Alert>}
+      {cloudflare && !persistentLocal && <Alert role="status"><p>{c("cloudflareEnvironment")}</p>{onSetup && <Button variant="default" onClick={() => { onClose(); onSetup(); }}>{c("connectGemini")}</Button>}</Alert>}
       {canChooseHost && <fieldset className="connection-owner-choice">
         <legend>{c("connectionLifecycle")}</legend>
         <label data-selected={hostMode === "embedded"}>

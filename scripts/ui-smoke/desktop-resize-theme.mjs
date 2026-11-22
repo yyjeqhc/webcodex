@@ -101,7 +101,7 @@ try {
     await context.close();
     const setupContext=await browser.newContext({viewport:{width:1440,height:960},reducedMotion:'reduce'});
     const setup=await setupContext.newPage();setup.setDefaultTimeout(10000);setup.on('pageerror',error=>report.errors.push(error.message));
-    await installDesktopPageFixtures(setup,locale,'onboarding');await setup.goto(fixture.url+'/desktop/');await setup.locator('[data-webcodex-page=first-run]').waitFor();
+    await installDesktopPageFixtures(setup,locale,'onboarding');await setup.goto(fixture.url+'/desktop/');await setup.locator('[data-webcodex-action=show-setup-options]').click();
     await verifySurface(setup,'first-run',locale);
     for(const mode of ['local','remote','quick-share']) {
       if(mode==='quick-share')await setup.locator('details').first().evaluate(node=>{node.open=true;});
@@ -118,7 +118,6 @@ try {
       const extra=await extraContext.newPage();extra.setDefaultTimeout(10000);extra.on('pageerror',error=>report.errors.push(error.message));
       await installDesktopPageFixtures(extra,locale,mode);await extra.goto(fixture.url+'/desktop/');
       if(mode==='completion') {
-        await extra.locator('[data-webcodex-action=choose-local-setup]').click();
         await extra.locator('[data-webcodex-action=configure-local]').click();
         await extra.locator('[data-webcodex-page=setup-completion]').waitFor();
       } else await extra.locator('[data-webcodex-page=home]').waitFor();

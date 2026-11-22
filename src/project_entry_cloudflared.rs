@@ -323,7 +323,7 @@ pub(super) async fn installed_cloudflared() -> Result<PathBuf, ProductError> {
     if let Some(binary) = configured_cloudflared()? {
         return Ok(binary);
     }
-    let asset = cloudflared_asset_for(std::env::consts::OS, std::env::consts::ARCH)?;
+    let asset = current_cloudflared_asset()?;
     let path = managed_binary_path(&managed_cloudflared_root()?, asset);
     if managed_binary_is_valid(&path, asset).await {
         return Ok(path);
@@ -343,7 +343,7 @@ pub(super) async fn resolve_cloudflared(
         return Ok(binary);
     }
 
-    let asset = cloudflared_asset_for(std::env::consts::OS, std::env::consts::ARCH)?;
+    let asset = current_cloudflared_asset()?;
     let root = managed_cloudflared_root()?;
     let url = format!("{CLOUDFLARED_RELEASE_BASE}/{}", asset.file_name);
     ensure_managed_cloudflared_at(&root, asset, &url, progress).await
@@ -369,6 +369,40 @@ fn existing_cloudflared_from(
     Ok(std::env::split_paths(path)
         .map(|directory| directory.join(executable_name("cloudflared")))
         .find(|candidate| candidate.is_file()))
+}
+
+fn current_cloudflared_asset() -> Result<CloudflaredAsset, ProductError> {
+    #[cfg(all(windows, target_arch = "aarch64"))]
+    if windows_supports_x64_user_processes() {
+        return cloudflared_asset_for("windows", "x86_64");
+    }
+    cloudflared_asset_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+// The pinned upstream Windows release is x64. Only select that exact asset
+// on ARM64 when Windows itself confirms x64 user-mode support. Resolve the
+// API at runtime so older Windows can still use an explicit compatible binary.
+#[cfg(all(windows, target_arch = "aarch64"))]
+fn windows_supports_x64_user_processes() -> bool {
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+    const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
+    const USER_ENABLED: i32 = 1;
+    type GetAttributes = unsafe extern "system" fn(u16, *mut i32) -> i32;
+    // SAFETY: kernel32 remains loaded for the lifetime of this process. The
+    // export uses the documented GetMachineTypeAttributes ABI (Windows 11).
+    unsafe {
+        let kernel = GetModuleHandleA(c"kernel32.dll".as_ptr().cast());
+        if kernel.is_null() {
+            return false;
+        }
+        let Some(proc) = GetProcAddress(kernel, c"GetMachineTypeAttributes".as_ptr().cast()) else {
+            return false;
+        };
+        let get_attributes: GetAttributes = std::mem::transmute(proc);
+        let mut attributes = 0;
+        get_attributes(IMAGE_FILE_MACHINE_AMD64, &mut attributes) == 0
+            && attributes & USER_ENABLED != 0
+    }
 }
 
 fn cloudflared_asset_for(os: &str, arch: &str) -> Result<CloudflaredAsset, ProductError> {
@@ -611,6 +645,11 @@ async fn download_cloudflared_asset_with_network(
                 Some("Check the network connection and proxy, then reconnect."),
             )
         })?;
+    if response.status() == reqwest::StatusCode::PROXY_AUTHENTICATION_REQUIRED {
+        return Err(network_config_error(
+            "download proxy requires authentication",
+        ));
+    }
     if !response.status().is_success() {
         return Err(download_error(&format!(
             "server returned HTTP {}",

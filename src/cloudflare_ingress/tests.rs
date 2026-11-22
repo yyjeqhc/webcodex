@@ -177,6 +177,31 @@ fn issue_access_grant_fixture(
 }
 
 #[test]
+fn metadata_only_edit_keeps_the_verified_attempt_but_runtime_change_hides_it() {
+    let control = Fixture::new();
+    let control = &control.control;
+    activate_quick_fixture(control, "https://fixture.trycloudflare.com");
+    let catalog = control.root.join("tunnel.json");
+    let mut profiles: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&catalog).unwrap()).unwrap();
+    profiles[0]["name"] = json!("Renamed");
+    profiles[0]["revision"] = json!(2);
+    private_file(&catalog, &serde_json::to_vec(&profiles).unwrap());
+    let renamed = control.status("quick").unwrap();
+    assert_eq!(renamed.configured_revision, 2);
+    assert_eq!(renamed.applied_revision, Some(2));
+    assert!(renamed.public_origin.is_some());
+    profiles[0]["runtime_revision"] = json!(2);
+    private_file(&catalog, &serde_json::to_vec(&profiles).unwrap());
+    let changed = control.status("quick").unwrap();
+    assert!(changed.public_origin.is_none());
+    assert_eq!(
+        changed.reason_code.as_deref(),
+        Some("cloudflare_revision_conflict")
+    );
+}
+
+#[test]
 fn prepare_stop_restart_fences_profile_revision_instance_and_generation() {
     let fixture = Fixture::new();
     let control = fixture.control;

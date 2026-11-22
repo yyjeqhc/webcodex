@@ -26,7 +26,7 @@
 npm install -g @yyjeqhc/webcodex
 ```
 
-支持 Linux x64、Linux arm64、macOS x64、macOS arm64、Windows x64 与 Windows arm64。Windows 支持 CLI + Runner、显式前台 Server，以及显式本机 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 支持 managed Cloudflare 获取；固定版本 upstream 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。原生 OpenAI Tunnel 支持 Windows x64/arm64。旧 `server install` / `runner install` 命令不托管 Windows 服务，仍可使用下文前台流程。新的 `environment` 配置默认使用 user scope，在 Windows 上由已登录用户的计划任务托管。显式 `--scope system` 才选择 SCM 服务，并要求 OS 授权与账户配置；已有环境保留其已保存范围和所有者。user scope 不保证登录前或注销后运行；参见[统一安装指南](unified-installation.zh-CN.md#服务与凭据)及待完成的原生验收。npm 包装器要求 Node.js 18 或更新。Linux x64 native artifact 以 glibc 2.17 或更新为兼容基线。
+支持 Linux x64、Linux arm64、macOS x64、macOS arm64、Windows x64 与 Windows arm64。Windows 支持 CLI + Runner、显式前台 Server，以及显式本机 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 支持 managed Cloudflare 获取；Windows ARM64 在系统确认支持 x64 用户程序时使用相同的已验证 x64 组件。其他 ARM64 系统需要显式指定可信的兼容程序或将其加入 `PATH`。原生 OpenAI Tunnel 支持 Windows x64/arm64。旧 `server install` / `runner install` 命令不托管 Windows 服务，仍可使用下文前台流程。新的 `environment` 配置默认使用 user scope，在 Windows 上由已登录用户的计划任务托管。显式 `--scope system` 才选择 SCM 服务，并要求 OS 授权与账户配置；已有环境保留其已保存范围和所有者。user scope 不保证登录前或注销后运行；参见[统一安装指南](unified-installation.zh-CN.md#服务与凭据)及待完成的原生验收。npm 包装器要求 Node.js 18 或更新。Linux x64 native artifact 以 glibc 2.17 或更新为兼容基线。
 
 从源码构建：
 

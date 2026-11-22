@@ -265,9 +265,14 @@ impl CloudflareControl {
             observed_tool_call: admitted.is_some()
                 && current.is_some_and(|attempt| attempt.observed_tool_call),
             configured_revision: profile.revision,
-            applied_revision: attempt
-                .filter(|attempt| attempt.lifecycle == "running")
-                .map(|attempt| attempt.revision),
+            // Metadata edits keep the same runtime revision and applied identity.
+            applied_revision: attempt.filter(|a| a.lifecycle == "running").map(|a| {
+                if current.is_some() {
+                    profile.revision
+                } else {
+                    a.revision
+                }
+            }),
             local_target: profile.local_target,
             reason_code: attempt
                 .and_then(|attempt| {
@@ -561,6 +566,9 @@ impl CloudflareControl {
         }
         attempt.lifecycle = if reason.is_some() { "error" } else { "stopped" };
         attempt.reason = reason;
+        if let Some(reason) = reason {
+            tracing::warn!(profile_id = %id, generation, reason, "Public ingress attempt ended");
+        }
         attempt.entry = None;
         attempt.network_ready = false;
         attempt.task.take();

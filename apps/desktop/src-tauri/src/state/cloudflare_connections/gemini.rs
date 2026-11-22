@@ -58,11 +58,37 @@ impl AppState {
             let CloudflareConnectionResponse::Status(status) = observed else {
                 return Err(unavailable());
             };
-            if status.configured_revision != profile.revision {
+            if status.configured_revision != profile.revision
+                || profile.configuration_id.as_deref() != Some(status.configuration_id.as_str())
+            {
                 return Err(stale_revision("cloudflare_start", id));
             }
             if matches!(status.lifecycle.as_str(), "stopped" | "error") {
                 cancel.check()?;
+                // A user-scoped standalone host has the same per-user cache.
+                // Boot and system accounts continue to use installed tools only.
+                if profile.host_mode == TunnelHostMode::Standalone && profile.autostart {
+                    let record = store
+                        .load_environment()
+                        .map_err(environment::desktop_error)?
+                        .ok_or_else(requires_environment)?;
+                    if record.environment_id != request.environment_id {
+                        return Err(requires_environment());
+                    }
+                    if record.request.service_scope
+                        == webcodex_environment::service::ServiceScope::User
+                    {
+                        if webcodex_environment::current_account()
+                            .map_err(environment::desktop_error)?
+                            .identity
+                            != record.request.account.identity
+                        {
+                            return Err(requires_environment());
+                        }
+                        prepare_standalone_component(&core.adapter.binaries()?.webcodex, &cancel)
+                            .await?;
+                    }
+                }
                 // One mutation from a current observation; response loss never
                 // causes a retry. The card subsequently polls only Status.
                 self.cloudflare_connection(CloudflareConnectionRequest::Start {
@@ -154,4 +180,55 @@ async fn prepare_profile(
         .await
         .map_err(environment::desktop_error)?;
     Ok(result.profile)
+}
+
+async fn prepare_standalone_component(
+    cli: &std::path::Path,
+    cancel: &CancellationContext,
+) -> DesktopResult<()> {
+    use crate::webcodex::cli::{run_json_until, CliCommandContext};
+    let prepared: bool = run_json_until(
+        cli,
+        &[
+            "environment".into(),
+            "prepare-cloudflared".into(),
+            "--json".into(),
+        ],
+        None,
+        false,
+        CliCommandContext::new("cloudflare_start", "prepare-cloudflared"),
+        cancel,
+        Deadline::after(std::time::Duration::from_secs(170)),
+    )
+    .await
+    .map_err(|error| {
+        let reason = error
+            .diagnostic_ref()
+            .and_then(|d| d.reason_code.as_deref());
+        if let Some(
+            code @ ("cloudflare_network_unavailable"
+            | "cloudflare_download_failed"
+            | "cloudflare_proxy_invalid"
+            | "cloudflare_storage_unavailable"
+            | "cloudflare_version_unsupported"
+            | "cloudflare_platform_unsupported"
+            | "cloudflare_verification_failed"
+            | "cloudflare_extraction_failed"
+            | "cloudflare_binary_unavailable"),
+        ) = reason
+        {
+            DesktopError::new(
+                code,
+                "The Cloudflare component could not be prepared",
+                "Review the component diagnostic and reconnect.",
+            )
+            .with_stage("cloudflare_start")
+        } else {
+            error
+        }
+    })?;
+    if !prepared {
+        return Err(unavailable());
+    }
+    Ok(())
 }

@@ -66,6 +66,16 @@ pub(crate) async fn prepare_cloudflared_interactive(
     super::cloudflared_service::resolve_cloudflared(progress).await
 }
 
+/// Prepare the signed-in user's component for a separately hosted connection.
+pub async fn prepare_user_cloudflare_component() -> Result<(), &'static str> {
+    let binary = prepare_cloudflared_interactive(|_| {})
+        .await
+        .map_err(|error| error.code)?;
+    verify_supported_binary(&binary, Instant::now() + VERSION_TIMEOUT)
+        .await
+        .map_err(|error| error.code)
+}
+
 pub(crate) fn valid_quick_origin(origin: &str) -> bool {
     super::share_service::parse_quick_tunnel_url(origin).as_deref() == Some(origin)
 }
@@ -418,7 +428,13 @@ async fn cloudflared_binary_version_until(
         .lock()
         .ok()
         .and_then(|facts| facts.version)
-        .ok_or_else(|| transport_error("Cloudflare executable did not report a supported version"))
+        .ok_or_else(|| {
+            ProductError::new(
+                "cloudflare_version_unsupported",
+                "Cloudflare executable did not report a supported version",
+                Some("Update cloudflared and reconnect."),
+            )
+        })
 }
 
 async fn verify_supported_binary(binary: &Path, deadline: Instant) -> Result<(), ProductError> {

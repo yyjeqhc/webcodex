@@ -38,12 +38,12 @@ fn cloudflare_native_actions_require_selected_instance_and_secret_free_status() 
         serde_json::to_value(observed).unwrap()["process_generation"],
         7
     );
-    let request:CloudflareConnectionRequest=serde_json::from_value(serde_json::json!({"action":"start","profile_id":"profile","server_instance_id":"selected-instance","expected_revision":3})).unwrap();
+    let request:CloudflareConnectionRequest=serde_json::from_value(serde_json::json!({"action":"start","profile_id":"profile","server_instance_id":"selected-instance","expected_revision":3,"expected_generation":0,"expected_configuration_id":"configuration"})).unwrap();
     assert_eq!(
         serde_json::to_value(request).unwrap()["server_instance_id"],
         "selected-instance"
     );
-    let status:CloudflareConnectionStatus=serde_json::from_value(serde_json::json!({"profile_id":"profile","server_instance_id":"instance","process_generation":2,"lifecycle":"running","public_origin":"https://public.example","oauth_configured":true,"observed_authorization":false,"configured_revision":3,"applied_revision":3,"local_target":"http://127.0.0.1:1234","reason_code":null,"client_secret":"must-not-project"})).unwrap();
+    let status:CloudflareConnectionStatus=serde_json::from_value(serde_json::json!({"profile_id":"profile","configuration_id":"configuration","server_instance_id":"instance","process_generation":2,"lifecycle":"running","public_origin":"https://public.example","oauth_configured":true,"observed_authorization":false,"configured_revision":3,"applied_revision":3,"local_target":"http://127.0.0.1:1234","reason_code":null,"client_secret":"must-not-project"})).unwrap();
     let projected = serde_json::to_string(&status).unwrap();
     assert!(!projected.contains("client_secret"));
     assert!(!projected.contains("must-not-project"));

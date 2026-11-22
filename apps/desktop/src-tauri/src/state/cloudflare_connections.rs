@@ -190,6 +190,7 @@ impl AppState {
         validate_control_origin(&profile.local_server_url)?;
         let client = reqwest::Client::builder()
             .no_proxy()
+            .retry(reqwest::retry::never())
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(5))
             .build()
@@ -331,6 +332,17 @@ async fn control_response(
 ) -> DesktopResult<Vec<u8>> {
     let stage = request.stage();
     let profile_id = request.profile_id();
+    let uncertain_write = |error: DesktopError| {
+        if matches!(request, CloudflareConnectionRequest::Status { .. }) {
+            error
+        } else {
+            error.with_recovery(
+                crate::error::RecoveryKind::ManualCheck,
+                crate::error::SafeRecoveryAction::ObserveBeforeRetry,
+                false,
+            )
+        }
+    };
     let mut response = client
         .post(endpoint)
         .bearer_auth(token.expose())
@@ -343,31 +355,43 @@ async fn control_response(
             } else {
                 "server_unreachable"
             };
-            DesktopError::new(
-                "cloudflare_server_unreachable",
-                "Could not reach the local Server to control this Cloudflare connection",
-                "Check that the local Server is running, then refresh this connection.",
+            uncertain_write(
+                DesktopError::new(
+                    "cloudflare_server_unreachable",
+                    "Could not reach the local Server to control this Cloudflare connection",
+                    "Check that the local Server is running, then refresh this connection.",
+                )
+                .with_component(crate::error::ErrorComponent::Tunnel)
+                .with_stage(stage)
+                .with_reason_code(reason)
+                .with_operation_context(None, None, Some(profile_id), None),
             )
-            .with_component(crate::error::ErrorComponent::Tunnel)
-            .with_stage(stage)
-            .with_reason_code(reason)
-            .with_operation_context(None, None, Some(profile_id), None)
         })?;
     let status = response.status();
     if response
         .content_length()
         .is_some_and(|length| length > 32 * 1024)
     {
-        return Err(unavailable_for(stage, profile_id, Some("response_limit")));
+        return Err(uncertain_write(unavailable_for(
+            stage,
+            profile_id,
+            Some("response_limit"),
+        )));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| unavailable_for(stage, profile_id, Some("response_uncertain")))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|_| {
+        uncertain_write(unavailable_for(
+            stage,
+            profile_id,
+            Some("response_uncertain"),
+        ))
+    })? {
         if bytes.len().saturating_add(chunk.len()) > 32 * 1024 {
-            return Err(unavailable_for(stage, profile_id, Some("response_limit")));
+            return Err(uncertain_write(unavailable_for(
+                stage,
+                profile_id,
+                Some("response_limit"),
+            )));
         }
         bytes.extend_from_slice(&chunk);
     }

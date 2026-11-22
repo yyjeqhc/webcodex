@@ -179,6 +179,7 @@ fn persistent_projection_preserves_cli_identity_and_surfaces_one_explicit_server
         configured_revision: 3,
         applied_revision: Some(2),
         server_restart_required: true,
+        diagnostic: None,
     };
     let projected = persistent_connection_projection(profile.clone(), Ok(pending));
     assert_eq!(projected.config.id, "work");
@@ -207,6 +208,7 @@ fn persistent_projection_preserves_cli_identity_and_surfaces_one_explicit_server
         configured_revision: 3,
         applied_revision: Some(3),
         server_restart_required: false,
+        diagnostic: None,
     };
     let running = persistent_connection_projection(profile, Ok(applied));
     assert!(!running.config.server_restart_required);
@@ -230,6 +232,7 @@ fn persistent_projection_fails_closed_when_runtime_identity_differs_from_catalog
         configured_revision: 3,
         applied_revision: Some(3),
         server_restart_required: false,
+        diagnostic: None,
     };
     let projected = persistent_connection_projection(profile, Ok(observation));
     assert_eq!(projected.runtime.lifecycle, ConnectionLifecycle::Error);
@@ -238,6 +241,60 @@ fn persistent_projection_fails_closed_when_runtime_identity_differs_from_catalog
         Some(ConnectionError::StartFailed)
     );
     assert!(!projected.runtime.ready);
+}
+
+#[test]
+fn persistent_projection_preserves_binding_failure_instead_of_inventing_local_mcp_failure() {
+    for code in [
+        "tunnel_protected_history_binding_changed",
+        "tunnel_receipts_binding_changed",
+        "tunnel_archive_binding_changed",
+        "tunnel_restart_uncertain",
+    ] {
+        let profile = environment_profile(webcodex_environment::TunnelHostMode::Embedded, true);
+        let observation = webcodex_environment::TunnelRuntimeObservation {
+            profile_id: "work".into(),
+            tunnel_id: "tunnel_work".into(),
+            service_status: service_status(true),
+            host_mode: webcodex_environment::TunnelHostMode::Embedded,
+            autostart: true,
+            ready: false,
+            tunnel_ready: false,
+            local_mcp_ready: false,
+            configured_revision: 3,
+            applied_revision: Some(3),
+            server_restart_required: false,
+            diagnostic: Some(code.into()),
+        };
+        let projected = persistent_connection_projection(profile.clone(), Ok(observation.clone()));
+        assert_eq!(projected.runtime.reason_code.as_deref(), Some(code));
+        assert_eq!(
+            projected.runtime.last_error,
+            Some(ConnectionError::TunnelUnavailable)
+        );
+        assert!(!projected.runtime.ready);
+        assert_eq!(projected.runtime.local_mcp_ready, Some(false));
+
+        let mut stale_revision = observation.clone();
+        stale_revision.applied_revision = Some(2);
+        stale_revision.server_restart_required = true;
+        let pending = persistent_connection_projection(profile.clone(), Ok(stale_revision));
+        assert!(pending.runtime.reason_code.is_none());
+        assert!(pending.runtime.last_error.is_none());
+
+        let mut stopped = observation.clone();
+        stopped.service_status = service_status(false);
+        let stopped = persistent_connection_projection(profile, Ok(stopped));
+        assert!(stopped.runtime.reason_code.is_none());
+        assert!(!stopped.runtime.ready);
+
+        // Published older observations did not contain a diagnostic field.
+        let mut legacy = serde_json::to_value(&observation).unwrap();
+        legacy.as_object_mut().unwrap().remove("diagnostic");
+        let legacy: webcodex_environment::TunnelRuntimeObservation =
+            serde_json::from_value(legacy).unwrap();
+        assert!(legacy.diagnostic.is_none());
+    }
 }
 
 #[test]
@@ -255,6 +312,7 @@ fn disabled_server_owned_profile_is_not_misreported_as_failed_while_server_runs(
         configured_revision: 3,
         applied_revision: Some(3),
         server_restart_required: false,
+        diagnostic: None,
     };
     let projected = persistent_connection_projection(profile, Ok(observation));
     assert!(!projected.config.enabled);

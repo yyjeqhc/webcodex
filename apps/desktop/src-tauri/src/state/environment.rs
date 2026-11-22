@@ -463,6 +463,52 @@ fn require_idle_runner(inventory: &Value) -> DesktopResult<()> {
     ))
 }
 
+pub(super) fn legacy_inventory_projects(
+    rows: &[Value],
+    client_id: &str,
+    selected_project: Option<&Path>,
+) -> DesktopResult<Vec<ProjectRecord>> {
+    let prefix = format!("agent:{client_id}:");
+    let mut projects = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id = row
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|value| value.strip_prefix(&prefix))
+            .filter(|value| !value.is_empty())
+            .ok_or_else(migration_target_conflict)?;
+        let path = Path::new(
+            row.get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(migration_target_conflict)?,
+        );
+        if !path.is_absolute() {
+            return Err(migration_target_conflict());
+        }
+        let path = match std::fs::canonicalize(path) {
+            Ok(path) => path,
+            // Runner retains registered projects when a directory is removed or
+            // temporarily unavailable. Preserve that absolute identity as well;
+            // migration still verifies every ID/path against the original
+            // registry and copies its bytes before starting the replacement.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+            Err(_) => return Err(migration_target_conflict()),
+        };
+        projects.push(ProjectRecord {
+            id: id.to_owned(),
+            path,
+        });
+    }
+    if selected_project.is_some()
+        && !projects
+            .iter()
+            .any(|project| Some(project.path.as_path()) == selected_project)
+    {
+        return Err(migration_target_conflict());
+    }
+    Ok(projects)
+}
+
 fn same_desktop_path(left: &Path, right: &Path) -> bool {
     if left == right {
         return true;
@@ -1146,31 +1192,7 @@ impl DesktopCore {
                 "Retry after the Server reports a complete inventory.",
             ));
         }
-        let prefix = format!("agent:{client_id}:");
-        let mut projects = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id = row
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|value| value.strip_prefix(&prefix))
-                .filter(|value| !value.is_empty())
-                .ok_or_else(migration_target_conflict)?;
-            let path = row
-                .get("path")
-                .and_then(Value::as_str)
-                .ok_or_else(migration_target_conflict)?;
-            projects.push(ProjectRecord {
-                id: id.to_owned(),
-                path: std::fs::canonicalize(path).map_err(|_| migration_target_conflict())?,
-            });
-        }
-        if selected_project.is_some()
-            && !projects
-                .iter()
-                .any(|project| Some(project.path.as_path()) == selected_project)
-        {
-            return Err(migration_target_conflict());
-        }
+        let projects = legacy_inventory_projects(rows, &client_id, selected_project)?;
         Ok(LegacyImport {
             server_env_file: if local_server {
                 runtime.server_env_file.clone()

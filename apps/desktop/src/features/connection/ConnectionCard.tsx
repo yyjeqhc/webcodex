@@ -11,6 +11,9 @@ function recoveryFor(profile: TunnelConnection): Recovery {
   // connection failure's reason code is still retained for diagnostics.
   if (profile.last_error === "stop_failed") return { title: "stopFailed", action: "stopRecovery", settings: "diagnostics" };
   switch (profile.reason_code) {
+    case "tunnel_protected_history_binding_changed":
+    case "tunnel_receipts_binding_changed":
+    case "tunnel_archive_binding_changed": return { title: "tunnelBindingChanged", action: "tunnelBindingRecovery", settings: "diagnostics" };
     case "tunnel_restart_uncertain": return { title: "restartUncertain", action: "restartUncertainRecovery", settings: "diagnostics" };
     case "tunnel_auth_rejected": return { title: "connectionUnavailable", action: "credentialRecovery", settings: "diagnostics" };
     case "tunnel_capacity_exhausted":

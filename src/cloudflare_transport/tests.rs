@@ -190,7 +190,7 @@ mod real_process {
     async fn cloudflare_real_process_stop_and_eof_drain_owned_tree() {
         let pid_dir = tempfile::tempdir().unwrap();
         let pid_file = pid_dir.path().join("pid");
-        let body = descendant_body(&pid_file, "if read input; then exit 88; fi\n[ -z \"${TUNNEL_TOKEN+x}${OPENAI_API_KEY+x}${WEBCODEX_BOOTSTRAP_KEY+x}\" ] || exit 89\necho https://ready.trycloudflare.com\necho 'Registered tunnel connection' >&2\nwhile :; do sleep 1; done");
+        let body = descendant_body(&pid_file, "if read input; then exit 88; fi\n[ -z \"${TUNNEL_TOKEN+x}${OPENAI_API_KEY+x}${WEBCODEX_BOOTSTRAP_KEY+x}\" ] || exit 89\ncase \"$*\" in *'--protocol http2 --url '*) ;; *) exit 90;; esac\necho https://ready.trycloudflare.com\necho 'Registered tunnel connection' >&2\nwhile :; do sleep 1; done");
         let (_directory, binary) = fixture(&body);
         let (url, mut transport) = CloudflareTransport::start_quick(
             &binary,
@@ -206,6 +206,29 @@ mod real_process {
         assert_dead(pid).await;
         assert!(!transport.is_alive().unwrap());
         transport.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "real process lifecycle evidence; run cloudflare_transport::tests::real_process with --ignored --test-threads=1"]
+    async fn cloudflare_real_process_quick_url_without_edge_connection_is_not_ready() {
+        let pid_dir = tempfile::tempdir().unwrap();
+        let pid_file = pid_dir.path().join("pid");
+        let (_directory, binary) = fixture(&descendant_body(
+            &pid_file,
+            "echo https://pending.trycloudflare.com\nwhile :; do sleep 1; done",
+        ));
+        let start = CloudflareTransport::start_quick(
+            &binary,
+            "http://127.0.0.1:2345",
+            Instant::now() + Duration::from_millis(400),
+        );
+        let (result, pid) = tokio::join!(start, descendant(&pid_file));
+        assert!(result
+            .err()
+            .expect("URL alone must not open ingress")
+            .message
+            .contains("timed out"));
+        assert_dead(pid).await;
     }
 
     #[tokio::test]

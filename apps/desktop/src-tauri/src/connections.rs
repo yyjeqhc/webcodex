@@ -504,6 +504,12 @@ fn safe_failure_evidence(event: &Value) -> Option<(&str, &str)> {
         ("tunnel_control_plane", "tunnel_control_plane_unreachable")
             | ("tunnel_control_plane", "tunnel_auth_rejected")
             | ("tunnel_recovery", "tunnel_restart_uncertain")
+            | (
+                "tunnel_recovery",
+                "tunnel_protected_history_binding_changed"
+            )
+            | ("tunnel_recovery", "tunnel_receipts_binding_changed")
+            | ("tunnel_recovery", "tunnel_archive_binding_changed")
             | ("tunnel_capacity", "tunnel_capacity_exhausted")
             | ("tunnel_protocol", "tunnel_protocol_failed")
             | ("local_mcp", "local_mcp_unavailable")

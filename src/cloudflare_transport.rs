@@ -138,7 +138,14 @@ impl CloudflareTransport {
             .arg(&config)
             .arg("--no-autoupdate");
         if let Some(ingress) = ingress {
-            command.arg("--url").arg(ingress);
+            // Quick MCP onboarding uses TLS over TCP so networks that block
+            // QUIC do not consume its startup window in UDP retry backoff.
+            // Named deployments retain cloudflared's existing auto policy.
+            command
+                .arg("--protocol")
+                .arg("http2")
+                .arg("--url")
+                .arg(ingress);
         } else {
             let token_file = token_file
                 .ok_or_else(|| transport_error("Cloudflare tunnel token file is missing"))?;
@@ -178,7 +185,7 @@ impl CloudflareTransport {
                 if named {
                     facts.connected
                 } else {
-                    facts.quick_url.is_some()
+                    facts.quick_url.is_some() && facts.connected
                 }
             });
             if ready {

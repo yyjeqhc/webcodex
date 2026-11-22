@@ -20,6 +20,69 @@ fn prepared_client(
 }
 
 #[test]
+fn durable_binding_change_reports_exact_cause_and_preserves_history() {
+    for (url, credential) in [
+        ("http://127.0.0.1:8081/mcp", "original-local-credential"),
+        ("http://127.0.0.1:8080/mcp", "replacement-local-credential"),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let (client, guard) = prepared_client(
+            &root,
+            "original-local-credential",
+            OpenAiTunnelRecovery::Durable,
+        )
+        .unwrap();
+        let marker = guard.path().to_owned();
+        drop(client);
+        guard.finish().unwrap();
+        assert!(!marker.exists());
+        let history: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
+        let prerequisites = OpenAiTunnelPrerequisites::bound(
+            "tunnel_0123456789abcdef0123456789abcdef".into(),
+            "fixture-control".into(),
+            ControlPlaneProxy::Direct,
+        )
+        .unwrap();
+        let error = OpenAiTunnel::prepare_client(
+            &prerequisites,
+            url,
+            credential,
+            &root,
+            OpenAiTunnelRecovery::Durable,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code, "tunnel_protected_history_binding_changed");
+        assert!(!error.retryable);
+        assert!(error.next_action.as_deref().unwrap().contains("new Tunnel"));
+        let encoded = serde_json::to_string(&error).unwrap();
+        for private in [url, credential, "fixture-control", &prerequisites.tunnel_id] {
+            assert!(!encoded.contains(private));
+        }
+        assert!(!marker.exists(), "rejected setup must not create an owner");
+        for (path, bytes) in history {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
+        let (client, guard) = prepared_client(
+            &root,
+            "original-local-credential",
+            OpenAiTunnelRecovery::Durable,
+        )
+        .unwrap();
+        drop(client);
+        guard.finish().unwrap();
+    }
+}
+
+#[test]
 fn temporary_share_restarts_cleanly_with_a_fresh_local_credential() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();

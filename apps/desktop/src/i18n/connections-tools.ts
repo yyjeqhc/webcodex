@@ -3,6 +3,7 @@ import { PRODUCT_LOCALES } from "./product";
 
 // English, Chinese, German, French, Japanese, Korean; names remain user text.
 export const CONNECTIONS_TOOLS_MESSAGES = {
+  registrationOff: ["App registration is off", "应用注册已关闭", "App-Registrierung deaktiviert", "Inscription des applis désactivée", "アプリ登録は無効です", "앱 등록 꺼짐", "應用程式註冊已關閉"],
   preparingConnection: ["Preparing connection…", "正在准备连接…", "Verbindung wird vorbereitet…", "Préparation de la connexion…", "接続を準備中…", "연결 준비 중…", "正在準備連線…"],
   connectGemini: ["Connect Gemini", "连接 Gemini", "Gemini verbinden", "Connecter Gemini", "Gemini に接続", "Gemini 연결", "連線 Gemini"],
   addInGemini: ["Add this address under Custom apps in Gemini, then sign in to WebCodex.", "在 Gemini 的 Custom apps 中添加此地址，然后登录 WebCodex。", "Füge diese Adresse unter „Custom apps“ in Gemini hinzu und melde dich bei WebCodex an.", "Ajoutez cette adresse sous Custom apps dans Gemini, puis connectez-vous à WebCodex.", "Gemini の Custom apps にこのアドレスを追加し、WebCodex にログインしてください。", "Gemini의 Custom apps에 이 주소를 추가하고 WebCodex에 로그인하세요.", "在 Gemini 的 Custom apps 中加入此位址，再登入 WebCodex。"],

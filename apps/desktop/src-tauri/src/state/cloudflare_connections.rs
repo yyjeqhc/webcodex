@@ -60,6 +60,17 @@ pub struct CloudflareConnectionStatus {
     pub reason_code: Option<String>,
 }
 
+impl CloudflareConnectionStatus {
+    fn check_materialized_revision(&mut self, revision: u64) {
+        // Windows Server reads protected materializations. Preserve the observed
+        // generation for Stop while the user applies the newer catalog revision.
+        if cfg!(windows) && self.configured_revision < revision {
+            self.reason_code = Some("cloudflare_restart_server_required".into());
+            self.registration_available = false;
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct CloudflareOAuthHandoff {
     pub client_id: String,
@@ -238,7 +249,7 @@ impl AppState {
                 },
             ));
         }
-        let status: CloudflareConnectionStatus =
+        let mut status: CloudflareConnectionStatus =
             serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
         if status.profile_id != request.profile_id()
             || !matches!(
@@ -248,6 +259,7 @@ impl AppState {
         {
             return Err(unavailable());
         }
+        status.check_materialized_revision(profile.revision);
         Ok(CloudflareConnectionResponse::Status(status))
     }
 }

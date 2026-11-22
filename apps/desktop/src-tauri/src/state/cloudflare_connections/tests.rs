@@ -49,6 +49,17 @@ fn cloudflare_native_actions_require_selected_instance_and_secret_free_status() 
     assert!(!projected.contains("must-not-project"));
     assert!(!status.observed_authorization);
     assert!(!status.registration_available && !status.observed_tool_call);
+    let mut active = status;
+    active.registration_available = true;
+    active.check_materialized_revision(3);
+    assert!(active.registration_available && active.reason_code.is_none());
+    active.check_materialized_revision(4);
+    assert_eq!(active.registration_available, !cfg!(windows));
+    assert_eq!(
+        active.reason_code.as_deref(),
+        cfg!(windows).then_some("cloudflare_restart_server_required")
+    );
+    assert_eq!(active.process_generation, 2);
 }
 
 #[tokio::test]

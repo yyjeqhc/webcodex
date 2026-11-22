@@ -215,6 +215,26 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     expect(screen.queryByRole("button", {name:"Open Gemini"})).toBeNull();
     expect(screen.queryByText("MCP endpoint ready")).toBeNull();
   });
+  it("keeps the manual client address in advanced controls until app registration is enabled", async () => {
+    const profile = {...gemini, oauth_dynamic_registration_enabled:false};
+    render(wrap(<CloudflareConnectionCard profile={profile} canStart busy={false} onEdit={vi.fn()} onDelete={vi.fn()} onEnableRegistration={vi.fn()} />));
+    expect(await screen.findByText("App registration is off")).toBeInTheDocument();
+    const address = screen.getByText("https://current.example/mcp");
+    expect(address.closest("details")).not.toBeNull();
+    expect(address.closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByRole("button", {name:"Open Gemini"})).toBeNull();
+  });
+
+  it("offers apply for an older standalone Server materialization while retaining the generation-fenced Stop action", async () => {
+    api.cloudflareConnection.mockResolvedValue({...status, configured_revision:3, reason_code:"cloudflare_restart_server_required"});
+    const apply = vi.fn();
+    render(wrap(<CloudflareConnectionCard profile={{...gemini, host_mode:"standalone", autostart:true}} canStart busy={false} onEdit={vi.fn()} onDelete={vi.fn()} onRestartServer={apply} />));
+    fireEvent.click(await screen.findByRole("button", {name:"Restart Server"}));
+    expect(apply).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", {name:"Stop"})).toBeEnabled();
+    expect(screen.queryByRole("button", {name:"Open Gemini"})).toBeNull();
+  });
+
   it("restores a Named connection and its independent observations on reopening without launching anything", async () => {
     const named = {...gemini, provider:{kind:"cloudflare_named" as const, public_origin:"https://current.example", tunnel_id:"named"}};
     api.cloudflareConnection.mockResolvedValue({...status, registration_available:true, observed_authorization:true, observed_tool_call:true});

@@ -17,6 +17,10 @@ use webcodex_store::{PublicIngressEntry, PublicIngressEntrySpec, PublicIngressMo
 
 const PROBE_PATH: &str = "/.well-known/webcodex-connection";
 const START_TIMEOUT: Duration = Duration::from_secs(60);
+// A fresh Quick hostname may remain unavailable to the local resolver after
+// the connector registers. Keep its exact forwarding proof pending long enough
+// for DNS publication and cached negative answers to settle.
+const QUICK_FORWARDING_TIMEOUT: Duration = Duration::from_secs(120);
 const LEASE_TIMEOUT: Duration = Duration::from_secs(8);
 
 const DISCOVERY_MIN_INTERVAL: Duration = Duration::from_secs(15);
@@ -438,7 +442,7 @@ impl CloudflareControl {
             _ => return Err("cloudflare_origin_mismatch"),
         }
         self.verify_owner(&profile).await?;
-        verify_forwarding(origin, prepared).await?;
+        verify_forwarding(origin, prepared, &profile).await?;
         let current_profile = self.profile(&prepared.profile_id)?;
         if current_profile.revision != revision
             || current_profile.configuration_id != profile.configuration_id
@@ -801,19 +805,49 @@ async fn forwarding_matches(
     Ok(true)
 }
 
-async fn verify_forwarding(origin: &str, prepared: &PreparedIngress) -> Result<(), &'static str> {
+fn forwarding_timeout(provider: &TunnelProvider, host_mode: &TunnelHostMode) -> Duration {
+    match (provider, host_mode) {
+        (TunnelProvider::CloudflareQuick, TunnelHostMode::Embedded) => QUICK_FORWARDING_TIMEOUT,
+        // Existing standalone service/control deadlines remain unchanged.
+        _ => START_TIMEOUT,
+    }
+}
+
+async fn verify_forwarding(
+    origin: &str,
+    prepared: &PreparedIngress,
+    profile: &CloudflareTunnelRuntimeProfile,
+) -> Result<(), &'static str> {
     let client = probe_client()?;
-    let deadline = Instant::now() + START_TIMEOUT;
+    wait_for_forwarding(
+        forwarding_timeout(&profile.provider, &profile.host_mode),
+        || forwarding_matches(&client, origin, prepared),
+    )
+    .await
+}
+
+async fn wait_for_forwarding<F, Fut>(timeout: Duration, mut probe: F) -> Result<(), &'static str>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<bool, &'static str>>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        match forwarding_matches(&client, origin, prepared).await {
+        if tokio::time::Instant::now() >= deadline {
+            return Err("cloudflare_forwarding_timeout");
+        }
+        match tokio::time::timeout_at(deadline, probe())
+            .await
+            .map_err(|_| "cloudflare_forwarding_timeout")?
+        {
             Ok(true) => return Ok(()),
             Err("cloudflare_forwarding_mismatch") => return Err("cloudflare_forwarding_mismatch"),
             _ => {}
         }
-        if Instant::now() >= deadline {
-            return Err("cloudflare_forwarding_timeout");
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::sleep_until(
+            (tokio::time::Instant::now() + Duration::from_millis(250)).min(deadline),
+        )
+        .await;
     }
 }
 

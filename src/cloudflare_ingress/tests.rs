@@ -518,6 +518,97 @@ async fn probe_requires_exact_server_profile_generation_and_nonce_and_bounds_bod
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn embedded_quick_forwarding_waits_for_resolution_without_extending_other_modes() {
+    let named = TunnelProvider::CloudflareNamed {
+        public_origin: "https://named.example".into(),
+        tunnel_id: "fixture".into(),
+    };
+    for (provider, host_mode, expected, elapsed) in [
+        (
+            TunnelProvider::CloudflareQuick,
+            TunnelHostMode::Embedded,
+            Ok(()),
+            75,
+        ),
+        (
+            named.clone(),
+            TunnelHostMode::Embedded,
+            Err("cloudflare_forwarding_timeout"),
+            60,
+        ),
+        (
+            TunnelProvider::CloudflareQuick,
+            TunnelHostMode::Standalone,
+            Err("cloudflare_forwarding_timeout"),
+            60,
+        ),
+        (
+            named,
+            TunnelHostMode::Standalone,
+            Err("cloudflare_forwarding_timeout"),
+            60,
+        ),
+    ] {
+        let started = tokio::time::Instant::now();
+        let ready_at = started + Duration::from_secs(75);
+        let result = wait_for_forwarding(forwarding_timeout(&provider, &host_mode), || {
+            std::future::ready(if tokio::time::Instant::now() >= ready_at {
+                Ok(true)
+            } else {
+                Err("cloudflare_probe_unavailable")
+            })
+        })
+        .await;
+        assert_eq!(result, expected);
+        assert_eq!(started.elapsed(), Duration::from_secs(elapsed));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn quick_forwarding_deadline_cancels_a_pending_probe() {
+    struct ProbeDrop<'a>(&'a std::cell::Cell<bool>);
+    impl Drop for ProbeDrop<'_> {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+    let dropped = std::cell::Cell::new(false);
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        wait_for_forwarding(
+            forwarding_timeout(&TunnelProvider::CloudflareQuick, &TunnelHostMode::Embedded),
+            || async {
+                let _drop = ProbeDrop(&dropped);
+                std::future::pending::<Result<bool, &'static str>>().await
+            }
+        )
+        .await,
+        Err("cloudflare_forwarding_timeout")
+    );
+    assert_eq!(started.elapsed(), Duration::from_secs(120));
+    assert!(dropped.get());
+}
+
+#[tokio::test(start_paused = true)]
+async fn quick_forwarding_never_retries_an_identity_mismatch() {
+    let started = tokio::time::Instant::now();
+    let mut calls = 0;
+    assert_eq!(
+        wait_for_forwarding(
+            forwarding_timeout(&TunnelProvider::CloudflareQuick, &TunnelHostMode::Embedded),
+            || {
+                calls += 1;
+                std::future::ready(Err("cloudflare_forwarding_mismatch"))
+            }
+        )
+        .await,
+        Err("cloudflare_forwarding_mismatch")
+    );
+    assert_eq!(calls, 1);
+    assert_eq!(started.elapsed(), Duration::ZERO);
+}
+
 #[tokio::test]
 async fn missing_runner_identity_requires_explicit_repair() {
     let fixture = Fixture::new();

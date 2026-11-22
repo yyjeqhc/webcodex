@@ -1680,7 +1680,7 @@ impl EnvironmentBackend for NativeEnvironment {
                         tokio::time::timeout_at(deadline, self.observe(store, record)).await;
                     if let Ok(Ok(observation)) = observed {
                         if observation.authenticated
-                            && observation.runner_online != Some(false)
+                            && (!record.request.local_runner() || observation.runner_online == Some(true))
                             && record
                                 .projects
                                 .iter()

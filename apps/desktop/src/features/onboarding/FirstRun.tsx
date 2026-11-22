@@ -76,6 +76,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete, 
   const [pairingCode, setPairingCode] = useState("");
   const [replacePairingCode, setReplacePairingCode] = useState(false);
   const [userToken, setUserToken] = useState("");
+  const submitting = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
   const currentContext = useRef(contextKey);
@@ -135,7 +136,8 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete, 
     finally { setBusy(false); }
   };
   const run = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || submitting.current) return;
+    submitting.current = true;
     const expectedContext = contextKey;
     setBusy(true); setError(null);
     const code = pairingCode.trim();
@@ -166,8 +168,23 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete, 
       });
       if (stillCurrent()) { setReplacePairingCode(false); onState(next); onComplete?.(next); }
     } catch (value) { if (stillCurrent()) setError(normalizeDesktopError(value)); }
-    finally { setBusy(false); }
+    finally { submitting.current = false; if (mounted.current) setBusy(false); }
   };
+
+  if (!chooseModeFirst && mode === "create" && !state.topology && !state.persistent_environment && !setup?.configured) {
+    return <section className="setup-shell" aria-labelledby="welcome-title" data-webcodex-page="setup" aria-busy={mutationBusy}>
+      <h1 id="welcome-title" tabIndex={-1} ref={headingRef}>{t("first.welcome")}</h1>
+      <p className="lede">{t("first.intro")}</p>
+      {error && <DesktopErrorAlert error={error} showSafeMessage disabled={mutationBusy}
+        actions={{onOpenDiagnostics: onDiagnostics}} />}
+      <div className="setup-actions"><button type="button" className="primary-button" disabled={!canSubmit}
+        data-webcodex-action="configure-local" onClick={() => void run()}>
+        {t(mutationBusy ? "first.preparing" : pending ? "setup.resumeLocal" : "first.start")}
+      </button></div>
+      {mutationBusy && state.setup_progress && <p role="status">{t(setupProgressLabels[state.setup_progress.step])}</p>}
+      {onCancelLocal && <button type="button" className="back-button" disabled={mutationBusy} onClick={onCancelLocal}>{t("setup.backGemini")}</button>}
+    </section>;
+  }
 
   if (mode === "share") return <QuickShareSetup state={state} onState={onState}
     onBack={() => chooseMode(null)} onComplete={() => onComplete?.()} />;

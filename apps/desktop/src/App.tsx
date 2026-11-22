@@ -138,8 +138,8 @@ function DesktopApp() {
             className="app-error"
           />
         )}
-        {navigation !== "settings" && <ComputerPermissions welcome />}
-        {navigation === "home" && <UpdateBanner updates={updates} />}
+        {navigation !== "settings" && !needsSetup && <ComputerPermissions welcome />}
+        {navigation === "home" && !needsSetup && <UpdateBanner updates={updates} />}
         {navigation === "home" && (state.configuration_issue || (!needsSetup && !completionEnvironment && (state.topology || state.runtime_error))) && <ReadinessBanner state={state} onState={commitState} onDiagnostics={() => openSettings("diagnostics")} onRuntime={() => openSettings("runtime")} onConnection={() => setNavigation("connection")} onActivity={() => setNavigation("activity")} onProjects={() => setNavigation("projects")} onSetup={openSetup} onRefresh={() => void refresh()} onProviders={kind => { setExtensionTab(kind === "mcp" ? "mcpProviders" : "codingAgents"); setNavigation("extensions"); }} />}
         {navigation === "home" && !state.configuration_issue && (!needsSetup && completionEnvironment !== null && completionEnvironment === (state.environment_setup?.environment_id ?? state.persistent_environment) && state.topology?.experience === "full" ? (
           <FirstRunCompletion onComplete={() => setCompletionEnvironment(null)}
@@ -153,7 +153,7 @@ function DesktopApp() {
             chooseModeFirst={showSetup}
             onComplete={next => {
               closeSetup();
-              setCompletionEnvironment(!setupOrigin || setupOrigin === "home" ? next?.environment_setup?.environment_id ?? next?.persistent_environment ?? null : null);
+              setCompletionEnvironment(next?.readiness.runtime_ready && (!setupOrigin || setupOrigin === "home") ? next?.environment_setup?.environment_id ?? next?.persistent_environment ?? null : null);
             }}
           />
         ) : (

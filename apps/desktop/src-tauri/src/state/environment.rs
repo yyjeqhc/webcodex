@@ -1451,17 +1451,31 @@ impl DesktopCore {
         }
         self.snapshot.topology = self.config.topology.clone();
         self.snapshot.project = project;
+        let service_running = |component: &str| {
+            observation.local.as_ref()?.components.iter()
+                .find(|row| row.component == component)?.service.as_ref()
+                .filter(|service| service.ownership == webcodex_environment::service::Ownership::Owned)?
+                .running
+        };
         let server = if observation.server_reachable && observation.authenticated {
             ServerReadiness::Ready
         } else if observation.server_reachable {
             ServerReadiness::Error
+        } else if service_running("server") == Some(false) {
+            ServerReadiness::Stopped
         } else {
             ServerReadiness::Unknown
         };
-        let runner = match observation.runner_online {
-            Some(true) => RunnerReadiness::Ready,
-            Some(false) => RunnerReadiness::Connecting,
-            None => RunnerReadiness::Stopped,
+        let runner = if !local_runner || service_running("runner") == Some(false) {
+            RunnerReadiness::Stopped
+        } else if !observation.authenticated {
+            RunnerReadiness::Unknown
+        } else {
+            match observation.runner_online {
+                Some(true) => RunnerReadiness::Ready,
+                Some(false) => RunnerReadiness::Connecting,
+                None => RunnerReadiness::Unknown,
+            }
         };
         let project_readiness = if self.config.project.is_none() {
             ProjectReadiness::None

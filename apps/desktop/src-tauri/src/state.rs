@@ -96,6 +96,7 @@ pub struct AppState {
     supervisor: SharedSupervisor,
     activity: ActivityLog,
     operations: OperationController,
+    refresh_lock: tokio::sync::Mutex<()>,
     shutdown_signal: CancellationSignal,
     shutdown_started: AtomicBool,
     shutdown_complete: CancellationSignal,

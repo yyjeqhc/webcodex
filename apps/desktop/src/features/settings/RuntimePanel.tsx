@@ -6,9 +6,9 @@ import type { DesktopError, DesktopState } from "../../models/topology";
 import type { BinaryProbe, RuntimeCandidate, RuntimeSettings, RuntimeSource, RuntimeSwitchResult } from "../../models/runtime-shell";
 import { useShellText } from "../../i18n/runtime-shell";
 import { useProduct } from "../../i18n/product";
-import { useLocale } from "../../i18n/locale";
-import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
+import { normalizeDesktopError } from "../../i18n/presentation";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 
 type RuntimePanelProps = { state: DesktopState; onState: (state: DesktopState) => void; onActivity?: () => void; onUpdates?: () => void };
 export function RuntimePanel(props: RuntimePanelProps) {
@@ -16,7 +16,7 @@ export function RuntimePanel(props: RuntimePanelProps) {
 }
 
 function RuntimePanelContent({ state, onState, onActivity, onUpdates }: RuntimePanelProps) {
-  const s = useShellText(); const p = useProduct(); const { t } = useLocale();
+  const s = useShellText(); const p = useProduct();
   const identity = desktopIdentity(state);
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [busy, setBusy] = useState(false);
@@ -101,8 +101,15 @@ function RuntimePanelContent({ state, onState, onActivity, onUpdates }: RuntimeP
   };
   const resultTitle = result?.outcome === "activated" ? "Runtime activated" : result?.outcome === "selected" ? "Runtime selected; start it when ready" : result?.outcome === "rolled_back" ? "Previous Runtime restored" : "Runtime recovery required";
   const switchHelp = settings?.switch_unavailable_reason === "persistent_runtime_upgrade_required" ? "runtimeManagedHelp" : settings?.switch_unavailable_reason === "quick_share_must_be_stopped" ? "runtimeQuickShareHelp" : settings?.switch_unavailable_reason === "configuration_migration_failed" ? "runtimeConfigurationHelp" : "runtimeOwnershipHelp";
-  const presentation = error && desktopErrorPresentation(error, t);
-  const errorCard = presentation && <div role="alert" className="error-card"><strong>{presentation.title}</strong><span>{presentation.action}</span><details><summary>{p("details")}</summary><code>{error?.code}</code></details></div>;
+  const errorCard = error && (
+    <DesktopErrorAlert
+      error={error}
+      disabled={disabled}
+      actions={{
+        onOpenActivity: onActivity,
+      }}
+    />
+  );
   return <div className="runtime-settings-panel" data-webcodex-panel="runtime">
     <h2>{s("Current Runtime")}</h2>
     <p className="field-help">{p(settings?.source.kind === "custom" ? "runtimeFolderHelp" : "runtimeSimpleHelp")}</p>

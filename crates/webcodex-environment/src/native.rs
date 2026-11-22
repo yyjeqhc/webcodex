@@ -799,6 +799,7 @@ impl NativeEnvironment {
         token: Option<&str>,
         body: Value,
     ) -> SetupResultValue<Value> {
+        let stage = route_stage(route);
         let mut request = self
             .client_for_server(server)
             .post(format!("{server}{route}"))
@@ -811,56 +812,95 @@ impl NativeEnvironment {
                 "server_unreachable",
                 "The Server request did not produce a verified response",
             )
+            .with_component("server")
+            .with_stage(stage)
         })?;
         let status = response.status();
         if !status.is_success() {
-            let mut error = match status.as_u16() {
-                401 => diagnostic(
+            let status_code = status.as_u16();
+            let (code, message, recovery, component) = match status_code {
+                401 => (
                     "authentication_required",
                     "The user credential was not accepted",
+                    "Restore or repair the saved user credential, then retry",
+                    "auth",
                 ),
-                403 => diagnostic(
+                403 => (
                     "permission_denied",
                     "The authenticated user is not authorized for this operation",
+                    "Verify the account permissions on the Server before retrying",
+                    "auth",
                 ),
-                409 => diagnostic(
+                409 => (
                     "server_conflict",
                     "The Server reports an existing or conflicting resource",
+                    "Inspect the existing Server state before retrying",
+                    "server",
                 ),
-                _ => diagnostic("server_request_failed", "The Server rejected the operation"),
+                400 => (
+                    "server_request_failed",
+                    "The Server rejected the request parameters",
+                    "Check the setup inputs and account or project configuration for this stage, then retry",
+                    "server",
+                ),
+                503 => (
+                    "server_request_failed",
+                    "The Server is temporarily unavailable or still starting",
+                    "Wait a moment for the Server to finish starting, then check Server status",
+                    "server",
+                ),
+                500..=599 => (
+                    "server_request_failed",
+                    "The Server reported an internal failure",
+                    "Inspect Server diagnostics and Activity before retrying",
+                    "server",
+                ),
+                _ => (
+                    "server_request_failed",
+                    "The Server rejected the operation",
+                    "Inspect environment status and resume the saved setup after correcting the reported condition",
+                    "server",
+                ),
             };
             // Status is bounded protocol metadata. Never expose the response
             // body, request URL, credentials or user-controlled error text.
-            error
-                .message
-                .push_str(&format!(" (HTTP {})", status.as_u16()));
+            let error =
+                SetupDiagnostic::new(code, &format!("{message} (HTTP {status_code})"), recovery)
+                    .with_component(component)
+                    .with_stage(stage)
+                    .with_http_status(status_code);
             return Err(error);
         }
         if response
             .content_length()
             .is_some_and(|n| n > HTTP_LIMIT as u64)
         {
-            return Err(diagnostic(
-                "response_limit",
-                "The Server response exceeded its bound",
-            ));
+            return Err(
+                diagnostic("response_limit", "The Server response exceeded its bound")
+                    .with_component("server")
+                    .with_stage(stage),
+            );
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| diagnostic("response_uncertain", "The Server response was interrupted"))?
-        {
+        while let Some(chunk) = response.chunk().await.map_err(|_| {
+            diagnostic("response_uncertain", "The Server response was interrupted")
+                .with_component("server")
+                .with_stage(stage)
+        })? {
             if bytes.len().saturating_add(chunk.len()) > HTTP_LIMIT {
-                return Err(diagnostic(
-                    "response_limit",
-                    "The Server response exceeded its bound",
-                ));
+                return Err(
+                    diagnostic("response_limit", "The Server response exceeded its bound")
+                        .with_component("server")
+                        .with_stage(stage),
+                );
             }
             bytes.extend_from_slice(&chunk);
         }
-        serde_json::from_slice(&bytes)
-            .map_err(|_| diagnostic("response_invalid", "The Server response was invalid"))
+        serde_json::from_slice(&bytes).map_err(|_| {
+            diagnostic("response_invalid", "The Server response was invalid")
+                .with_component("server")
+                .with_stage(stage)
+        })
     }
 
     async fn authenticated(
@@ -875,7 +915,9 @@ impl NativeEnvironment {
             return Err(diagnostic(
                 "user_credential_required",
                 "Use a user API credential for the Runtime Console",
-            ));
+            )
+            .with_component("auth")
+            .with_stage("user_authentication"));
         }
         let overview = self
             .post(
@@ -889,7 +931,9 @@ impl NativeEnvironment {
             return Err(diagnostic(
                 "server_identity_contract",
                 "The address did not return a WebCodex Runtime Console",
-            ));
+            )
+            .with_component("server")
+            .with_stage("user_authentication"));
         }
         Ok(overview)
     }
@@ -900,7 +944,11 @@ impl NativeEnvironment {
             .get(format!("{}/runtime", record.request.server_url))
             .send()
             .await
-            .map_err(|_| diagnostic("server_unreachable", "The Server address is not reachable"))?;
+            .map_err(|_| {
+                diagnostic("server_unreachable", "The Server address is not reachable")
+                    .with_component("server")
+                    .with_stage("server_reachability")
+            })?;
         if response.status().is_success()
             && response
                 .headers()
@@ -913,7 +961,10 @@ impl NativeEnvironment {
             Err(diagnostic(
                 "server_unreachable",
                 "The address did not return a healthy WebCodex Server",
-            ))
+            )
+            .with_component("server")
+            .with_stage("server_reachability")
+            .with_http_status(response.status().as_u16()))
         }
     }
 
@@ -930,7 +981,9 @@ impl NativeEnvironment {
                 return Err(diagnostic(
                     "server_not_ready",
                     "Server startup did not become healthy before its deadline",
-                ));
+                )
+                .with_component("server")
+                .with_stage("server_reachability"));
             }
             tokio::time::sleep_until(
                 (tokio::time::Instant::now() + Duration::from_millis(250)).min(deadline),
@@ -966,6 +1019,8 @@ impl NativeEnvironment {
                 "user_identity_conflict",
                 "The saved local username is invalid; resume the original setup to check recovery",
             )
+            .with_component("auth")
+            .with_stage("user_create")
         })?;
         match self
             .post(
@@ -984,12 +1039,14 @@ impl NativeEnvironment {
                 return Err(diagnostic(
                     "response_invalid",
                     "Server did not confirm the created user identity",
-                ))
+                )
+                .with_component("server")
+                .with_stage("user_create"))
             }
             Err(error) if error.code == "server_conflict" => {}
             Err(mut error) => {
                 error.message = format!("Local user creation failed: {}", error.message);
-                return Err(error);
+                return Err(error.with_stage("user_create"));
             }
         }
         if !path.exists() {
@@ -2229,6 +2286,21 @@ pub fn service_spec(
     })
 }
 
+fn route_stage(route: &str) -> &'static str {
+    match route {
+        "/api/users/create" => "user_create",
+        "/api/tokens/register_hash" => "user_token_registration",
+        "/api/agent-tokens/register_hash" => "runner_token_registration",
+        "/api/runtime-console/overview" => "user_authentication",
+        "/api/runtime-console/runner" => "runner_observation",
+        "/api/runtime-console/projects" => "project_inventory",
+        "/api/pairing/enroll" => "runner_enrollment",
+        "/api/pairing/create" => "device_invitation",
+        "/api/tools/call" => "project_operation",
+        _ => "server_request",
+    }
+}
+
 fn diagnostic(code: &str, message: &str) -> SetupDiagnostic {
     SetupDiagnostic::new(code, message, "Inspect environment status and resume the saved setup after correcting the reported condition")
 }
@@ -2238,6 +2310,7 @@ pub(crate) fn service_error(error: service::ServiceError) -> SetupDiagnostic {
         &error.message,
         error.recovery_hint,
     )
+    .with_component("service")
 }
 fn response_string(value: &Value, key: &str) -> SetupResultValue<String> {
     value

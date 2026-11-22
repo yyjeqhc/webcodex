@@ -313,6 +313,13 @@ fn with_command_diagnostics(
         );
     }
     error.details = Some(serde_json::Value::Object(details));
+    error = error.with_stage(context.phase);
+    if let Some(exit_code) = exit_code {
+        error = error.with_exit_code(exit_code);
+    }
+    if let Some(reason_code) = reason_code {
+        error = error.with_reason_code(reason_code);
+    }
     error
 }
 

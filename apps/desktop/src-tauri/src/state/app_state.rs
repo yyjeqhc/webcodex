@@ -32,6 +32,7 @@ impl AppState {
             supervisor,
             connections,
             operations: OperationController::new(activity.clone()),
+            refresh_lock: tokio::sync::Mutex::new(()),
             activity,
             shutdown_signal: CancellationSignal::new(),
             shutdown_started: AtomicBool::new(false),
@@ -141,12 +142,271 @@ impl AppState {
     }
 
     pub async fn refresh_runtime_status(&self) -> DesktopResult<DesktopStateSnapshot> {
-        let (operation, cancellation, mut core, baseline) = self
-            .begin_operation(DesktopOperationKind::RuntimeRefresh, true)
-            .await?;
-        let result = core.refresh_runtime_status(&cancellation).await;
-        self.finish_operation(operation, cancellation, core, baseline, result)
-            .await
+        if self.shutdown_signal.is_cancelled() {
+            return Err(cancelled_error());
+        }
+        if let Some(current) = self.operations.current() {
+            return Err(DesktopError::new(
+                "desktop_operation_busy",
+                "Another Desktop operation is still running",
+                "Wait for the current operation to finish or stop it before starting another one.",
+            )
+            .with_details(serde_json::json!({
+                "operation_id": current.id,
+                "operation_kind": current.kind.as_str(),
+            }))
+            .with_operation_context(Some(&current.id), None, None, None));
+        }
+        if self.get_state().configuration_issue.is_some() {
+            return Err(DesktopError::new(
+                "configuration_migration_failed",
+                "Configuration could not be migrated",
+                "Open Diagnostics or explicitly restore the previous known-good configuration.",
+            ));
+        }
+
+        let before_generation = self.get_state().state_generation;
+        let _refresh_guard = self.refresh_lock.lock().await;
+        if self.shutdown_signal.is_cancelled() {
+            return Err(cancelled_error());
+        }
+        if let Some(current) = self.operations.current() {
+            return Err(DesktopError::new(
+                "desktop_operation_busy",
+                "Another Desktop operation is still running",
+                "Wait for the current operation to finish or stop it before starting another one.",
+            )
+            .with_details(serde_json::json!({
+                "operation_id": current.id,
+                "operation_kind": current.kind.as_str(),
+            }))
+            .with_operation_context(Some(&current.id), None, None, None));
+        }
+        // Coalesce overlapping background refreshes: if another refresh already
+        // published a fresher snapshot while we waited, return it directly.
+        if self.get_state().state_generation != before_generation {
+            return Ok(self.get_state());
+        }
+
+        let cancellation =
+            CancellationContext::new(CancellationSignal::new(), self.shutdown_signal.clone());
+        let start_op_generation = self.operations.generation();
+
+        enum RefreshPlan {
+            Persistent {
+                environment_id: String,
+            },
+            QuickShare,
+            Unconfigured,
+            NonPersistent {
+                adapter: WebCodexAdapter,
+                identity: RunnerRuntimeIdentity,
+                server_env_file: Option<PathBuf>,
+                project_identity: Option<ProjectRuntimeIdentity>,
+                has_project: bool,
+                autostart: bool,
+            },
+        }
+
+        let plan = {
+            let slot = self.core.lock().await;
+            let Some(core) = slot.as_ref() else {
+                return Err(DesktopError::new(
+                    "desktop_operation_busy",
+                    "Desktop mutation state is already in use",
+                    "Wait for the current operation to finish.",
+                ));
+            };
+            if let Some(environment_id) = core.config.persistent_environment.clone() {
+                RefreshPlan::Persistent { environment_id }
+            } else if core.snapshot.quick_share.is_some() {
+                RefreshPlan::QuickShare
+            } else if let Some(identity) = runner_identity_from_config(&core.config) {
+                RefreshPlan::NonPersistent {
+                    adapter: core.adapter.clone(),
+                    identity,
+                    server_env_file: core
+                        .config
+                        .runtime
+                        .as_ref()
+                        .and_then(|runtime| runtime.server_env_file.clone()),
+                    project_identity: identity_from_config(&core.config),
+                    has_project: core.config.project.is_some(),
+                    autostart: runtime_autostart(&core.config),
+                }
+            } else {
+                RefreshPlan::Unconfigured
+            }
+        };
+
+        match plan {
+            RefreshPlan::QuickShare | RefreshPlan::Unconfigured => {
+                let mut slot = self.core.lock().await;
+                let Some(core) = slot.as_mut() else {
+                    return Ok(self.get_state());
+                };
+                if self.operations.current().is_some()
+                    || self.operations.generation() != start_op_generation
+                {
+                    return Ok(self.get_state());
+                }
+                core.refresh_runtime_status(&cancellation).await?;
+                if operation_completion::reconcile_runtime_errors_after_observation(
+                    &mut core.snapshot,
+                ) {
+                    core.publish_snapshot();
+                }
+                Ok(self.get_state())
+            }
+            RefreshPlan::Persistent { environment_id } => {
+                let store = environment::store()?;
+                let mut native = webcodex_environment::NativeEnvironment::new()
+                    .map_err(environment::desktop_error)?;
+                let observed = native.status(&store).await.map_err(|error| {
+                    environment::desktop_error(error).with_operation_context(
+                        None,
+                        Some(before_generation),
+                        Some(&environment_id),
+                        Some(self.activity.latest_sequence()),
+                    )
+                })?;
+                cancellation.check()?;
+                let mut slot = self.core.lock().await;
+                let Some(core) = slot.as_mut() else {
+                    return Ok(self.get_state());
+                };
+                if self.operations.current().is_some()
+                    || self.operations.generation() != start_op_generation
+                    || core.config.persistent_environment.as_deref()
+                        != Some(environment_id.as_str())
+                {
+                    return Ok(self.get_state());
+                }
+                core.project_environment_result(&store, observed).await?;
+                if operation_completion::reconcile_runtime_errors_after_observation(
+                    &mut core.snapshot,
+                ) {
+                    core.publish_snapshot();
+                }
+                Ok(self.get_state())
+            }
+            RefreshPlan::NonPersistent {
+                mut adapter,
+                identity,
+                server_env_file,
+                project_identity,
+                has_project,
+                autostart,
+            } => {
+                adapter.ensure_binaries(&cancellation).await.ok();
+                cancellation.check()?;
+                let resolved_binaries = adapter.binaries().ok().cloned();
+                let server = match adapter
+                    .server_status(
+                        Some(&identity.server_url),
+                        server_env_file.as_deref(),
+                        Some(&identity.user_token_file),
+                        &cancellation,
+                    )
+                    .await
+                {
+                    Ok(status) if status.http_reachable => ServerReadiness::Ready,
+                    Ok(_) => ServerReadiness::Error,
+                    Err(_) => ServerReadiness::Unknown,
+                };
+                cancellation.check()?;
+                let (readiness, chatgpt_activity) = if !autostart
+                    && server != ServerReadiness::Ready
+                {
+                    (
+                        aggregate_readiness(
+                            ServerReadiness::Stopped,
+                            RunnerReadiness::Stopped,
+                            ExposureReadiness::Disabled,
+                            ProjectReadiness::Configured,
+                        ),
+                        None,
+                    )
+                } else {
+                    let runner = match adapter.runner_ready(&identity, &cancellation).await {
+                        Ok(true) => RunnerReadiness::Ready,
+                        Ok(false) => RunnerReadiness::Connecting,
+                        Err(_) => RunnerReadiness::Unknown,
+                    };
+                    cancellation.check()?;
+                    let project = if let Some(project_identity) = project_identity.as_ref() {
+                        match adapter.project_ready(project_identity, &cancellation).await {
+                            Ok(true) => ProjectReadiness::Ready,
+                            Ok(false) => ProjectReadiness::ReloadRequired,
+                            Err(_) => ProjectReadiness::Unknown,
+                        }
+                    } else if has_project {
+                        ProjectReadiness::Configured
+                    } else {
+                        ProjectReadiness::None
+                    };
+                    cancellation.check()?;
+                    let chatgpt_activity = if server == ServerReadiness::Ready
+                        && project == ProjectReadiness::Ready
+                    {
+                        match adapter
+                            .chatgpt_activity(
+                                project_identity.as_ref().expect("ready project"),
+                                &cancellation,
+                            )
+                            .await
+                        {
+                            Ok(last_meaningful_activity_at_ms) => Some(ChatGptActivitySnapshot {
+                                observed: last_meaningful_activity_at_ms.is_some(),
+                                last_meaningful_activity_at_ms,
+                            }),
+                            Err(_) => None,
+                        }
+                    } else {
+                        None
+                    };
+                    cancellation.check()?;
+                    (
+                        aggregate_readiness(server, runner, ExposureReadiness::Disabled, project),
+                        chatgpt_activity,
+                    )
+                };
+
+                let mut slot = self.core.lock().await;
+                let Some(core) = slot.as_mut() else {
+                    return Ok(self.get_state());
+                };
+                if self.operations.current().is_some()
+                    || self.operations.generation() != start_op_generation
+                    || core.config.persistent_environment.is_some()
+                    || runner_identity_from_config(&core.config).as_ref() != Some(&identity)
+                {
+                    return Ok(self.get_state());
+                }
+                if let Some(binaries) = resolved_binaries {
+                    core.snapshot.binaries = Some(binaries.info());
+                }
+                core.snapshot.chatgpt_activity = chatgpt_activity;
+                let exposure = if !autostart && readiness.server == ServerReadiness::Stopped {
+                    ExposureReadiness::Disabled
+                } else {
+                    exposure_readiness(core.config.topology.as_ref())
+                };
+                core.snapshot.readiness = aggregate_readiness(
+                    readiness.server,
+                    readiness.runner,
+                    exposure,
+                    readiness.project,
+                );
+                core.snapshot.topology = core.config.topology.clone();
+                core.snapshot.project = project_snapshot(&core.config);
+                operation_completion::reconcile_runtime_errors_after_observation(
+                    &mut core.snapshot,
+                );
+                core.publish_snapshot();
+                Ok(self.get_state())
+            }
+        }
     }
 
     pub async fn observe_chatgpt_activity(&self) -> DesktopResult<DesktopStateSnapshot> {
@@ -403,11 +663,9 @@ impl AppState {
             // observer can arrive concurrently. Neither may announce exit
             // while the first owner is still draining the child leases.
             if let Some(deadline) = deadline {
-                let _ = tokio::time::timeout_at(
-                    deadline.instant(),
-                    self.shutdown_complete.cancelled(),
-                )
-                .await;
+                let _ =
+                    tokio::time::timeout_at(deadline.instant(), self.shutdown_complete.cancelled())
+                        .await;
             } else {
                 self.shutdown_complete.cancelled().await;
             }
@@ -491,6 +749,15 @@ impl AppState {
     ) -> DesktopResult<DesktopStateSnapshot> {
         if result.is_ok() && cancellation.is_cancelled() {
             result = Err(cancelled_error());
+        }
+        if let Err(error) = result.as_mut() {
+            let enriched = error.clone().with_operation_context(
+                Some(&operation.id),
+                Some(core.snapshot.state_generation),
+                core.config.persistent_environment.as_deref(),
+                Some(self.activity.latest_sequence()),
+            );
+            *error = enriched;
         }
         let completion =
             operation_completion::OperationCompletion::new(operation.kind, result.as_ref().err());

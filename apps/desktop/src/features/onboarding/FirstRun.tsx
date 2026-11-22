@@ -6,10 +6,11 @@ import { useServiceScopeText } from "../../i18n/service-scope";
 import { FolderOpen, Globe2, Share2 } from "lucide-react";
 import { desktopApi } from "../../lib/desktop-api";
 import { useLocale, type MessageKey } from "../../i18n/locale";
-import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
+import { normalizeDesktopError } from "../../i18n/presentation";
 import type { DesktopError, DesktopState, SetupProgressStep } from "../../models/topology";
 import { PowerShellInstallGuidance } from "../settings/PowerShellInstallGuidance";
 import { QuickShareSetup } from "./QuickShareSetup";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 
 type SetupMode = "create" | "join" | "share";
 const setupProgressLabels: Record<SetupProgressStep, MessageKey> = {
@@ -196,7 +197,6 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
     {state.persistent_environment && <p className="field-help">{t("setup.savedEnvironment")}</p>}
   </section>;
 
-  const presentation = error ? desktopErrorPresentation(error, t) : null;
   return <>
     <form className="setup-shell" aria-labelledby="setup-title" aria-busy={mutationBusy}
       data-webcodex-page="setup" onSubmit={event => { event.preventDefault(); void run(); }}>
@@ -272,12 +272,24 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
             </details>
           </div>
         : <p className="field-help">{t("setup.serviceConsent")}</p>)}
-      {error && <div className="error-card" role="alert" id="setup-error">
-        <strong>{presentation?.title}</strong><span>{presentation?.action}</span>
-        <details><summary>{t("common.details")}</summary><code>{error.code}</code><p>{error.message}</p></details>
-        {error.code === "pairing_recovery_required" && <button type="button" className="secondary-button" disabled={mutationBusy}
-          onClick={() => { setReplacePairingCode(true); setError(null); }}>{t("setup.useNewPairingCode")}</button>}
-      </div>}
+      {error && (
+        <DesktopErrorAlert
+          id="setup-error"
+          error={error}
+          showSafeMessage
+          disabled={mutationBusy}
+          extraActions={error.code === "pairing_recovery_required" ? (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={mutationBusy}
+              onClick={() => { setReplacePairingCode(true); setError(null); }}
+            >
+              {t("setup.useNewPairingCode")}
+            </button>
+          ) : undefined}
+        />
+      )}
       {mutationBusy && state.setup_progress && <div className="field-help" role="status" aria-live="polite">
         {t("setup.progressCurrent", { step: t(setupProgressLabels[state.setup_progress.step]) })}
       </div>}

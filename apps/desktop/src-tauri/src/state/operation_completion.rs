@@ -3,10 +3,10 @@
 //! their durable restoration. No callback receives DesktopCore or its providers.
 
 use super::ProcessCleanup;
-use crate::error::DesktopError;
+use crate::error::{DesktopError, ErrorComponent};
 use crate::models::{
     aggregate_readiness, DesktopOperationKind, DesktopStateSnapshot, ExposureReadiness,
-    ProjectReadiness, RunnerReadiness, ServerReadiness,
+    ProjectReadiness, ReadinessSnapshot, RunnerReadiness, ServerReadiness,
 };
 use crate::runtime_selection::RuntimeSwitchResult;
 
@@ -103,27 +103,26 @@ impl<'a> OperationCompletion<'a> {
         snapshot: &mut DesktopStateSnapshot,
         last_switch: Option<&RuntimeSwitchResult>,
     ) -> bool {
-        // A successful RuntimeRefresh is fresh native evidence that the Runner
-        // recovered. Invalidate only the obsolete Runner-offline startup error;
-        // other errors, failed observations and stale readiness must survive.
-        if self.kind == DesktopOperationKind::RuntimeRefresh
-            && self.error.is_none()
-            && snapshot.readiness.runner == RunnerReadiness::Ready
-            && snapshot
-                .runtime_error
-                .as_ref()
-                .is_some_and(|error| error.code == "runner_offline")
-        {
-            snapshot.runtime_error = None;
-            return true;
+        // A successful RuntimeRefresh is fresh native evidence that one or more
+        // components recovered. Clear only resolved transient component errors;
+        // unrelated components, uncertain outcomes, and ownership conflicts survive.
+        if self.kind == DesktopOperationKind::RuntimeRefresh && self.error.is_none() {
+            return reconcile_runtime_errors_after_observation(snapshot);
         }
         match self.policy.runtime_error {
             RuntimeErrorPolicy::Unchanged => return false,
             RuntimeErrorPolicy::ReflectResult | RuntimeErrorPolicy::PreserveSwitchRecovery => {}
         }
         if let Some(error) = self.error {
-            snapshot.runtime_error =
-                (error.code != "desktop_operation_cancelled").then(|| error.clone());
+            if error.code == "desktop_operation_cancelled" {
+                snapshot.runtime_error = None;
+                snapshot.component_errors.clear();
+            } else {
+                snapshot
+                    .component_errors
+                    .insert(error.component(), error.clone());
+                snapshot.runtime_error = Some(error.clone());
+            }
         } else {
             let preserve = matches!(
                 self.policy.runtime_error,
@@ -132,11 +131,91 @@ impl<'a> OperationCompletion<'a> {
                 matches!(switch.outcome.as_str(), "rolled_back" | "recovery_required")
             });
             if !preserve {
-                snapshot.runtime_error = None;
+                match self.kind {
+                    DesktopOperationKind::RunnerRestart => {
+                        snapshot.component_errors.remove(&ErrorComponent::Runner);
+                        snapshot.component_errors.remove(&ErrorComponent::Service);
+                    }
+                    _ => {
+                        snapshot.component_errors.clear();
+                    }
+                }
+                snapshot.runtime_error = primary_component_error(snapshot);
             }
         }
         true
     }
+}
+
+fn is_auto_clearable_component_error(error: &DesktopError, readiness: &ReadinessSnapshot) -> bool {
+    if error
+        .diagnostic_ref()
+        .is_some_and(|diagnostic| !diagnostic.retry_allowed)
+    {
+        return false;
+    }
+    match error.code.as_str() {
+        "runner_offline" | "runner_not_ready" | "runner_start_failed" | "runner_exited" => {
+            readiness.runner == RunnerReadiness::Ready
+        }
+        "server_unreachable"
+        | "server_not_ready"
+        | "server_start_failed"
+        | "server_exited"
+        | "workspace_server_unreachable" => readiness.server == ServerReadiness::Ready,
+        "project_not_loaded" => readiness.project == ProjectReadiness::Ready,
+        "runtime_not_ready" => readiness.runtime_ready,
+        _ => false,
+    }
+}
+
+fn primary_component_error(snapshot: &DesktopStateSnapshot) -> Option<DesktopError> {
+    const PRIORITY: [ErrorComponent; 12] = [
+        ErrorComponent::Config,
+        ErrorComponent::Migration,
+        ErrorComponent::Runtime,
+        ErrorComponent::Service,
+        ErrorComponent::Server,
+        ErrorComponent::Auth,
+        ErrorComponent::Runner,
+        ErrorComponent::Project,
+        ErrorComponent::Tunnel,
+        ErrorComponent::Environment,
+        ErrorComponent::Desktop,
+        ErrorComponent::Unknown,
+    ];
+    for component in PRIORITY {
+        if let Some(error) = snapshot.component_errors.get(&component) {
+            return Some(error.clone());
+        }
+    }
+    None
+}
+
+pub(super) fn reconcile_runtime_errors_after_observation(
+    snapshot: &mut DesktopStateSnapshot,
+) -> bool {
+    let mut changed = false;
+    let readiness = snapshot.readiness.clone();
+    let stale_components: Vec<ErrorComponent> = snapshot
+        .component_errors
+        .iter()
+        .filter(|(_, error)| is_auto_clearable_component_error(error, &readiness))
+        .map(|(component, _)| *component)
+        .collect();
+    for component in stale_components {
+        snapshot.component_errors.remove(&component);
+        changed = true;
+    }
+    if snapshot
+        .runtime_error
+        .as_ref()
+        .is_some_and(|error| is_auto_clearable_component_error(error, &readiness))
+    {
+        snapshot.runtime_error = primary_component_error(snapshot);
+        changed = true;
+    }
+    changed
 }
 
 pub(super) fn terminalize_failed_start(snapshot: &mut DesktopStateSnapshot, cancelled: bool) {

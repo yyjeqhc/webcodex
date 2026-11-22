@@ -802,12 +802,18 @@ fn persistent_runtime_projection(
         webcodex_environment::TunnelRuntimeObservation,
     >,
 ) -> crate::connections::ConnectionRuntimeSnapshot {
-    let Ok(status) = observation else {
-        return crate::connections::ConnectionRuntimeSnapshot {
-            lifecycle: ConnectionLifecycle::Error,
-            last_error: Some(ConnectionError::StartFailed),
-            ..Default::default()
-        };
+    let status = match observation {
+        Ok(status) => status,
+        Err(error) => {
+            return crate::connections::ConnectionRuntimeSnapshot {
+                lifecycle: ConnectionLifecycle::Error,
+                last_error: Some(ConnectionError::StartFailed),
+                failure_stage: error.stage.or_else(|| Some("tunnel_status".to_string())),
+                reason_code: crate::error::sanitize_safe_identifier(&error.code)
+                    .or_else(|| Some("tunnel_status_unavailable".to_string())),
+                ..Default::default()
+            };
+        }
     };
     if status.profile_id != profile.profile_id
         || status.tunnel_id != profile.tunnel_id
@@ -817,6 +823,8 @@ fn persistent_runtime_projection(
         return crate::connections::ConnectionRuntimeSnapshot {
             lifecycle: ConnectionLifecycle::Error,
             last_error: Some(ConnectionError::StartFailed),
+            failure_stage: Some("tunnel_identity_check".to_string()),
+            reason_code: Some("tunnel_identity_mismatch".to_string()),
             ..Default::default()
         };
     }
@@ -825,9 +833,15 @@ fn persistent_runtime_projection(
         webcodex_environment::service::Ownership::Foreign
             | webcodex_environment::service::Ownership::Unknown
     ) {
+        let reason = match status.service_status.ownership {
+            webcodex_environment::service::Ownership::Foreign => "service_foreignservice",
+            _ => "service_ownershipunknown",
+        };
         return crate::connections::ConnectionRuntimeSnapshot {
             lifecycle: ConnectionLifecycle::Error,
             last_error: Some(ConnectionError::StartFailed),
+            failure_stage: Some("tunnel_service_ownership".to_string()),
+            reason_code: Some(reason.to_string()),
             ..Default::default()
         };
     }
@@ -841,14 +855,22 @@ fn persistent_runtime_projection(
     } else {
         ConnectionLifecycle::Stopped
     };
-    let last_error = if process_started && !ready {
-        Some(if !status.local_mcp_ready {
-            ConnectionError::LocalMcpUnavailable
+    let (last_error, failure_stage, reason_code) = if process_started && !ready {
+        if !status.local_mcp_ready {
+            (
+                Some(ConnectionError::LocalMcpUnavailable),
+                Some("tunnel_readiness".to_string()),
+                Some("local_mcp_unavailable".to_string()),
+            )
         } else {
-            ConnectionError::TunnelUnavailable
-        })
+            (
+                Some(ConnectionError::TunnelUnavailable),
+                Some("tunnel_readiness".to_string()),
+                Some("tunnel_unavailable".to_string()),
+            )
+        }
     } else {
-        None
+        (None, None, None)
     };
     crate::connections::ConnectionRuntimeSnapshot {
         lifecycle,
@@ -866,6 +888,8 @@ fn persistent_runtime_projection(
         process_ready: ready,
         tunnel_ready: process_started.then_some(status.tunnel_ready),
         local_mcp_ready: process_started.then_some(status.local_mcp_ready),
+        failure_stage,
+        reason_code,
         ..Default::default()
     }
 }

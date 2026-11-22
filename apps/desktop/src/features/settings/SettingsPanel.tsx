@@ -6,7 +6,8 @@ import { desktopApi } from "../../lib/desktop-api";
 import { desktopIdentity, readDesktopObservation } from "../../lib/desktop-observation";
 import type { DesktopError, DesktopState, TunnelProxyMode } from "../../models/topology";
 import { LANGUAGES, useLocale } from "../../i18n/locale";
-import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
+import { normalizeDesktopError } from "../../i18n/presentation";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 import { useProduct } from "../../i18n/product";
 import type { RunnerSettings } from "../../models/topology";
 import { ComputerPermissions } from "./ComputerPermissions";
@@ -267,19 +268,12 @@ function SettingsView({
 }
 
 function SettingsError({ error, onRetry }: { error: DesktopError; onRetry?: () => void }) {
-  const { t } = useLocale();
   const p = useProduct();
-  const presentation = desktopErrorPresentation(error, t);
   return (
-    <div className="error-card" role="alert">
-      <strong>{presentation.title}</strong>
-      <span>{presentation.action}</span>
-      <details>
-        <summary>{t("common.details")}</summary>
-        <code>{error.code}</code>
-        <p>{error.message}</p>
-      </details>
-      {onRetry && <button type="button" className="secondary-button" onClick={onRetry}>{p("refresh")}</button>}
-    </div>
+    <DesktopErrorAlert
+      error={error}
+      showSafeMessage
+      extraActions={onRetry ? <button type="button" className="secondary-button" onClick={onRetry}>{p("refresh")}</button> : undefined}
+    />
   );
 }

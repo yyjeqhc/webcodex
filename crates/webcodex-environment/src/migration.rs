@@ -121,6 +121,8 @@ fn diagnostic(code: &str, message: &str) -> SetupDiagnostic {
         message,
         "Inspect both owners and resume the saved migration only after their state is known",
     )
+    .with_component("migration")
+    .with_stage("migration_handoff")
 }
 
 fn journal(store: &EnvironmentStore) -> SetupResultValue<Option<MigrationJournal>> {

@@ -3,10 +3,12 @@ import { PasswordInput, TextInput } from "@mantine/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { desktopApi } from "../../lib/desktop-api";
 import { normalizeDesktopError } from "../../i18n/presentation";
+import type { DesktopError } from "../../models/topology";
 import type { CloudflareConnectionRequest, CloudflareConnectionStatus, CloudflareOAuthHandoff, TunnelConnection } from "../../models/connections-tools";
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import { useProduct } from "../../i18n/product";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 
 // Matches webcodex_core::authority::profiles::LOCAL_USER.
 const DEFAULT_OAUTH_SCOPES = "runtime:read runner:manage session:collaborate project:read project:write job:run";
@@ -61,7 +63,7 @@ function OAuthHandoff({ profile, status, onClose }: { profile: TunnelConnection;
 export function CloudflareConnectionCard({ profile, canStart, busy, onEdit, onDelete, onRepair, onRestartServer }: { profile: TunnelConnection; canStart: boolean; busy: boolean; onEdit: () => void; onDelete: () => void; onRepair?: () => void; onRestartServer?: () => void }) {
   const c = useConnectionsTools(); const p = useProduct();
   const [status, setStatus] = useState<CloudflareConnectionStatus | null>(null);
-  const [failureCode, setFailureCode] = useState<string | null>(null); const [working, setWorking] = useState(false);
+  const [failure, setFailure] = useState<DesktopError | null>(null); const [working, setWorking] = useState(false);
   const [oauth, setOauth] = useState(false); const [copied, setCopied] = useState(false);
   const alive = useRef(true); const sequence = useRef(0); const inFlight = useRef(false);
   const current = useRef<CloudflareConnectionStatus | null>(null);
@@ -71,34 +73,34 @@ export function CloudflareConnectionCard({ profile, canStart, busy, onEdit, onDe
     inFlight.current = true; const attempt = ++sequence.current;
     try {
       const next = await desktopApi.cloudflareConnection({ action: "status", profile_id: profile.id });
-      if (alive.current && attempt === sequence.current) { current.current = next; setStatus(next); setFailureCode(null); }
-    } catch (error) { if (alive.current && attempt === sequence.current) { current.current = null; setStatus(null); setFailureCode(normalizeDesktopError(error).code); } }
+      if (alive.current && attempt === sequence.current) { current.current = next; setStatus(next); setFailure(null); }
+    } catch (error) { if (alive.current && attempt === sequence.current) { current.current = null; setStatus(null); setFailure(normalizeDesktopError(error)); } }
     finally { inFlight.current = false; }
   }, [profile.id, profile.revision]);
-  useEffect(() => { alive.current = true; setStatus(null); setFailureCode(null); setOauth(false); setCopied(false); void refresh(); const timer = window.setInterval(() => void refresh(), 3000); return () => { alive.current = false; ++sequence.current; current.current = null; window.clearInterval(timer); }; }, [refresh]);
+  useEffect(() => { alive.current = true; setStatus(null); setFailure(null); setOauth(false); setCopied(false); void refresh(); const timer = window.setInterval(() => void refresh(), 3000); return () => { alive.current = false; ++sequence.current; current.current = null; window.clearInterval(timer); }; }, [refresh]);
   const run = async (action: "start" | "stop" | "restart") => {
     const observed = current.current;
     if (!observed || inFlight.current || busy) return;
-    inFlight.current = true; const attempt = ++sequence.current; setWorking(true); setFailureCode(null); setOauth(false); setCopied(false);
+    inFlight.current = true; const attempt = ++sequence.current; setWorking(true); setFailure(null); setOauth(false); setCopied(false);
     current.current = null; setStatus(null);
     const stop: CloudflareConnectionRequest = { action: "stop", profile_id: profile.id, server_instance_id: observed.server_instance_id, process_generation: observed.process_generation };
     try {
       if (action === "restart") await desktopApi.cloudflareConnection(stop);
       const next = await desktopApi.cloudflareConnection(action === "stop" ? stop : { action: "start", profile_id: profile.id, server_instance_id: observed.server_instance_id, expected_revision: profile.revision });
       if (alive.current && attempt === sequence.current) { current.current = next; setStatus(next); }
-    } catch (error) { if (alive.current && attempt === sequence.current) { current.current = null; setStatus(null); setFailureCode(normalizeDesktopError(error).code); } }
+    } catch (error) { if (alive.current && attempt === sequence.current) { current.current = null; setStatus(null); setFailure(normalizeDesktopError(error)); } }
     finally { inFlight.current = false; if (alive.current) setWorking(false); }
   };
   const active = status?.lifecycle === "running" || status?.lifecycle === "starting" || status?.lifecycle === "disconnected";
-  const failed = failureCode !== null;
-  const ingressNotApplied = failureCode === "cloudflare_ingress_not_applied";
+  const failed = failure !== null;
+  const ingressNotApplied = failure?.code === "cloudflare_ingress_not_applied";
   const disabled = busy || working;
   const unselectedService = profile.host_mode === "standalone" && !profile.autostart;
   const origin = status?.public_origin;
   const identityRepair = status?.reason_code === "cloudflare_identity_repair_required" || status?.reason_code === "cloudflare_owner_repair_required";
   return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
     <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{quick ? c("cloudflareQuick") : c("cloudflareNamed")} · {profile.host_mode === "embedded" ? c("serverOwned") : c("separateService")}</span></div><span role="status" className="connection-state">{status?.lifecycle === "running" ? p("running") : status?.lifecycle === "starting" ? p("starting") : status?.lifecycle === "stopped" ? p("stopped") : status?.lifecycle === "disconnected" ? c("cloudflareDisconnected") : status?.lifecycle === "error" ? c("connectionUnavailable") : c("awaitingStatus")}</span></header>
-    {origin && <div className="connection-id"><span>MCP</span><code>{origin}/mcp</code><button type="button" className="text-button" onClick={() => { void writeText(`${origin}/mcp`).then(() => setCopied(true)).catch(error => setFailureCode(normalizeDesktopError(error).code)); }}>{copied ? p("copied") : c("copyMcpAddress")}</button></div>}
+    {origin && <div className="connection-id"><span>MCP</span><code>{origin}/mcp</code><button type="button" className="text-button" onClick={() => { void writeText(`${origin}/mcp`).then(() => setCopied(true)).catch(error => setFailure(normalizeDesktopError(error))); }}>{copied ? p("copied") : c("copyMcpAddress")}</button></div>}
     {status && <p>{c("localForwardingTarget")}: <code>{status.local_target}</code></p>}
     {quick && <p className="workspace-notice">{c("quickReauthorize")}</p>}
     {unselectedService && <p className="workspace-notice">{c("cloudflareSelectService")}</p>}
@@ -106,7 +108,16 @@ export function CloudflareConnectionCard({ profile, canStart, busy, onEdit, onDe
     <p>{status?.observed_authorization ? c("oauthObserved") : c("oauthNotObserved")}</p>
     {profile.server_restart_required && <p role="status">{c("profileRestartHelp")}</p>}
     {ingressNotApplied && <div className="server-owned-apply shell-notice warning" role="status"><strong>{c("serverRestartRequired")}</strong><p>{c("serverRestartHelp")}</p>{onRestartServer && <button type="button" className="primary-button" disabled={disabled} onClick={onRestartServer}>{c("restartServer")}</button>}</div>}
-    {failed && !ingressNotApplied && <p role="alert">{c("operationFailed")}</p>}
+    {failure && !ingressNotApplied && (
+      <DesktopErrorAlert
+        error={failure}
+        disabled={disabled}
+        actions={{
+          onRefresh: () => void refresh(),
+          onCheckConnection: () => void refresh(),
+        }}
+      />
+    )}
     {identityRepair && <p role="alert">{c("cloudflareIdentityRepair")}</p>}
     {(failed || identityRepair) && onRepair && <button type="button" className="secondary-button" disabled={disabled} onClick={onRepair}>{c("openRuntimeSetup")}</button>}
     <div className="connection-actions">

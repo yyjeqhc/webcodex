@@ -219,6 +219,8 @@ export interface DesktopState {
   topology?: RuntimeTopology | null;
   readiness: ReadinessSnapshot;
   runtime_error?: DesktopError | null;
+  component_errors?: Partial<Record<ErrorComponent, DesktopError>>;
+  state_generation?: number;
   project?: ProjectSelection | null;
   binaries?: BinaryInfo | null;
   powershell_runtime?: PowerShellRuntimeSnapshot | null;
@@ -238,11 +240,72 @@ export interface DesktopState {
   tunnel_proxy: TunnelProxySnapshot;
 }
 
+export type ErrorComponent =
+  | "runtime"
+  | "server"
+  | "runner"
+  | "service"
+  | "tunnel"
+  | "auth"
+  | "project"
+  | "environment"
+  | "migration"
+  | "config"
+  | "desktop"
+  | "unknown";
+
+export type RecoveryKind =
+  | "auto_recovering"
+  | "user_action"
+  | "manual_check"
+  | "confirmation_required";
+
+export type SafeRecoveryAction =
+  | "wait_auto_recovery"
+  | "retry"
+  | "refresh_state"
+  | "start_runtime"
+  | "start_server"
+  | "restart_server"
+  | "start_runner"
+  | "restart_runner"
+  | "repair_runner_credential"
+  | "repair_user_credential"
+  | "check_connection"
+  | "open_network_settings"
+  | "open_runtime_settings"
+  | "open_diagnostics"
+  | "open_activity"
+  | "open_projects"
+  | "open_setup"
+  | "inspect_service_ownership"
+  | "resolve_migration"
+  | "observe_before_retry"
+  | "restore_configuration"
+  | "manage_providers"
+  | "none";
+
+export interface ErrorDiagnostic {
+  component: ErrorComponent;
+  stage?: string | null;
+  reason_code?: string | null;
+  recovery_kind: RecoveryKind;
+  safe_action: SafeRecoveryAction;
+  retry_allowed: boolean;
+  http_status?: number | null;
+  exit_code?: number | null;
+  operation_id?: string | null;
+  generation?: number | null;
+  resource_id?: string | null;
+  activity_sequence?: number | null;
+}
+
 export interface DesktopError {
   code: string;
   message: string;
   next_action: string;
   details?: unknown;
+  diagnostic?: ErrorDiagnostic | null;
 }
 
 export interface ActivityEntry {

@@ -43,6 +43,7 @@ pub struct RunnerConnectionObservation {
     pub online: bool,
 }
 
+#[derive(Clone)]
 pub struct WebCodexAdapter {
     binaries: Option<ResolvedBinaries>,
     bundled_runtime_dir: Option<PathBuf>,

@@ -205,3 +205,70 @@ fn successful_switch_preserves_durable_rollback_or_recovery_diagnostics_only() {
         );
     }
 }
+
+#[test]
+fn component_recovery_clears_only_recovered_component_and_preserves_other_or_uncertain_errors() {
+    use crate::error::ErrorComponent;
+
+    let runner_offline = DesktopError::new("runner_offline", "Runner offline", "Wait");
+    let server_unreachable =
+        DesktopError::new("server_unreachable", "Server offline", "Start Server");
+    let uncertain = DesktopError::new("operation_uncertain", "Outcome unknown", "Inspect state");
+
+    // 1. Runner recovery clears runner_offline while preserving an active Server error.
+    let mut snapshot = DesktopStateSnapshot::default();
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Server, server_unreachable.clone());
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Runner, runner_offline.clone());
+    snapshot.runtime_error = Some(runner_offline.clone());
+    snapshot.readiness = aggregate_readiness(
+        ServerReadiness::Error,
+        RunnerReadiness::Ready,
+        ExposureReadiness::Disabled,
+        ProjectReadiness::Configured,
+    );
+    let observation = OperationCompletion::new(DesktopOperationKind::RuntimeRefresh, None);
+    assert!(observation.apply_runtime_error(&mut snapshot, None));
+    assert!(!snapshot
+        .component_errors
+        .contains_key(&ErrorComponent::Runner));
+    assert_eq!(
+        snapshot.component_errors.get(&ErrorComponent::Server),
+        Some(&server_unreachable)
+    );
+    assert_eq!(snapshot.runtime_error.as_ref(), Some(&server_unreachable));
+
+    // 2. Server recovery clears server_unreachable without clearing a still-connecting Runner error.
+    snapshot
+        .component_errors
+        .insert(ErrorComponent::Runner, runner_offline.clone());
+    snapshot.readiness = aggregate_readiness(
+        ServerReadiness::Ready,
+        RunnerReadiness::Connecting,
+        ExposureReadiness::Disabled,
+        ProjectReadiness::Configured,
+    );
+    assert!(observation.apply_runtime_error(&mut snapshot, None));
+    assert!(!snapshot
+        .component_errors
+        .contains_key(&ErrorComponent::Server));
+    assert_eq!(snapshot.runtime_error.as_ref(), Some(&runner_offline));
+
+    // 3. Uncertain write outcome must NOT be auto-cleared merely because components observe Ready.
+    let mut uncertain_snapshot = DesktopStateSnapshot::default();
+    uncertain_snapshot
+        .component_errors
+        .insert(uncertain.component(), uncertain.clone());
+    uncertain_snapshot.runtime_error = Some(uncertain.clone());
+    uncertain_snapshot.readiness = aggregate_readiness(
+        ServerReadiness::Ready,
+        RunnerReadiness::Ready,
+        ExposureReadiness::Disabled,
+        ProjectReadiness::Ready,
+    );
+    assert!(!observation.apply_runtime_error(&mut uncertain_snapshot, None));
+    assert_eq!(uncertain_snapshot.runtime_error.as_ref(), Some(&uncertain));
+}

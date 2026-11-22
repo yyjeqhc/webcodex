@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "source_commit": "5c4acefe36947adcb6150fa28b816f9c6233bbb3",
+  "status": "intermediate_candidate_chatgpt_verified_gemini_forwarding_timeouts",
+  "macos": {
+    "package_sha256": "87e99be772fd824328c2ae2f39566b86ba5db032e03e58ca5fe72ae5adb7399e",
+    "native_launch": "Finder Applications > File > Open; then one native Start WebCodex",
+    "gui_pid": 15137,
+    "server_pid": 15535,
+    "runner_pid": 15549,
+    "server_instance_id": "928c86a9-bdcf-45f1-860e-d29741357e3b",
+    "runner_client_id": "device-47cbdf021f154085",
+    "runner_instance_id": "e95891a4-3418-4e7b-b012-0345d48dbb46",
+    "desktop_server_count": 1,
+    "desktop_runner_count": 1,
+    "registered_projects": 7,
+    "source_clean": true,
+    "alignment": "exact",
+    "control_runner_preserved": true
+  },
+  "chatgpt": {
+    "prompt_time_utc": "2026-11-22T16:10:15Z",
+    "capture_method": "Actual Edge app conversation; visible response Copy button and native screenshots",
+    "app_id": "asdk_app_6b0309961b34819181603639660b6417",
+    "read_files_trace_prefix": "7dc17520",
+    "run_process_trace_prefix": "351bcf4b",
+    "backend_read_time_utc": "2026-11-22T16:10:26Z",
+    "backend_run_time_utc": "2026-11-22T16:10:35Z",
+    "backend_success": true,
+    "numeric_exit_code_available": false,
+    "browser_response": "WebCodex Desktop mini 本轮三项调用均返回成功。\n\n| 项目 | 实际返回 |\n|---|---|\n| Server `git_commit` | `5c4acefe36947adcb6150fa28b816f9c6233bbb3` |\n| Server `git_dirty` | `false` |\n| Server PID | `15535` |\n| Runner `client_id` | `device-47cbdf021f154085`（在线） |\n| Runner `runner_instance_id` | `e95891a4-3418-4e7b-b012-0345d48dbb46` |\n| 主仓库项目 ID | `agent:device-47cbdf021f154085:webcodex-2eeb7eae` |\n| 命令 stdout | `\"desktop-shared-runtime-ok\\n\"`（按工具返回值记录） |\n| 命令退出码 | 工具未返回 |\n\n`target/desktop-acceptance-20261122/connection-proof.txt` 的完整内容如下。\n\n```text\nWebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n```",
+    "screenshots": [
+      {
+        "path": "final-5c4-chatgpt-browser-file-command-proof.jpg",
+        "sha256": "7d4476c49af45b52e774257a0faa95ae8aa4a372b7e1ce900a268ce6d07d4089"
+      },
+      {
+        "path": "final-5c4-chatgpt-browser-runtime-proof.jpg",
+        "sha256": "61ffd47b4f450f3d22bedbf3fd6780630a451247540ac4ed60f5eb433e451e27"
+      }
+    ]
+  },
+  "gemini": {
+    "profile_id": "gemini-quick",
+    "same_server_and_runner": true,
+    "generation_1": {
+      "outcome": "cloudflare_forwarding_timeout",
+      "old_url_or_authorization_reused": false
+    },
+    "generation_2": {
+      "native_retry_time_utc": "2026-11-22T16:14:05Z",
+      "sampler_job": "wc_job_Wtynx-_KorsT-PHl",
+      "sample_count": 84,
+      "local_probe_http": 200,
+      "local_identity_and_nonce_match": true,
+      "cloudflared_http2_and_target_match": true,
+      "observed_cloudflared_ready_http": 200,
+      "observed_ha_connections": 1,
+      "terminal_time_utc": "2026-11-22T16:15:12.645Z",
+      "outcome": "cloudflare_forwarding_timeout"
+    },
+    "generation_3": {
+      "native_retry_time_utc": "2026-11-22T16:18:31Z",
+      "pointer_outcome": "Initially unknown; reconciled by native AX Starting state and backend generation3. No repeat click.",
+      "sampler_job": "wc_job_woYcDuvh3LkWi2cg",
+      "public_origin": "https://enters-leaving-intend-span.trycloudflare.com",
+      "local_probe_http": 200,
+      "local_identity_and_nonce_match": true,
+      "direct_probe_samples": 36,
+      "direct_probe_failures": "All retained samples returned system DNS error (getaddrinfo errno8)",
+      "explicit_proxy": "http://127.0.0.1:7890",
+      "explicit_proxy_changed_configuration": false,
+      "explicit_proxy_tls_eof_samples": 35,
+      "explicit_proxy_first_exact_success": {
+        "time_utc": "2026-11-22T16:19:37.226Z",
+        "tls_verified": true,
+        "http_status": 200,
+        "profile_instance_generation_nonce_match": true
+      },
+      "production_terminal_time_utc": "2026-11-22T16:19:39.714Z",
+      "outcome": "cloudflare_forwarding_timeout",
+      "later_dns_observations": {
+        "time_utc": "2026-11-22T16:19:55Z",
+        "system_dig": "NOERROR with two A answers",
+        "cloudflare_1_1_1_1": "NOERROR with two A answers",
+        "cloudflare_doh": "HTTP200, rcode0, two answers",
+        "getaddrinfo_recovered_time_utc": "2026-11-22T16:20:18Z",
+        "getaddrinfo_address_count": 4
+      }
+    },
+    "screenshots": [
+      {
+        "path": "final-5c4-gemini-forwarding-timeout-zh-CN.jpg",
+        "sha256": "5e1fb42b98b419d564802260c35c82ba9e127d1107241eeb41ffe691e5a7c77f"
+      },
+      {
+        "path": "final-5c4-gemini-forwarding-timeout-de-DE.jpg",
+        "sha256": "a091edde6dfe99623ff8f3be75ab4e7ad10e59e4d372c33a5a40df2f03230d09"
+      }
+    ],
+    "interpretation": "Public readiness arrived near or after the existing 60-second verification boundary. The measurements do not distinguish authoritative DNS publication delay from local negative-cache timing, and do not establish a provider-wide outage. A targeted bounded Quick readiness-window repair is required; no system DNS/proxy setting or TLS/admission check was changed."
+  },
+  "ci": {
+    "run_id": 45040997665,
+    "passed_jobs": 18,
+    "total_jobs": 18,
+    "conclusion": "success"
+  },
+  "windows_evidence": "../../docs/ux/windows-acceptance-20261122/evidence-final-5c4acefe-shutdown.json",
+  "limits": [
+    "Browser response is a copied model report; independent backend audit confirms successful file and command calls. Displayed newline formatting is not byte-exact stdout evidence.",
+    "Numeric ChatGPT exit status was not retained.",
+    "No raw credentials, nonce, private HTTP body, or private service logs are included.",
+    "Final Windows runtime acceptance was not performed because the user requested MSI shutdown and continuation on mini only."
+  ]
+}

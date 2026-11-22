@@ -192,6 +192,15 @@ if ($NativeRoundtrip) {
             $observed=Invoke-ServiceScript $operation
             if ($observed.exists -ne $true -or $observed.owned -ne $true) { throw "registered task was not owned: $operation" }
         }
+        # Upgrade only this exact stopped legacy action. The fixture never starts.
+        $request.host=Join-Path $env:TEMP "$name\WebCodex.exe"
+        $request.host_arguments='--user-task fixture'
+        $observed=Invoke-ServiceScript 'install'
+        $updated=$folder.GetTask($name)
+        if (!$observed.owned -or $updated.Definition.Actions.Item(1).Path -cne $request.host -or
+            $updated.Definition.Actions.Item(1).Arguments -cne $request.host_arguments) { throw 'legacy action was not upgraded' }
+        $observed=Invoke-ServiceScript 'install'
+        if (!$observed.owned) { throw 'repeated install changed task ownership' }
         # A changed expected marker must not adopt the registered native task.
         $request.description='foreign'
         $observed=Invoke-ServiceScript 'inspect'
@@ -206,7 +215,7 @@ if ($NativeRoundtrip) {
             if ($candidate.Name -cne $name) { continue }
             if ($candidate.Definition.RegistrationInfo.Description -cne $name -or
                 $candidate.Definition.Actions.Count -ne 1 -or
-                $candidate.Definition.Actions.Item(1).Path -cne $request.program -or
+                $candidate.Definition.Actions.Item(1).Path -cnotin @($request.program, $request.host) -or
                 $candidate.State -notin @(1,3)) { throw 'fixture cleanup ownership unconfirmed' }
             $folder.DeleteTask($name, 0)
         }

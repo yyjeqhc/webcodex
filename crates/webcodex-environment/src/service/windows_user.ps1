@@ -252,6 +252,9 @@ public static class WebCodexTaskArgv {
     if ($null -eq $task) { @{ exists=$false } | ConvertTo-Json -Compress }
     else {
         $observation = @{ exists=$true; owned=(Owned-Task $task); enabled=[bool]$task.Enabled; state=[int]$task.State }
+        if ($observation.owned -and $task.State -in @(1,3)) {
+            $observation.last_task_result = [int64]$task.LastTaskResult
+        }
         if ($inputData.operation -eq 'running_pid') {
             $process = Read-ActionProcess $task
             if ($null -ne $process) {

@@ -791,6 +791,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Windows upgrade tests failed" }
           cargo test --locked -p webcodex-environment --lib service::windows::
           if ($LASTEXITCODE -ne 0) { throw "Windows service tests failed" }
+          cargo test --locked -p webcodex-environment --lib service::windows_user::
+          if ($LASTEXITCODE -ne 0) { throw "Windows user task host or PID tests failed" }
       - name: Test Computer helper ownership and native Task Scheduler roundtrip
         run: |
           cargo test --locked -p webcodex-environment --lib session_service::

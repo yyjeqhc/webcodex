@@ -93,8 +93,6 @@ fn desktop_task_host(program: &Path) -> Option<PathBuf> {
 pub fn run_desktop_user_task(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
     use crate::{service_spec, tunnel_service_spec, EnvironmentStore};
     use std::process::{Command, Stdio};
-    use webcodex_process::{ManagedChild, SpawnOptions};
-    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
     let [component, identity, directory, program, worker_args @ ..] = args else {
         return Err("Invalid task arguments".into());
     };
@@ -152,8 +150,15 @@ pub fn run_desktop_user_task(args: &[String]) -> Result<i32, Box<dyn std::error:
         .env("WEBCODEX_SERVICE_LOG_DIR", &directory);
     // Preserve inherited diagnostic handles. The child writes bounded private
     // service events when Scheduler supplies no console or redirected streams.
+    Ok(run_console_free_worker(&mut command)?)
+}
+
+#[cfg(windows)]
+fn run_console_free_worker(command: &mut std::process::Command) -> std::io::Result<i32> {
+    use webcodex_process::{ManagedChild, SpawnOptions};
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
     let mut child = ManagedChild::spawn_with_options(
-        &mut command,
+        command,
         SpawnOptions {
             windows_creation_flags: CREATE_NO_WINDOW,
             ..Default::default()
@@ -196,6 +201,17 @@ fn decode_status(spec: &ServiceSpec, value: &Value) -> Result<ServiceStatus, Ser
         Some(1 | 3) => Some(false), // disabled/ready
         _ => None,
     };
+    let mut detail = String::from(
+        "user Task Scheduler; runs only while this owner is signed in; no password stored",
+    );
+    if owned && running == Some(false) {
+        if let Some(result) = value["last_task_result"]
+            .as_i64()
+            .filter(|result| *result != 0)
+        {
+            detail.push_str(&format!("; last Task Scheduler result {result}"));
+        }
+    }
     Ok(ServiceStatus {
         id: spec.id.clone(),
         ownership: if owned {
@@ -206,10 +222,7 @@ fn decode_status(spec: &ServiceSpec, value: &Value) -> Result<ServiceStatus, Ser
         installed: true,
         enabled: value["enabled"].as_bool(),
         running,
-        detail: Some(
-            "user Task Scheduler; runs only while this owner is signed in; no password stored"
-                .into(),
-        ),
+        detail: Some(detail),
     })
 }
 
@@ -489,6 +502,33 @@ mod tests {
             invalid["instance_guid"] = instance;
             assert!(decode_running_pid(&spec, &invalid).is_err());
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn console_free_worker_has_no_console_and_preserves_exit_and_redirected_streams() {
+        use std::process::{Command, Stdio};
+        let temp = crate::test_tempdir().unwrap();
+        let stdout = temp.path().join("stdout");
+        let stderr = temp.path().join("stderr");
+        let root = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let mut command = Command::new(root.join("System32/WindowsPowerShell/v1.0/powershell.exe"));
+        command.args(["-NoProfile", "-NonInteractive", "-Command", r#"
+            Add-Type -Name Console -Namespace TaskTest -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();'
+            if ([TaskTest.Console]::GetConsoleWindow() -ne [IntPtr]::Zero) { exit 11 }
+            [Console]::Out.WriteLine('fixture-out')
+            [Console]::Error.WriteLine('fixture-err')
+            exit 37
+        "#]).stdin(Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap());
+        assert_eq!(run_console_free_worker(&mut command).unwrap(), 37);
+        assert!(std::fs::read_to_string(stdout)
+            .unwrap()
+            .contains("fixture-out"));
+        assert!(std::fs::read_to_string(stderr)
+            .unwrap()
+            .contains("fixture-err"));
     }
 
     #[cfg(windows)]

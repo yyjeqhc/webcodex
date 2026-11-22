@@ -10,10 +10,18 @@ fn main() {
         let args = args
             .map(|arg| arg.into_string())
             .collect::<Result<Vec<_>, _>>();
-        let code = args
-            .ok()
-            .and_then(|args| webcodex_environment::service::run_desktop_user_task(&args).ok())
-            .unwrap_or(1);
+        let code = match args {
+            Err(_) => 64,
+            Ok(args) => match webcodex_environment::service::run_desktop_user_task(&args) {
+                Ok(worker_exit) => worker_exit,
+                Err(_) => {
+                    // Never print argv or a private configuration error. Scheduler
+                    // retains the exit status even without redirected diagnostics.
+                    eprintln!("WebCodex could not validate or start its user task");
+                    78
+                }
+            },
+        };
         std::process::exit(code);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--build-info-json")) && args.next().is_none()

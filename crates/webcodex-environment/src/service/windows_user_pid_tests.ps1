@@ -19,7 +19,10 @@ function Reset-Fixture {
         arguments='"--environment-env" "C:\Users\Test\environment\server\webcodex.env"'
         sid='S-1-5-21-42'
     }
-    $script:task = [pscustomobject]@{ Owned=$true; State=4 }
+    $actions = New-Object PSObject
+    $actions | Add-Member ScriptMethod Item { param($index) return $script:action }
+    $script:action = [pscustomobject]@{Path=$script:inputData.program;Arguments=$script:inputData.arguments}
+    $script:task = [pscustomobject]@{ Owned=$true; State=4; Definition=@{Actions=$actions} }
     $script:task | Add-Member ScriptMethod GetInstances { param($flags) return $script:instances }
     $script:instances = [pscustomobject]@{ Count=1 }
     $script:instances | Add-Member ScriptMethod Item { param($index) return $script:instance }
@@ -45,6 +48,7 @@ function Read-Task {
 }
 function Get-CimInstance {
     param($ClassName, $Filter, $Property, $OperationTimeoutSec)
+    if ($Filter -cmatch '^ParentProcessId = ([0-9]+)$') { return @($script:children | Where-Object { $_.ParentProcessId -eq [uint32]$Matches[1] }) }
     if ($ClassName -cne 'Win32_Process' -or $Filter -cnotmatch '^ProcessId = ([0-9]+)$') { throw 'unexpected CIM query' }
     $queriedPid=[uint32]$Matches[1]
     $script:processReads+=1
@@ -75,6 +79,7 @@ $script:processes[0].CommandLine=$script:processes[0].CommandLine.Replace('webco
 if ((Read-ActionProcess $script:task).process_id -ne 4312) { throw 'executable spelling changed action identity' }
 Reset-Fixture
 $script:inputData.program='C:\WebCodex\webcodex-server.exe'
+$script:action.Path=$script:inputData.program
 $script:processes[0].ExecutablePath=$script:inputData.program
 $script:processes[0].CommandLine=$script:inputData.program+'   --environment-env "C:\Users\Test\environment\server\webcodex.env"'
 if ((Read-ActionProcess $script:task).process_id -ne 4312) { throw 'equivalent quoting/spacing changed argv identity' }
@@ -128,4 +133,16 @@ Expect-Unverified 'changed process owner'
 Reset-Fixture
 $script:processes[0].CommandLine=$null
 Expect-Unverified 'unreadable command line'
+Reset-Fixture
+$script:inputData | Add-Member NoteProperty host 'C:\Apps\WebCodex.exe'
+$script:action.Path=$script:inputData.host
+$script:action.Arguments='--user-task "server" "env" '+$script:inputData.arguments
+$script:children=@($script:processes[0].PSObject.Copy())
+$script:children[0].ProcessId=5000
+$script:children[0] | Add-Member NoteProperty ParentProcessId 4312
+$script:processes[0].ExecutablePath=$script:action.Path
+$script:processes[0].CommandLine='"'+$script:action.Path+'" '+$script:action.Arguments
+if ((Read-ActionProcess $script:task).process_id -ne 5000) { throw 'GUI task must report its worker PID' }
+$script:children+=@($script:children[0].PSObject.Copy())
+Expect-Unverified 'ambiguous GUI worker'
 exit 0

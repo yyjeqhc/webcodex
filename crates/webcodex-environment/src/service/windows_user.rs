@@ -1,6 +1,6 @@
 //! Per-user interactive Task Scheduler adapter. No password, UAC or SCM account.
 //! A fixed native script consumes bounded non-secret JSON as child-local data;
-//! callers cannot supply script text. Registration is create-only, never /F.
+//! callers cannot supply script text. New tasks are registered create-only.
 use super::*;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -32,11 +32,121 @@ fn task_request(spec: &ServiceSpec, operation: &str) -> Result<Value, ServiceErr
         out
     };
     let name = task_name(spec, sid);
+    let arguments = spec
+        .args
+        .iter()
+        .map(|value| quote(value))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let host = desktop_task_host(&spec.program);
+    let program = spec.program.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec, "Task executable must be UTF-8"))?;
+    let directory = spec.working_directory.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec, "Task directory must be UTF-8"))?;
+    let host_arguments = format!(
+        "--user-task {} {} {} {} {}",
+        quote(spec.component.as_str()), quote(&spec.config_identity), quote(directory), quote(program),
+        arguments
+    );
     Ok(json!({"operation":operation, "name":name,
         "description":format!("{} scope=user", ownership_marker(spec)), "sid":sid,
-        "program":spec.program.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec,"Task executable must be UTF-8"))?,
-        "arguments":spec.args.iter().map(|value| quote(value)).collect::<Vec<_>>().join(" "),
-        "directory":spec.working_directory.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec,"Task working directory must be UTF-8"))?}))
+        "program":program,
+        "arguments":arguments, "host":host, "host_arguments":host_arguments,
+        "directory":directory}))
+}
+
+// The installed GUI and its runtime are verified and updated as one package.
+fn desktop_task_host(program: &Path) -> Option<PathBuf> {
+    let runtime = program.parent()?;
+    if runtime.file_name()? != "webcodex-runtime" {
+        return None;
+    }
+    let host = runtime.parent()?.join("WebCodex.exe");
+    #[cfg(windows)]
+    {
+        // A custom Runtime folder cannot designate its sibling as a launcher.
+        use crate::unified_update::{installed_desktop_path, InstallerTarget, RuntimePlatform};
+        let current = std::env::current_exe().ok()?.canonicalize().ok()?;
+        let host_path = host.canonicalize().ok()?;
+        if current != host_path {
+            let target = InstallerTarget::default_for_non_linux(RuntimePlatform::current()?)?;
+            if installed_desktop_path(target)?.canonicalize().ok()? != host_path {
+                return None;
+            }
+        }
+    }
+    Some(host)
+}
+
+#[cfg(windows)]
+pub fn run_desktop_user_task(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+    use crate::{service_spec, tunnel_service_spec, EnvironmentStore};
+    use std::process::{Command, Stdio};
+    use webcodex_process::{ManagedChild, SpawnOptions};
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+    let [component, identity, directory, program, worker_args @ ..] = args else {
+        return Err("Invalid task arguments".into());
+    };
+    let directory = PathBuf::from(directory);
+    if !directory.is_absolute()
+        || directory.canonicalize()? != std::env::current_dir()?.canonicalize()?
+    {
+        return Err("Task working directory changed".into());
+    }
+    let (component, root) = match component.as_str() {
+        "server" => (Component::Server, directory.parent()),
+        "runner" => (Component::Runner, Some(directory.as_path())),
+        "tunnel" => (Component::Tunnel, directory.ancestors().nth(3)),
+        _ => return Err("Invalid service component".into()),
+    };
+    let store = EnvironmentStore::open_existing(root.ok_or("Missing task root")?.into())?
+        .ok_or("Missing task environment")?;
+    let record = match store.load_environment()? {
+        Some(record) => record,
+        None => {
+            store
+                .load_journal()?
+                .ok_or("Missing setup journal")?
+                .environment
+        }
+    };
+    if record.request.service_scope != ServiceScope::User {
+        return Err("Task service scope changed".into());
+    }
+    let spec = if component == Component::Tunnel {
+        let profile = directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Missing tunnel profile")?;
+        tunnel_service_spec(&store, &record, profile)?
+    } else {
+        service_spec(&store, &record, component)?
+    };
+    let expected_host = desktop_task_host(&spec.program).ok_or("Missing packaged task host")?;
+    if spec.config_identity != *identity
+        || spec.program != Path::new(program)
+        || spec.args != worker_args
+        || spec.working_directory != directory
+        || expected_host.canonicalize()? != std::env::current_exe()?.canonicalize()?
+    {
+        return Err("Task target changed".into());
+    }
+    scope::verify_current_user(&spec)?;
+    check_install_files(&spec)?;
+    let mut command = Command::new(&spec.program);
+    command
+        .args(&spec.args)
+        .current_dir(&directory)
+        .stdin(Stdio::null())
+        .env("WEBCODEX_SERVICE_LOG_DIR", &directory);
+    // Preserve inherited diagnostic handles. The child writes bounded private
+    // service events when Scheduler supplies no console or redirected streams.
+    let mut child = ManagedChild::spawn_with_options(
+        &mut command,
+        SpawnOptions {
+            windows_creation_flags: CREATE_NO_WINDOW,
+            ..Default::default()
+        },
+    )?;
+    Ok(child.wait()?.code().unwrap_or(1))
 }
 
 /// Pure saved task identity, also used by read-only diagnostic references.

@@ -582,6 +582,8 @@ pub async fn probe_installed_build(path: &Path, binary: &str) -> UpdateResult<Ma
         return Err(UpdateError::ProvenanceFailed);
     }
     let mut command = tokio::process::Command::new(path);
+    #[cfg(windows)]
+    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
     command
         .arg("--build-info-json")
         .stdin(std::process::Stdio::null())

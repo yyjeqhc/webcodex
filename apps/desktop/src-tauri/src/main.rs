@@ -4,8 +4,19 @@
 
 fn main() {
     let mut args = std::env::args_os().skip(1);
-    if args.next().as_deref() == Some(std::ffi::OsStr::new("--build-info-json"))
-        && args.next().is_none()
+    let first = args.next();
+    #[cfg(windows)]
+    if first.as_deref() == Some(std::ffi::OsStr::new("--user-task")) {
+        let args = args
+            .map(|arg| arg.into_string())
+            .collect::<Result<Vec<_>, _>>();
+        let code = args
+            .ok()
+            .and_then(|args| webcodex_environment::service::run_desktop_user_task(&args).ok())
+            .unwrap_or(1);
+        std::process::exit(code);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("--build-info-json")) && args.next().is_none()
     {
         let info = webcodex_desktop_lib::desktop_build_info();
         match serde_json::to_string(&info) {

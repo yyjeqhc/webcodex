@@ -56,8 +56,8 @@ try {
         return $d.RegistrationInfo.Description -ceq $inputData.description -and
             (Account-Sid $d.Principal.UserId) -eq $inputData.sid -and $d.Principal.LogonType -eq 3 -and $d.Principal.RunLevel -eq 0 -and
             $d.Actions.Count -eq 1 -and $d.Actions.Item(1).Type -eq 0 -and
-            $d.Actions.Item(1).Path -ceq $inputData.program -and
-            $d.Actions.Item(1).Arguments -ceq $inputData.arguments -and $d.Actions.Item(1).WorkingDirectory -ceq $inputData.directory -and
+            (($d.Actions.Item(1).Path -ceq $inputData.program -and $d.Actions.Item(1).Arguments -ceq $inputData.arguments) -or
+             ($inputData.host -and $d.Actions.Item(1).Path -ceq $inputData.host -and $d.Actions.Item(1).Arguments -ceq $inputData.host_arguments)) -and $d.Actions.Item(1).WorkingDirectory -ceq $inputData.directory -and
             $d.Triggers.Count -eq 1 -and $d.Triggers.Item(1).Type -eq 9 -and (Account-Sid $d.Triggers.Item(1).UserId) -eq $inputData.sid -and
             $d.Triggers.Item(1).Enabled -eq $true -and
             $d.Settings.MultipleInstances -eq 2 -and $d.Settings.ExecutionTimeLimit -eq 'PT0S' -and
@@ -94,15 +94,15 @@ public static class WebCodexTaskArgv {
 }
 '@ | Out-Null
     }
-    function Action-Matches($process) {
+    function Action-Matches($process, $program, $arguments) {
         if ($null -eq $process -or [string]::IsNullOrEmpty($process.ExecutablePath) -or
             [string]::IsNullOrEmpty($process.CommandLine) -or
-            ![string]::Equals($process.ExecutablePath, $inputData.program, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+            ![string]::Equals($process.ExecutablePath, $program, [StringComparison]::OrdinalIgnoreCase)) { return $false }
         Initialize-ActionArgv
         $actual = [WebCodexTaskArgv]::Parse([string]$process.CommandLine)
-        $expected = [WebCodexTaskArgv]::Parse('webcodex ' + $inputData.arguments)
+        $expected = [WebCodexTaskArgv]::Parse('webcodex ' + $arguments)
         if ($actual.Count -ne $expected.Count -or
-            ![string]::Equals($actual[0], $inputData.program, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+            ![string]::Equals($actual[0], $program, [StringComparison]::OrdinalIgnoreCase)) { return $false }
         for ($index=1; $index -lt $actual.Count; $index++) {
             if ($actual[$index] -cne $expected[$index]) { return $false }
         }
@@ -122,27 +122,54 @@ public static class WebCodexTaskArgv {
         # neither a matching unrelated process nor a saved heartbeat proves the
         # action belongs to this instance.
         # https://learn.microsoft.com/windows/win32/taskschd/runningtask-enginepid
-        $candidates = @(Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId = " + $enginePid) -Property ProcessId,ExecutablePath,CommandLine,CreationDate -OperationTimeoutSec 5)
-        if ($candidates.Count -ne 1) { return $null }
-        $matched = $candidates[0]
-        if ($matched.ProcessId -ne $enginePid -or !(Action-Matches $matched) -or $null -eq $matched.CreationDate) { return $null }
-        $owner = Invoke-CimMethod -InputObject $matched -MethodName GetOwnerSid -OperationTimeoutSec 5
-        if ($owner.ReturnValue -ne 0 -or $owner.Sid -cne $inputData.sid) { return $null }
-        # Re-read this PID to reject exit/reuse, and then fence against task
-        # replacement or a different running instance/engine during observation.
-        $verified = @(Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId = " + $enginePid) -Property ProcessId,ExecutablePath,CommandLine,CreationDate -OperationTimeoutSec 5)
-        if ($verified.Count -ne 1 -or $verified[0].ProcessId -ne $enginePid -or
-            !(Action-Matches $verified[0]) -or $verified[0].CreationDate -ne $matched.CreationDate) { return $null }
-        $owner = Invoke-CimMethod -InputObject $verified[0] -MethodName GetOwnerSid -OperationTimeoutSec 5
-        if ($owner.ReturnValue -ne 0 -or $owner.Sid -cne $inputData.sid) { return $null }
+        $action = $task.Definition.Actions.Item(1)
+        $hosted = $inputData.host -and $action.Path -ceq $inputData.host
+        $worker = $null
+        for ($pass = 0; $pass -lt 2; $pass++) {
+            $candidates = @(Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId = " + $enginePid) -Property ProcessId,ExecutablePath,CommandLine,CreationDate -OperationTimeoutSec 5)
+            if ($candidates.Count -ne 1) { return $null }
+            $matched = $candidates[0]
+            if ($matched.ProcessId -ne $enginePid -or !(Action-Matches $matched $action.Path $action.Arguments) -or $null -eq $matched.CreationDate) { return $null }
+            $owner = Invoke-CimMethod -InputObject $matched -MethodName GetOwnerSid -OperationTimeoutSec 5
+            if ($owner.ReturnValue -ne 0 -or $owner.Sid -cne $inputData.sid) { return $null }
+            if ($pass -eq 1 -and $matched.CreationDate -ne $hostBirth) { return $null }
+            $hostBirth = $matched.CreationDate
+            if ($hosted) {
+                # The GUI action owns exactly one managed direct worker. Never
+                # select by executable name, heartbeat, or an unrelated engine.
+                $children = @(Get-CimInstance -ClassName Win32_Process -Filter ("ParentProcessId = " + $enginePid) -Property ProcessId,ParentProcessId,ExecutablePath,CommandLine,CreationDate -OperationTimeoutSec 5)
+                $matchesWorker = @($children | Where-Object { $_.ParentProcessId -eq $enginePid -and (Action-Matches $_ $inputData.program $inputData.arguments) })
+                if ($matchesWorker.Count -ne 1) { return $null }
+                $matched = $matchesWorker[0]
+                if (!$matched.ProcessId -or $null -eq $matched.CreationDate -or $matched.CreationDate -lt $hostBirth) { return $null }
+                $owner = Invoke-CimMethod -InputObject $matched -MethodName GetOwnerSid -OperationTimeoutSec 5
+                if ($owner.ReturnValue -ne 0 -or $owner.Sid -cne $inputData.sid) { return $null }
+            }
+            if ($pass -eq 1 -and ($matched.ProcessId -ne $worker.ProcessId -or $matched.CreationDate -ne $worker.CreationDate)) { return $null }
+            $worker = $matched
+        }
         $current = Read-Task
-        if (!(Owned-Task $current) -or $current.State -ne 4) { return $null }
+        if (!(Owned-Task $current) -or $current.State -ne 4 -or $current.Definition.Actions.Item(1).Path -cne $action.Path) { return $null }
         $currentInstances = $current.GetInstances(0)
         if ($currentInstances.Count -ne 1) { return $null }
         $currentInstance = $currentInstances.Item(1)
         if ($currentInstance.State -ne 4 -or $currentInstance.InstanceGuid -cne $instanceGuid -or
             [uint32]$currentInstance.EnginePID -ne $enginePid) { return $null }
-        return @{ process_id=$enginePid; instance_guid=$instanceGuid }
+        return @{ process_id=$worker.ProcessId; instance_guid=$instanceGuid }
+    }
+    function Use-ConsoleFreeAction($observed) {
+        if (!$inputData.host -or $observed.Definition.Actions.Item(1).Path -ceq $inputData.host) { return $observed }
+        # Migration is limited to the exact stopped legacy task. UPDATE cannot
+        # create a missing task. Leave the principal, triggers, flags and ACL intact.
+        $current = Read-Task
+        if (!(Owned-Task $current) -or $current.State -notin @(1,3) -or $current.Xml -cne $observed.Xml) { throw 'task changed during migration' }
+        $definition = $current.Definition
+        $definition.Actions.Item(1).Path = $inputData.host
+        $definition.Actions.Item(1).Arguments = $inputData.host_arguments
+        $null = $folder.RegisterTaskDefinition($inputData.name, $definition, 4, $inputData.sid, $null, 3, $null)
+        $current = Read-Task
+        if (!(Owned-Task $current) -or $current.Definition.Actions.Item(1).Path -cne $inputData.host) { throw 'task migration unconfirmed' }
+        return $current
     }
     function Wait-Stopped {
         $deadline = [DateTime]::UtcNow.AddSeconds(20)
@@ -169,8 +196,13 @@ public static class WebCodexTaskArgv {
                     $trigger.UserId = $inputData.sid
                     $trigger.Enabled = $true
                     $action = $definition.Actions.Create(0)
-                    $action.Path = $inputData.program
-                    $action.Arguments = $inputData.arguments
+                    if ($inputData.host) {
+                        $action.Path = $inputData.host
+                        $action.Arguments = $inputData.host_arguments
+                    } else {
+                        $action.Path = $inputData.program
+                        $action.Arguments = $inputData.arguments
+                    }
                     $action.WorkingDirectory = $inputData.directory
                     $definition.Settings.MultipleInstances = 2
                     $definition.Settings.ExecutionTimeLimit = 'PT0S'
@@ -182,12 +214,15 @@ public static class WebCodexTaskArgv {
                     $definition.Settings.RestartInterval = 'PT1M'
                     $definition.Settings.Enabled = $true
                     $null = $folder.RegisterTaskDefinition($inputData.name, $definition, 2, $inputData.sid, $null, 3, $null)
-                } elseif (!$task.Enabled) { $task.Enabled = $true }
+                } else {
+                    if ($task.State -in @(1,3)) { $task = Use-ConsoleFreeAction $task }
+                    if (!$task.Enabled) { $task.Enabled = $true }
+                }
             }
             'start' {
                 if ($null -eq $task) { throw 'missing task' }
                 if (!$task.Enabled) { throw 'disabled task' }
-                if ($task.State -eq 3) { $null = $task.Run($null) }
+                if ($task.State -eq 3) { $task = Use-ConsoleFreeAction $task; $null = $task.Run($null) }
                 elseif ($task.State -notin @(2,4)) { throw 'start state unknown' }
             }
             'stop' {
@@ -200,6 +235,7 @@ public static class WebCodexTaskArgv {
                 if ($task.State -notin @(2,3,4)) { throw 'restart state unknown' }
                 if ($task.State -in @(2,4)) { $task.Stop(0) }
                 $task = Wait-Stopped
+                $task = Use-ConsoleFreeAction $task
                 if (!$task.Enabled) { throw 'disabled during restart' }
                 $null = $task.Run($null)
             }

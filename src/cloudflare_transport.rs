@@ -254,8 +254,15 @@ fn isolated_command_with(
 }
 
 fn spawn_drained(command: &mut Command) -> Result<(ManagedChild, Arc<OutputState>), ProductError> {
-    let mut child = ManagedChild::spawn(command)
-        .map_err(|_| transport_error("Could not start the Cloudflare executable"))?;
+    let mut child = ManagedChild::spawn_with_options(
+        command,
+        webcodex_process::SpawnOptions {
+            #[cfg(windows)]
+            windows_creation_flags: windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
+            ..Default::default()
+        },
+    )
+    .map_err(|_| transport_error("Could not start the Cloudflare executable"))?;
     let stdout = child
         .child_mut()
         .stdout

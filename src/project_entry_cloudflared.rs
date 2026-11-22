@@ -124,7 +124,10 @@ async fn query_npm_config_value(key: &str) -> Option<String> {
 }
 
 async fn query_npm_config_value_with(program: &OsStr, key: &str) -> Option<String> {
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    let mut child = command
         .args(["config", "get", key])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

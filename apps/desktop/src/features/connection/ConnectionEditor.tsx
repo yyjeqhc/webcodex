@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Alert, Button, Checkbox, Select, PasswordInput, TextInput } from "@mantine/core";
 import { desktopApi } from "../../lib/desktop-api";
-import type { DesktopState } from "../../models/topology";
+import type { DesktopError, DesktopState } from "../../models/topology";
+import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 import type { TunnelConnection, TunnelHostMode, TunnelProfileRequest, TunnelProvider } from "../../models/connections-tools";
 import { normalizeDesktopError } from "../../i18n/presentation";
 import { useProduct } from "../../i18n/product";
+import { useLocale } from "../../i18n/locale";
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 
@@ -20,6 +22,7 @@ export function ConnectionEditor({ profile, geminiNamed = false, chatgptPreset =
   onSetup?: () => void;
 }) {
   const p = useProduct();
+  const { t } = useLocale();
   const c = useConnectionsTools();
   const [name, setName] = useState(profile?.name ?? (geminiNamed ? "Gemini" : chatgptPreset ? "ChatGPT" : ""));
   const [tunnelId, setTunnelId] = useState(profile?.tunnel_id || "");
@@ -32,7 +35,8 @@ export function ConnectionEditor({ profile, geminiNamed = false, chatgptPreset =
   const [autostart, setAutostart] = useState(profile?.autostart ?? initialAutostart);
   const [hostMode, setHostMode] = useState<TunnelHostMode>(profile?.host_mode ?? (persistentLocal ? "embedded" : "standalone"));
   const [busy, setBusy] = useState(false);
-  const [failureCode, setFailureCode] = useState<string | null>(null);
+  const [failure, setFailure] = useState<DesktopError | null>(null);
+  const simpleChatgpt = chatgptPreset && profile === null;
   const submitted = useRef(false);
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -45,7 +49,7 @@ export function ConnectionEditor({ profile, geminiNamed = false, chatgptPreset =
     if (submitted.current || (cloudflare && !persistentLocal)) return;
     submitted.current = true;
     setBusy(true);
-    setFailureCode(null);
+    setFailure(null);
     const request: TunnelProfileRequest = {
       id: profile?.id ?? null,
       name: name.trim(),
@@ -70,21 +74,21 @@ export function ConnectionEditor({ profile, geminiNamed = false, chatgptPreset =
       onState(next);
       onClose();
     } catch (error) {
-      setFailureCode(normalizeDesktopError(error).code);
+      if (mounted.current) setFailure(normalizeDesktopError(error));
     } finally {
       request.api_key = null;
       if (cloudflare) request.cloudflare_token = null;
       submitted.current = false;
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
   const selectedOwner = hostMode === "embedded" ? c("runWithServer") : c("separateTunnelService");
-  return <WorkspaceDialog title={profile ? `${p("edit")} ${profile.name}` : c("addConnection")} onClose={onClose} busy={busy}>
+  return <WorkspaceDialog title={profile ? `${p("edit")} ${profile.name}` : c(simpleChatgpt ? "connectChatgpt" : geminiNamed ? "connectGemini" : "addConnection")} onClose={onClose} busy={busy}>
     <form className="profile-editor connection-profile-editor" onSubmit={event => void submit(event)} aria-busy={busy}>
-      <Select label={c("provider")} aria-label={c("provider")} value={providerKind} allowDeselect={false} onChange={value => { if (!value) return; setProviderKind(value as TunnelProvider["kind"]); setApiKey(""); setCloudflareToken(""); }} disabled={busy || profile !== null || geminiNamed} data={[{value:"openai",label:"OpenAI Tunnel"},{value:"cloudflare_named",label:c("cloudflareNamed")},{value:"cloudflare_quick",label:c("cloudflareQuick")}]} />
-      <p className="field-help">{cloudflare ? c("cloudflareHelp") : p("tunnelCredentialHelp")}</p>
+      {!simpleChatgpt && <Select label={c("provider")} aria-label={c("provider")} value={providerKind} allowDeselect={false} onChange={value => { if (!value) return; setProviderKind(value as TunnelProvider["kind"]); setApiKey(""); setCloudflareToken(""); }} disabled={busy || profile !== null || geminiNamed} data={[{value:"openai",label:"OpenAI Tunnel"},{value:"cloudflare_named",label:c("cloudflareNamed")},{value:"cloudflare_quick",label:c("cloudflareQuick")}]} />}
+      <p className="field-help">{simpleChatgpt ? c("chatgptCredentialsHelp") : cloudflare ? c("cloudflareHelp") : p("tunnelCredentialHelp")}</p>
       {cloudflare && !persistentLocal && <Alert role="status"><p>{c("cloudflareEnvironment")}</p>{onSetup && <Button variant="default" onClick={() => { onClose(); onSetup(); }}>{c("connectGemini")}</Button>}</Alert>}
-      {canChooseHost && <fieldset className="connection-owner-choice">
+      {canChooseHost && !simpleChatgpt && <fieldset className="connection-owner-choice">
         <legend>{c("connectionLifecycle")}</legend>
         <label data-selected={hostMode === "embedded"}>
           <input type="radio" name="host_mode" value="embedded" checked={hostMode === "embedded"} onChange={() => setHostMode("embedded")} disabled={busy} />
@@ -96,15 +100,21 @@ export function ConnectionEditor({ profile, geminiNamed = false, chatgptPreset =
         </label>
       </fieldset>}
       {persistentLocal && profile && <div className="connection-owner-summary" role="note"><strong>{c("connectionLifecycle")}</strong><span>{selectedOwner}</span><small>{c("lifecycleLockedHelp")}</small></div>}
-      <TextInput className="field-group" id="connection-profile-name" label={c("name")} aria-label={c("name")} name="name" value={name} onChange={event => setName(event.currentTarget.value)} required maxLength={160} disabled={busy} autoFocus />
-      {(!cloudflare || named) && <TextInput className="field-group" id="connection-profile-tunnel-id" label="Tunnel ID" aria-label="Tunnel ID" name="tunnel_id" value={tunnelId} onChange={event => setTunnelId(event.currentTarget.value)} required maxLength={256} pattern="(?:[A-Za-z0-9_]|-)+" spellCheck={false} autoCapitalize="none" disabled={busy || identityLocked} description={identityLocked ? c("tunnelIdentityLocked") : undefined} />}
+      {!simpleChatgpt && <TextInput className="field-group" id="connection-profile-name" label={c("name")} aria-label={c("name")} name="name" value={name} onChange={event => setName(event.currentTarget.value)} required maxLength={160} disabled={busy} autoFocus />}
+      {(!cloudflare || named) && <TextInput className="field-group" id="connection-profile-tunnel-id" label="Tunnel ID" aria-label="Tunnel ID" name="tunnel_id" value={tunnelId} onChange={event => setTunnelId(event.currentTarget.value)} required maxLength={256} pattern="(?:[A-Za-z0-9_]|-)+" spellCheck={false} autoCapitalize="none" autoFocus={simpleChatgpt} disabled={busy || identityLocked} description={identityLocked ? c("tunnelIdentityLocked") : undefined} />}
       {!cloudflare && <PasswordInput className="field-group" id="connection-profile-api-key" label="API key" aria-label="API key" name="api_key" value={apiKey} onChange={event => setApiKey(event.currentTarget.value)} required={!profile?.credential_present} maxLength={8192} autoComplete="new-password" spellCheck={false} disabled={busy} description={profile?.credential_present ? p("savedKey") : undefined} />}
       {named && <><TextInput label={c("publicOrigin")} aria-label={c("publicOrigin")} type="url" maxLength={2048} required value={publicOrigin} onChange={event => setPublicOrigin(event.currentTarget.value)} placeholder="https://mcp.example.com" disabled={busy} /><PasswordInput label={c("cloudflareToken")} aria-label={c("cloudflareToken")} value={cloudflareToken} onChange={event => setCloudflareToken(event.currentTarget.value)} required={!profile?.credential_present} maxLength={8192} autoComplete="new-password" disabled={busy} description={profile?.credential_present ? p("savedKey") : undefined} /></>}
       {cloudflare && <Checkbox label={c("dcrLabel")} description={savedDcr && !dcr ? c("dcrDisable") : c("dcrHelp")} checked={dcr} onChange={event => setDcr(event.currentTarget.checked)} disabled={busy} />}
       {providerKind === "cloudflare_quick" && <p className="workspace-notice">{c("quickReauthorize")}</p>}
-      {(cloudflare || !persistentLocal || hostMode === "embedded") && <Checkbox className="profile-checkbox" id="connection-profile-autostart" label={hostMode === "embedded" ? c("serverAutostart") : c("autostart")} checked={autostart} onChange={event => setAutostart(event.currentTarget.checked)} disabled={busy} />}
-      {failureCode && <Alert color="red" role="alert">{c(failureCode === "tunnel_revision_stale" ? "staleConnection" : failureCode === "cloudflare_selection_conflict" ? "otherCloudflareActive" : "operationFailed")}</Alert>}
-      <div className="connection-actions"><Button type="submit" className="primary-button" disabled={busy || !name.trim() || (cloudflare && !persistentLocal) || ((!cloudflare || named) && !/^[A-Za-z0-9_-]+$/.test(tunnelId.trim())) || (!cloudflare && !profile?.credential_present && !apiKey.trim()) || (named && (!publicOrigin.trim().startsWith("https://") || (!profile?.credential_present && !cloudflareToken.trim())))}>{c("saveApply")}</Button><Button type="button" className="secondary-button" variant="default" disabled={busy} onClick={onClose}>{p("cancel")}</Button></div>
+      {!simpleChatgpt && (cloudflare || !persistentLocal || hostMode === "embedded") && <Checkbox className="profile-checkbox" id="connection-profile-autostart" label={hostMode === "embedded" ? c("serverAutostart") : c("autostart")} checked={autostart} onChange={event => setAutostart(event.currentTarget.checked)} disabled={busy} />}
+      {simpleChatgpt && <details className="connection-details"><summary>{t("first.advanced")}</summary>
+        <TextInput className="field-group" id="connection-profile-name" label={c("name")} aria-label={c("name")} name="name" value={name} onChange={event => setName(event.currentTarget.value)} required maxLength={160} disabled={busy} />
+        <Checkbox className="profile-checkbox" id="connection-profile-autostart" label={hostMode === "embedded" ? c("serverAutostart") : c("autostart")} checked={autostart} onChange={event => setAutostart(event.currentTarget.checked)} disabled={busy} />
+      </details>}
+      {failure && <DesktopErrorAlert error={failure} disabled={busy} />}
+      {failure?.code === "tunnel_revision_stale" && <p className="field-help">{c("staleConnection")}</p>}
+      {failure?.code === "cloudflare_selection_conflict" && <p className="field-help">{c("otherCloudflareActive")}</p>}
+      <div className="connection-actions"><Button type="submit" className="primary-button" disabled={busy || !name.trim() || (cloudflare && !persistentLocal) || ((!cloudflare || named) && !/^[A-Za-z0-9_-]+$/.test(tunnelId.trim())) || (!cloudflare && !profile?.credential_present && !apiKey.trim()) || (named && (!publicOrigin.trim().startsWith("https://") || (!profile?.credential_present && !cloudflareToken.trim())))}>{p("save")}</Button><Button type="button" className="secondary-button" variant="default" disabled={busy} onClick={onClose}>{p("cancel")}</Button></div>
     </form>
   </WorkspaceDialog>;
 }

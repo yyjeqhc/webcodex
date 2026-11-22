@@ -11,7 +11,7 @@ import { connectionFixture, connectionSnapshot } from "../test/connections-fixtu
 import { ConnectionPanel } from "./connection/ConnectionPanel";
 import { McpProvidersPanel } from "./extensions/McpProvidersPanel";
 
-const api = vi.hoisted(() => ({ openDiagnosticResource: vi.fn(), connectGemini: vi.fn(), getState: vi.fn(), inspectLocalMigration: vi.fn(), resetLocalMigration: vi.fn(), configureEnvironment: vi.fn(), saveTunnelProfile: vi.fn(), tunnelProfileAction: vi.fn(), cloudflareConnection: vi.fn(), environmentServiceAction: vi.fn(), saveMcpProvider: vi.fn(), removeMcpProvider: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), stopQuickShare: vi.fn() }));
+const api = vi.hoisted(() => ({ diagnostics: vi.fn(), copyRuntimeConsoleCredential: vi.fn(), openDiagnosticResource: vi.fn(), connectGemini: vi.fn(), getState: vi.fn(), inspectLocalMigration: vi.fn(), resetLocalMigration: vi.fn(), configureEnvironment: vi.fn(), saveTunnelProfile: vi.fn(), tunnelProfileAction: vi.fn(), cloudflareConnection: vi.fn(), environmentServiceAction: vi.fn(), saveMcpProvider: vi.fn(), removeMcpProvider: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), stopQuickShare: vi.fn() }));
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn() }));
 const onSettings = vi.fn();
@@ -67,6 +67,16 @@ describe("Connections + Tools control surfaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open Gemini" }));
     await waitFor(() => expect(api.openDiagnosticResource).toHaveBeenCalledExactlyOnceWith("gemini_apps"));
     expect(api.cloudflareConnection.mock.calls.every(([request]) => request.action === "status")).toBe(true);
+    expect(api.diagnostics).not.toHaveBeenCalled();
+    api.diagnostics.mockResolvedValue({resources: ["runtime_console"], can_copy_console_credential: true, credential_copy_fence: "gemini-owner-fence"});
+    api.copyRuntimeConsoleCredential.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", {name: "Copy WebCodex sign-in credential"}));
+    const confirmCopy = await screen.findByRole("button", {name: "Copy sensitive credential"});
+    await waitFor(() => expect(confirmCopy).toBeEnabled());
+    expect(api.copyRuntimeConsoleCredential).not.toHaveBeenCalled();
+    fireEvent.click(confirmCopy);
+    await waitFor(() => expect(api.copyRuntimeConsoleCredential).toHaveBeenCalledExactlyOnceWith("gemini-owner-fence"));
+    expect(await screen.findByText(/Paste it on the WebCodex sign-in page/)).toBeVisible();
   });
 
   it("prefers the saved Named profile and enables only its policy after selection", async () => {
@@ -182,10 +192,16 @@ describe("Connections + Tools control surfaces", () => {
     expect(screen.getByRole("heading", {name:"Connect ChatGPT"})).toBeVisible();
     expect(screen.getByRole("button", { name: "Connect Gemini" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Connect ChatGPT" }));
+    expect(screen.getByRole("dialog", { name: "Connect ChatGPT" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Connection provider" })).toBeNull();
+    expect(screen.queryByRole("radio")).toBeNull();
     expect(screen.getByLabelText("Name")).toHaveValue("ChatGPT");
+    expect(screen.getByLabelText("Name")).not.toBeVisible();
+    expect(screen.getByLabelText("Tunnel ID")).toHaveFocus();
+    expect(screen.getByText(/Create a Tunnel and an API key that can use it/)).toBeVisible();
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_chatgpt_1" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "chatgpt-write-only-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toMatchObject({
       name: "ChatGPT",
@@ -193,6 +209,26 @@ describe("Connections + Tools control surfaces", () => {
       host_mode: "embedded",
       autostart: true,
     });
+  });
+
+  it("keeps actionable save diagnostics without displaying arbitrary server text", async () => {
+    api.saveTunnelProfile.mockRejectedValue({ code: "cloudflare_authentication_failed",
+      message: "Bearer private-save-canary", next_action: "private-server-instruction",
+      diagnostic: {component: "auth", stage: "connection_save", reason_code: "http_forbidden",
+        recovery_kind: "user_action", safe_action: "repair_user_credential", retry_allowed: false, http_status: 403},
+    });
+    render(<Harness mode="connections" initial={{ ...state(), persistent_environment: "local", connections: connectionSnapshot() }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect ChatGPT" }));
+    fireEvent.change(screen.getByLabelText("Tunnel ID"), {target: {value: "chatgpt-test"}});
+    fireEvent.change(screen.getByLabelText("API key"), {target: {value: "write-only-key"}});
+    fireEvent.click(screen.getByRole("button", {name: "Save"}));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("HTTP 403");
+    expect(alert).toHaveTextContent("connection_save");
+    expect(alert).not.toHaveTextContent("private-save-canary");
+    expect(alert).not.toHaveTextContent("private-server-instruction");
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(api.saveTunnelProfile).toHaveBeenCalledTimes(1);
   });
 
   it("can cancel local setup or finish with the sign-in defaults and no project", async () => {
@@ -306,7 +342,7 @@ describe("Connections + Tools control surfaces", () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ChatGPT Work" } });
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_work" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "write-only-server-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toMatchObject({
@@ -341,7 +377,7 @@ describe("Connections + Tools control surfaces", () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Independent" } });
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_independent" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "write-only-separate-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toMatchObject({ host_mode: "standalone", autostart: true });
@@ -488,7 +524,7 @@ describe("Connections + Tools control surfaces", () => {
     expect(document.body.textContent).not.toContain("embedded");
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Work renamed" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "write-only-edit-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toMatchObject({
@@ -715,7 +751,7 @@ describe("Connections + Tools control surfaces", () => {
     expect(screen.getByLabelText("API key")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Personal renamed" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "write-only-fixture-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toMatchObject({ id: "personal", expected_revision: 1, name: "Personal renamed", host_mode: "standalone", api_key: "write-only-fixture-secret" });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());

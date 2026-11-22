@@ -158,6 +158,7 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient }: {
   }
   return <section className="page-section workspace-page" aria-labelledby="connection-title" data-webcodex-page="connection">
     <header className="page-heading-row"><h1 id="connection-title">{c("connections")}</h1></header>
+    {local && state.topology?.runner.kind === "local" && <p className="lede">{c("sharedRuntimeHelp")}</p>}
     {state.topology?.server.kind === "remote" && <p className="workspace-notice"><code>{state.topology.server.url}</code></p>}
     {presentation.externalConnectionUnobserved && <p className="workspace-notice">{c("externalConnectionUnobserved")}</p>}
     {serverRestartRequired && <div className="server-owned-apply shell-notice warning" role="status"><div><strong>{c("serverRestartRequired")}</strong><p>{c("serverRestartHelp")}</p></div><button type="button" className="primary-button" disabled={disabled} onClick={() => void runServer("restart")}>{c("restartServer")}</button></div>}
@@ -181,7 +182,7 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient }: {
       {failed.code === "cloudflare_selection_conflict" && <p className="field-help">{c("otherCloudflareActive")}</p>}
     </div>}
     {saved && <p role="status" className="workspace-notice">{c("saved")}</p>}
-    <GeminiConnections key={environmentId} profiles={cloudflareProfiles} preparation={preparation} preparing={busyId === "__gemini__"}
+    <GeminiConnections key={environmentId} state={state} profiles={cloudflareProfiles} preparation={preparation} preparing={busyId === "__gemini__"}
       busy={disabled || !state.connections || profiles.config_error} canStart={persistentLocal && state.readiness.server === "ready" && busyId !== "__server__" && state.current_operation?.kind !== "environment_service"}
       onPrepare={profile => void prepareGemini(profile)} onNamed={() => setEditor({profile: null, geminiNamed: true})}
       onRepair={() => onSettings("runtime")} onRestartServer={persistentLocal && !serverRestartRequired ? () => void runServer("restart") : undefined}
@@ -197,6 +198,7 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient }: {
       {local && !state.readiness.runtime_ready && !serverStartRequired && !serverRestartRequired && openaiProfiles.length > 0 &&
         <div className="shell-actions"><p>{c("localRuntimeNeeded")}</p>
           <button type="button" className="secondary-button" disabled={disabled} onClick={() => void desktopApi.resumeSavedRuntime().then(onState).catch(value => setFailed(normalizeDesktopError(value)))}>{p("start")} WebCodex</button></div>}
+      {openaiProfiles.some(profile => profile.ready) && <p className="field-help">{c("chatgptNextStep")}</p>}
       {(openaiProfiles.length > 0 || state.chatgpt_activity?.observed) && <ChatgptObservation state={state} />}
       <div className="connection-list">{openaiProfiles.map(profile => <ConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.runtime_ready} busy={disabled || !canManageConnections} copied={copiedId === profile.id}
         onAction={action => void run(profile.id, action)} onSettings={onSettings}

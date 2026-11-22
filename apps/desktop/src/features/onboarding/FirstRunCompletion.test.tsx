@@ -45,6 +45,33 @@ describe("first-run completion", () => {
     rerender(wrap(<FirstReadGuide state={{...state,persistent_environment:"other"}} />));
     expect(screen.getByRole("checkbox")).not.toBeChecked();
   });
+  it("verifies a fresh projectless Runner without requiring project registration", async () => {
+    const { rerender } = render(wrap(<FirstReadGuide state={{...state, project: null}} />));
+    expect(screen.getByRole("heading", {name: "Try a read-only check in ChatGPT"})).toBeVisible();
+    expect(screen.queryByText(/Add a Project in Projects/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", {name: "Copy read request"}));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledExactlyOnceWith(
+      "Use the connected WebCodex app to check Runtime status for Runner real-runner and list its available Projects. Do not create a Project, edit files or run commands.",
+    ));
+    fireEvent.click(screen.getByRole("checkbox", {name: "I saw the Runtime status in ChatGPT"}));
+    expect(screen.getByRole("status")).toHaveTextContent("your confirmation, not an automatically observed connection test");
+    expect(state.chatgpt_activity?.observed).toBe(false);
+    rerender(wrap(<FirstReadGuide state={{...state, project: null, workspace_runner: {...state.workspace_runner!, client_id: "other-runner"}}} />));
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    expect(screen.getByText(/check Runtime status for Runner other-runner/)).toBeVisible();
+    expect(screen.queryByText(/Runner real-runner and list/)).toBeNull();
+  });
+
+  it.each(LANGUAGES)("provides a projectless request with the exact Runner in $value", async ({value}) => {
+    localStorage.setItem("webcodex.desktop.locale", value);
+    const {container} = render(wrap(<FirstReadGuide state={{...state, project: null}} />));
+    expect(container).not.toHaveTextContent("completion.");
+    fireEvent.click(screen.getByRole("button"));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledOnce());
+    expect(clipboard.writeText.mock.calls[0][0]).toContain("real-runner");
+    expect(clipboard.writeText.mock.calls[0][0]).not.toContain("{{runner}}");
+  });
+
   it("does not invent a target from a folder name, wrong Runner, or viewer", () => {
     expect(firstReadTarget({...state,project:{...state.project!,runtime_project_id:null}})).toBeNull();
     expect(firstReadTarget({...state,project:{...state.project!,runtime_project_id:"agent:other:project"}})).toBeNull();

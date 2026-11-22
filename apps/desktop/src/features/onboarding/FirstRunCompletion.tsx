@@ -14,19 +14,20 @@ export function firstReadTarget(state: DesktopState) {
 export function FirstReadGuide({ state, onProjects }: { state: DesktopState; onProjects?: () => void }) {
   const { t } = useLocale(); const p = useProduct();
   const target = firstReadTarget(state);
+  const runner = state.topology?.runner.kind === "local" ? state.workspace_runner?.client_id : null;
   const identity = JSON.stringify([state.persistent_environment, state.workspace_runner?.client_id, target?.project]);
   // An ephemeral user report never changes native observation or readiness.
   const [reportedIdentity, setReportedIdentity] = useState<string | null>(null);
   const [copiedIdentity, setCopiedIdentity] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
   useEffect(() => { setReportedIdentity(null); setCopiedIdentity(null); setCopyFailed(false); }, [identity]);
-  const prompt = target ? t("completion.prompt", target) : null;
+  const prompt = target ? t("completion.prompt", target) : runner ? t("completion.runtimePrompt", { runner }) : null;
   const localRunner = state.topology?.runner.kind === "local";
   const busy = Boolean(state.current_operation);
   return <section className="form-card first-read-guide" aria-labelledby="first-read-title">
-    <h2 id="first-read-title">{t("completion.read")}</h2>
-    {target && prompt ? <>
-      <dl className="completion-identities"><div><dt>{t("completion.runnerId")}</dt><dd><code>{target.runner}</code></dd></div><div><dt>{t("completion.projectId")}</dt><dd><code>{target.project}</code></dd></div></dl>
+    <h2 id="first-read-title">{t(target ? "completion.read" : "completion.runtimeRead")}</h2>
+    {runner && prompt ? <>
+      <dl className="completion-identities"><div><dt>{t("completion.runnerId")}</dt><dd><code>{runner}</code></dd></div>{target && <div><dt>{t("completion.projectId")}</dt><dd><code>{target.project}</code></dd></div>}</dl>
       <p className="completion-prompt">{prompt}</p>
       <button type="button" className="secondary-button" disabled={busy} onClick={() => {
         setCopyFailed(false);
@@ -34,8 +35,8 @@ export function FirstReadGuide({ state, onProjects }: { state: DesktopState; onP
       }}>{t(copiedIdentity === identity ? "completion.copied" : "completion.copy")}</button>
       {copyFailed && <p role="alert" className="workspace-notice">{t("completion.copyFailed")}</p>}
       <label className="checkbox-row"><input type="checkbox" checked={reportedIdentity === identity} disabled={busy}
-        onChange={event => setReportedIdentity(event.target.checked ? identity : null)} />{t("completion.confirm")}</label>
-      {reportedIdentity === identity && <p className="field-help" role="status">{t("completion.reported")}</p>}
+        onChange={event => setReportedIdentity(event.target.checked ? identity : null)} />{t(target ? "completion.confirm" : "completion.runtimeConfirm")}</label>
+      {reportedIdentity === identity && <p className="field-help" role="status">{t(target ? "completion.reported" : "completion.runtimeReported")}</p>}
     </> : <>
       <p>{t(!localRunner ? "completion.noRunner" : !state.workspace_runner ? "completion.identityPending" : "completion.projectNeeded")}</p>
       {localRunner && onProjects && <button type="button" className="secondary-button" disabled={busy} onClick={onProjects}>{p("projects")}</button>}

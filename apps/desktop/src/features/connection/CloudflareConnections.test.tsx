@@ -25,7 +25,7 @@ describe("Cloudflare connection configuration",()=>{
     fireEvent.change(screen.getByLabelText("Tunnel ID"),{target:{value:"named-id"}});
     fireEvent.change(screen.getByLabelText("Fixed HTTPS origin"),{target:{value:"https://mcp.example/"}});
     fireEvent.change(screen.getByLabelText("Tunnel token"),{target:{value:"private-named-token"}});
-    fireEvent.click(screen.getByRole("button",{name:"Save and apply"}));
+    fireEvent.click(screen.getByRole("button",{name:"Save"}));
     await waitFor(()=>expect(saved?.provider).toEqual({kind:"cloudflare_named",public_origin:"https://mcp.example",tunnel_id:"named-id"}));
     expect(saved).toMatchObject({cloudflare_token:"private-named-token",api_key:null,host_mode:"embedded",expected_revision:null});
     expect(screen.getByLabelText("Tunnel token")).toHaveValue("");
@@ -39,7 +39,7 @@ describe("Cloudflare connection configuration",()=>{
     expect(screen.queryByLabelText("API key")).toBeNull();expect(screen.queryByLabelText("Tunnel ID")).toBeNull();expect(screen.queryByLabelText("Tunnel token")).toBeNull();
     expect(screen.getByText(/addresses change on reconnect/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"),{target:{value:"Quick"}});
-    fireEvent.click(screen.getByRole("button",{name:"Save and apply"}));
+    fireEvent.click(screen.getByRole("button",{name:"Save"}));
     await waitFor(()=>expect(saved?.provider).toEqual({kind:"cloudflare_quick"}));
     expect(saved).toMatchObject({cloudflare_token:null,api_key:null,tunnel_id:"",oauth_dynamic_registration_enabled:false});
   });
@@ -47,7 +47,7 @@ describe("Cloudflare connection configuration",()=>{
     const onSetup=vi.fn(),onClose=vi.fn();
     render(wrap(<ConnectionEditor profile={null} persistentLocal={false} onState={vi.fn()} onClose={onClose} onSetup={onSetup} />));
     selectOption(screen.getByRole("combobox", { name: "Connection provider" }), "cloudflare_quick");
-    expect(screen.getByRole("button",{name:"Save and apply"})).toBeDisabled();
+    expect(screen.getByRole("button",{name:"Save"})).toBeDisabled();
     fireEvent.click(screen.getByRole("button",{name:"Connect Gemini"}));
     expect(onSetup).toHaveBeenCalledOnce();expect(onClose).toHaveBeenCalledOnce();expect(api.saveTunnelProfile).not.toHaveBeenCalled();
   });
@@ -57,7 +57,7 @@ describe("Cloudflare connection configuration",()=>{
     api.saveTunnelProfile.mockImplementation(async request=>{saved=structuredClone(request);return {};});
     render(wrap(<ConnectionEditor profile={profile} persistentLocal onState={vi.fn()} onClose={vi.fn()} />));
     expect(screen.getByLabelText("Tunnel token")).toHaveValue("");expect(screen.getByRole("combobox", { name: "Connection provider" })).toBeDisabled();expect(screen.getByLabelText("Tunnel ID")).toBeDisabled();
-    fireEvent.click(screen.getByRole("button",{name:"Save and apply"}));
+    fireEvent.click(screen.getByRole("button",{name:"Save"}));
     await waitFor(()=>expect(saved).toMatchObject({id:"cf",expected_revision:4,cloudflare_token:null}));
   });
   it("omits an untouched DCR policy on edit and explains explicit revocation", async () => {
@@ -65,12 +65,12 @@ describe("Cloudflare connection configuration",()=>{
     render(wrap(<ConnectionEditor profile={profile} persistentLocal onState={vi.fn()} onClose={vi.fn()} />));
     const policy = screen.getByRole("checkbox", {name: "Allow automatic OAuth client registration"});
     expect(policy).toBeChecked();
-    fireEvent.click(screen.getByRole("button", {name: "Save and apply"}));
+    fireEvent.click(screen.getByRole("button", {name: "Save"}));
     await waitFor(() => expect(policy).toBeEnabled());
     expect(api.saveTunnelProfile.mock.calls[0][0]).not.toHaveProperty("oauth_dynamic_registration_enabled");
     fireEvent.click(policy);
     expect(screen.getByText(/revokes dynamically registered clients/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", {name: "Save and apply"}));
+    fireEvent.click(screen.getByRole("button", {name: "Save"}));
     await waitFor(() => expect(api.saveTunnelProfile.mock.lastCall?.[0]).toMatchObject({oauth_dynamic_registration_enabled:false,expected_revision:profile.revision}));
   });
 });
@@ -245,7 +245,7 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
       .mockResolvedValue({...status, lifecycle: "running", registration_available: true});
     render(card());
     expect(await screen.findByText("No verified public MCP address yet")).toBeInTheDocument();
-    expect(screen.getByText(/Connect Gemini to prepare a public MCP address/)).toBeInTheDocument();
+    expect(await screen.findByText(/Connect Gemini to prepare a public MCP address/)).toBeInTheDocument();
     expect(screen.queryByText("https://current.example/mcp")).toBeNull();
     expect(screen.queryByRole("button", {name: "Copy MCP address"})).toBeNull();
     fireEvent.click(screen.getByRole("button", {name: "Start public connection"}));

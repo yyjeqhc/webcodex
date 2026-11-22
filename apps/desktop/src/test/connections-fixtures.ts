@@ -8,7 +8,7 @@ export function connectionFixture(overrides: Partial<TunnelConnection> = {}): Tu
     lifecycle: "running", pid: 100, health: "healthy", last_error: null, ready: true,
     process_started: true, process_ready: true, tunnel_ready: true, local_mcp_ready: true,
     failure_stage: null, reason_code: null, auto_proxy_used: null,
-    runtime_directory: null, local_mcp_url: "http://127.0.0.1:62645/mcp", logs: [], ...overrides,
+    runtime_directory: null, local_mcp_url: "http://127.0.0.1:62645/mcp", logs: [], configuration_id: overrides.provider && overrides.provider.kind !== "openai" ? "cf-version" : undefined, ...overrides,
   };
 }
 export function connectionSnapshot(...profiles: TunnelConnection[]): ConnectionsSnapshot {

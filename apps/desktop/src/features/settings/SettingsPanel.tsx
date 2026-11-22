@@ -16,6 +16,8 @@ import { PowerShellInstallGuidance } from "./PowerShellInstallGuidance";
 import { APPEARANCES, useAppearance } from "../../hooks/useAppearance";
 import { AccentPicker } from "../../components/AccentPicker";
 import { RunnerCapacityPanel } from "./RunnerCapacityPanel";
+import { BrowserRuntimeStatus } from "../dashboard/BrowserRuntimeStatus";
+import { WorkspaceStatus } from "../workspace/WorkspaceStatus";
 import { RuntimePanel } from "./RuntimePanel";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { AboutPanel } from "./AboutPanel";
@@ -221,6 +223,7 @@ function SettingsView({
       {visited.includes("access") && <ComputerPermissions />}
       </div>
       <div id="desktop-settings-diagnostics" hidden={section !== "diagnostics"}>
+        {section === "diagnostics" && <><WorkspaceStatus state={state} /><BrowserRuntimeStatus state={state} /></>}
         {visited.includes("diagnostics") && <DiagnosticsPanel state={state} onState={onState} onActivity={onActivity} onRuntime={() => selectSection("runtime")} onConnection={onConnection} />}
       </div>
       <div id="desktop-settings-network" hidden={section !== "network"} className="settings-network">

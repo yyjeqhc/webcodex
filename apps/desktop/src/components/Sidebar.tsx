@@ -5,7 +5,6 @@ import type { DesktopState } from "../models/topology";
 import { LANGUAGES, useLocale, type MessageKey } from "../i18n/locale";
 import { useProduct } from "../i18n/product";
 import { useConnectionsTools } from "../i18n/connections-tools";
-import { desktopStatusPresentation, statusKey } from "../features/workspace/WorkspaceStatus";
 import { useAppearance } from "../hooks/useAppearance";
 import { useShortcutHints } from "../hooks/useShortcutHints";
 import { AppearanceControls } from "../../../../frontend/src/ui/AppearanceControls";
@@ -29,7 +28,6 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
     "Accent color": "accent.label", "Custom color": "accent.custom",
     Appearance: "appearance.label", System: "appearance.system", Light: "appearance.light", Dark: "appearance.dark",
   };
-  const presentation = desktopStatusPresentation(state, p);
   useShortcutHints();
   return (
       <aside className="sidebar">
@@ -82,10 +80,10 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
             </Menu.Dropdown>
           </Menu>
         </div>
-        <div className="sidebar-status">
-          <i className={`status-dot ${presentation.primaryReady ? "ready" : "unknown"}`} aria-hidden="true" />
-          <div><strong>{presentation.primaryLabel}<span className="sidebar-service-state"> · {p(statusKey(presentation.primaryStatus))}</span></strong><span>{presentation.connectionText}</span></div>
-        </div>
+        {state.topology && <div className="sidebar-status">
+          <i className={`status-dot ${state.readiness.runtime_ready ? "ready" : "unknown"}`} aria-hidden="true" />
+          <strong>WebCodex · {state.readiness.runtime_ready ? p("running") : state.current_operation || state.readiness.server === "unknown" || state.readiness.runner === "unknown" ? t("common.checking") : state.readiness.server === "stopped" ? p("stopped") : t("common.error")}</strong>
+        </div>}
       </aside>
   );
 }

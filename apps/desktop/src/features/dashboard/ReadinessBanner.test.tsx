@@ -20,7 +20,7 @@ it("shows the precise failed optional provider on Home with recovery navigation"
   expect(screen.getByText(/Your configuration is saved/)).toBeVisible();
   fireEvent.click(screen.getByRole("button",{name:"Edit or disable provider"}));
   expect(onProviders).toHaveBeenCalledWith("mcp");
-  expect(screen.getByRole("button",{name:"Start Runtime"})).toBeEnabled();
+  expect(screen.queryByRole("button",{name:"Start WebCodex"})).toBeNull();
   expect(screen.queryByRole("button",{name:"Select Runtime folder…"})).not.toBeInTheDocument();
 });
 
@@ -37,7 +37,7 @@ it("refreshes terminal native state after a failed start instead of keeping Star
   const initial={...stopped,runtime_error:null};
   api.resumeSavedRuntime.mockRejectedValue(failure); api.getState.mockResolvedValue(stopped);
   const {onState}=show(initial);
-  fireEvent.click(screen.getByRole("button",{name:"Start Runtime"}));
+  fireEvent.click(screen.getByRole("button",{name:"Start WebCodex"}));
   await waitFor(()=>expect(onState).toHaveBeenCalledWith(stopped));
   expect(screen.getByRole("alert")).toHaveTextContent("Browser tools");
   expect(screen.queryByRole("heading",{name:"Runtime is starting"})).not.toBeInTheDocument();
@@ -46,7 +46,7 @@ it("refreshes terminal native state after a failed start instead of keeping Star
 it("keeps the concrete error when the follow-up state observation also fails",async()=>{
   api.resumeSavedRuntime.mockRejectedValue(failure); api.getState.mockRejectedValue(new Error("observation failed"));
   const {onState}=show({...stopped,runtime_error:null});
-  fireEvent.click(screen.getByRole("button",{name:"Start Runtime"}));
+  fireEvent.click(screen.getByRole("button",{name:"Start WebCodex"}));
   await screen.findByText("MCP · Browser tools");
   expect(onState).not.toHaveBeenCalled();
 });
@@ -59,7 +59,7 @@ it("does not offer Start Runtime or Select Runtime folder on service ownership c
   };
   show({ ...stopped, runtime_error: ownershipError });
   expect(screen.getByRole("alert")).toHaveTextContent("Cannot confirm local service or process ownership");
-  expect(screen.queryByRole("button", { name: "Start Runtime" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Start WebCodex" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Select Runtime folder…" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Inspect conflicting services" })).toBeEnabled();
 });
@@ -74,7 +74,7 @@ it("clears stale local banner error when environment identity changes", async ()
       <ReadinessBanner state={initial} onState={vi.fn()} onDiagnostics={vi.fn()} onRuntime={vi.fn()} onConnection={vi.fn()} />
     </LocaleProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Start Runtime" }));
+  fireEvent.click(screen.getByRole("button", { name: "Start WebCodex" }));
   await screen.findByRole("alert");
   view.rerender(
     <LocaleProvider>

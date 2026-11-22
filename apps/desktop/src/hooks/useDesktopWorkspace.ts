@@ -30,6 +30,7 @@ export function useDesktopWorkspace() {
   }, [selectPage]);
   const [startupAttempt, setStartupAttempt] = useState(0);
   const [windowFocused, setWindowFocused] = useState(true);
+  const latestGeneration = useRef(0);
   const stateVersionRef = useRef(0);
   const activeIdentityRef = useRef<string | null>(null);
   const errorIdentityRef = useRef<string | null>(null);
@@ -87,6 +88,10 @@ export function useDesktopWorkspace() {
   const closeSetup = () => setNavigation(setupOrigin ?? "home");
 
   const commitState = useCallback((next: DesktopState) => {
+    if (next.state_generation !== undefined) {
+      if (next.state_generation < latestGeneration.current) return;
+      latestGeneration.current = next.state_generation;
+    }
     stateVersionRef.current += 1;
     const reconciled = reconcileDesktopStateErrors(next);
     const nextIdentity = desktopIdentity(reconciled);
@@ -129,6 +134,7 @@ export function useDesktopWorkspace() {
     stateVersionRef.current += 1;
     setState((current) => {
       if (!current) return next;
+      if (desktopIdentity(current) !== desktopIdentity(next)) return current;
       if (current.chatgpt_activity?.observed && !next.chatgpt_activity?.observed) return current;
       return { ...current, chatgpt_activity: next.chatgpt_activity };
     });
@@ -297,10 +303,11 @@ export function useDesktopWorkspace() {
   }, [commitChatgptActivity, shouldObserveChatgptActivity]);
 
   useEffect(() => {
-    if (navigation === "activity") {
-      void desktopApi.activity().then(setActivity).catch(() => undefined);
-    }
-  }, [navigation, state?.activity_sequence]);
+    if (navigation !== "activity" && !(navigation === "home" && hasLoadedState && state?.topology)) return;
+    let current = true;
+    void desktopApi.activity().then(entries => { if (current) setActivity(entries ?? []); }).catch(() => undefined);
+    return () => { current = false; };
+  }, [navigation, state?.activity_sequence, hasLoadedState, Boolean(state?.topology)]);
 
   const runStateOperation = async (operation: () => Promise<DesktopState>) => {
     setError(null);

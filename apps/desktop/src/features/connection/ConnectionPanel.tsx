@@ -18,11 +18,13 @@ import { ConnectionEditor } from "./ConnectionEditor";
 import { GeminiConnections } from "./GeminiConnections";
 import { ConnectionCard } from "./ConnectionCard";
 
-export function ConnectionPanel({ state, onState, onSettings }: {
+export function ConnectionPanel({ state, onState, onSettings, initialClient }: {
+  initialClient?: "chatgpt" | "gemini";
   state: DesktopState;
   onState: (state: DesktopState) => void;
   onSettings: (section: "network" | "runtime" | "diagnostics") => void;
 }) {
+  useEffect(() => { if (initialClient) document.getElementById(initialClient + "-heading")?.focus(); }, [initialClient]);
   const p = useProduct();
   const c = useConnectionsTools();
   const { t } = useLocale();
@@ -183,11 +185,14 @@ export function ConnectionPanel({ state, onState, onSettings }: {
     {state.topology?.experience !== "quick_share" && <section className="chatgpt-connection" aria-labelledby="chatgpt-heading">
       <header className="workspace-section-heading">
         <div>
-          <h2 id="chatgpt-heading">{c("connectChatgpt")}</h2>
+          <h2 id="chatgpt-heading" tabIndex={-1}>{c("connectChatgpt")}</h2>
           <p className="field-help">{c("chatgptSectionHelp")}</p>
         </div>
         {canManageConnections && !profiles.config_error && <button type="button" className={openaiProfiles.length ? "secondary-button" : "primary-button"} disabled={disabled} onClick={() => { setSaved(false); setEditor({ profile: null, chatgptPreset: true }); }}>{c("connectChatgpt")}</button>}
       </header>
+      {local && !state.readiness.runtime_ready && !serverStartRequired && !serverRestartRequired && openaiProfiles.length > 0 &&
+        <div className="shell-actions"><p>{c("localRuntimeNeeded")}</p>
+          <button type="button" className="secondary-button" disabled={disabled} onClick={() => void desktopApi.resumeSavedRuntime().then(onState).catch(value => setFailed(normalizeDesktopError(value)))}>{p("start")} WebCodex</button></div>}
       {(openaiProfiles.length > 0 || state.chatgpt_activity?.observed) && <ChatgptObservation state={state} />}
       <div className="connection-list">{openaiProfiles.map(profile => <ConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.runtime_ready} busy={disabled || !canManageConnections} copied={copiedId === profile.id}
         onAction={action => void run(profile.id, action)} onSettings={onSettings}

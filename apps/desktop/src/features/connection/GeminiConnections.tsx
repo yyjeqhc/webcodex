@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import type { TunnelConnection } from "../../models/connections-tools";
+import { defaultGeminiProfile } from "./gemini-status";
 import { CloudflareConnectionCard } from "./CloudflareConnectionCard";
 
 interface Props {
@@ -21,9 +22,7 @@ export function GeminiConnections({ profiles, preparation, busy, preparing, canS
   const c = useConnectionsTools();
   const [selection, setSelection] = useState<{ id: string } | { kind: "cloudflare_named" | "cloudflare_quick" } | null>(null);
   const selected = profiles.find(profile => selection && ("id" in selection ? profile.id === selection.id : profile.provider?.kind === selection.kind))
-    ?? profiles.find(profile => profile.autostart)
-    ?? profiles.find(profile => profile.oauth_dynamic_registration_enabled)
-    ?? profiles[0];
+    ?? defaultGeminiProfile(profiles);
   const named = selected?.provider?.kind === "cloudflare_named";
   const chooseAlternative = () => {
     const alternative = profiles.find(profile => profile.provider?.kind === (named ? "cloudflare_quick" : "cloudflare_named"));
@@ -38,7 +37,6 @@ export function GeminiConnections({ profiles, preparation, busy, preparing, canS
     <header className="workspace-section-heading">
       <h2 id="gemini-heading" tabIndex={-1}>{c("connectGemini")}</h2>
     </header>
-    <p className="gemini-entry-help">{c("geminiEntryHelp")}</p>
     {preparation ?? <>
       {preparing && <p role="status">{c("preparingConnection")}</p>}
       {!selected && <>

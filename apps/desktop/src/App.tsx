@@ -30,6 +30,7 @@ export default function App() {
 function DesktopApp() {
   const { t } = useLocale();
   const [completionEnvironment, setCompletionEnvironment] = useState<string | null>(null);
+  const [connectionFocus, setConnectionFocus] = useState<"chatgpt" | "gemini">();
   const [extensionTab, setExtensionTab] = useState<ExtensionTab>();
   const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | "access" | undefined>();
   const { state, activity, navigation, previousPage, setNavigation, refreshing, preserveWorkspacePollDeadline, error, setError, cancelSubmittingId, showSetup, setupOrigin, closeSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation } = useDesktopWorkspace();
@@ -152,6 +153,7 @@ function DesktopApp() {
             onDiagnostics={() => openSettings("diagnostics")}
             chooseModeFirst={showSetup}
             onComplete={next => {
+              if (!setupOrigin && next?.readiness.runtime_ready) { setNavigation("connection"); return; }
               closeSetup();
               setCompletionEnvironment(next?.readiness.runtime_ready && (!setupOrigin || setupOrigin === "home") ? next?.environment_setup?.environment_id ?? next?.persistent_environment ?? null : null);
             }}
@@ -161,8 +163,8 @@ function DesktopApp() {
             state={state}
             refreshing={refreshing}
             onRefresh={refresh}
-            onResumeRuntime={() => void resumeRuntime()}
-            onChangeSetup={openSetup}
+            activity={activity}
+            onConnection={client => { setConnectionFocus(client); setNavigation("connection"); }}
             onNavigate={setNavigation}
             onStopQuickShare={() => void runStateOperation(desktopApi.stopQuickShare)}
           />
@@ -170,7 +172,7 @@ function DesktopApp() {
         {navigation === "projects" && (
           <ProjectsPanel onComputerSettings={() => openSettings("access")} onState={commitState} />
         )}
-        {navigation === "connection" && <ConnectionPanel key={state.persistent_environment} state={state} onState={commitState} onSettings={openSettings} />}
+        {navigation === "connection" && <ConnectionPanel initialClient={connectionFocus} key={state.persistent_environment} state={state} onState={commitState} onSettings={openSettings} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
         {navigation === "extensions" && <ExtensionsPanel state={state} onState={commitState} initialTab={extensionTab} />}
         {navigation === "console" && <RuntimeConsolePanel state={state} onSettings={() => openSettings("runtime")} />}

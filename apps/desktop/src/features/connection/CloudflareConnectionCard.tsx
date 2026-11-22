@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { PasswordInput, TextInput } from "@mantine/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { desktopApi } from "../../lib/desktop-api";
+import { verifiedPublicOrigin } from "./gemini-status";
 import { safeIdentifier } from "../../lib/desktop-errors";
 import { useCloudflareControl } from "./useCloudflareControl";
 import type { CloudflareConnectionStatus, CloudflareOAuthHandoff, TunnelConnection } from "../../models/connections-tools";
@@ -110,17 +111,7 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
   const matchesProfile = canStart && !ingressNotApplied && !profile.server_restart_required && status?.configured_revision === profile.revision;
   const running = matchesProfile && status?.lifecycle === "running";
   const observedOrigin = status?.public_origin;
-  // A seen HTTPS origin is not proof that OAuth metadata and forwarding
-  // are ready. Make the distinction visible without offering an unsafe copy.
-  let candidateOrigin: string | null = null;
-  if (observedOrigin) {
-    try {
-      const url = new URL(observedOrigin);
-      if (url.protocol === "https:" && url.origin === observedOrigin &&
-          (profile.provider?.kind !== "cloudflare_named" || profile.provider.public_origin === observedOrigin)) candidateOrigin = observedOrigin;
-    } catch { /* Untrusted or malformed observations are never displayed. */ }
-  }
-  const origin = running && candidateOrigin && (!dcr || (status.registration_available && status.applied_revision === profile.revision)) ? candidateOrigin : null;
+  const origin = running ? verifiedPublicOrigin(profile, status, dcr) : null;
   const feedback = handoffFeedback?.origin === origin && handoffFeedback?.generation === status?.process_generation &&
     handoffFeedback?.instance === status?.server_instance_id ? handoffFeedback?.kind : null;
   const handoff = async (action: "copy" | "open") => {
@@ -130,8 +121,7 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
       const now = await desktopApi.cloudflareConnection({action: "status", profile_id: profile.id});
       if (!alive.current || now.profile_id !== profile.id || now.configuration_id !== profile.configuration_id || now.lifecycle !== "running" ||
           now.server_instance_id !== status.server_instance_id || now.process_generation !== status.process_generation ||
-          now.configured_revision !== profile.revision || now.public_origin !== origin ||
-          (dcr && (!now.registration_available || now.applied_revision !== profile.revision))) {
+          verifiedPublicOrigin(profile, now, dcr) !== origin) {
         if (alive.current) void refresh();
         return;
       }
@@ -194,7 +184,7 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     {((origin && dcr) || !advanced) && <p>{status?.observed_authorization ? c("oauthObserved") : c(dcr ? "awaitAuthorization" : "oauthNotObserved")}</p>}
     {origin && status?.observed_tool_call && <p>{c("toolObserved")}</p>}
     {registrationUnavailable && <p role="status">{c(discoveryRetry ? "discoveryRetry" : "registrationUnavailable")}</p>}
-    {reason === "cloudflare_binary_unavailable" && <p role="alert">{c("installCloudflared")}</p>}
+    {!awaitingGeminiUrl && reason === "cloudflare_binary_unavailable" && <p role="alert">{c("installCloudflared")}</p>}
     {routeMismatch && !quick && <p role="alert">{c("namedRouteHelp")}</p>}
     {reason === "cloudflare_already_active" && <p role="alert">{c("otherCloudflareActive")}</p>}
     {profile.server_restart_required && <p role="status">{c("profileRestartHelp")}</p>}
@@ -207,7 +197,7 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
       />
     )}
     {identityRepair && !awaitingGeminiUrl && <p role="alert">{c("cloudflareIdentityRepair")}</p>}
-    {(failed || identityRepair || (registrationUnavailable && !discoveryRetry) || reason === "cloudflare_binary_unavailable") && onRepair && <button type="button" className="secondary-button" disabled={disabled} onClick={onRepair}>{c("openRuntimeSetup")}</button>}
+    {identityRepair && onRepair && <button type="button" className="secondary-button" disabled={disabled} onClick={onRepair}>{c("openRuntimeSetup")}</button>}
     <div className="connection-actions">
       {(!onEnableRegistration || active) && <button type="button" className={active ? "secondary-button" : "primary-button"} disabled={disabled || !status || !canStart || unselectedService || profile.server_restart_required || status.configured_revision !== profile.revision || (!quick && !profile.credential_present)} onClick={() => void run(active ? "restart" : "start")}>{active ? c("reconnect") : dcr ? c("startPublicTunnel") : p("start")}</button>}
       {active && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run("stop")}>{p("stop")}</button>}

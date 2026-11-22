@@ -262,8 +262,8 @@ describe("product workspace task flows", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Server connectionRunning");
     expect(screen.getByRole("status")).not.toHaveTextContent("Local Runner");
     expect(screen.getByRole("status")).toHaveTextContent("Desktop Tunnel connectionsNo Tunnel connections saved in Desktop");
-    expect(screen.getByRole("complementary")).toHaveTextContent("Server connection · Running");
-    expect(screen.getByRole("complementary")).toHaveTextContent("No Tunnel connections saved in Desktop");
+    expect(screen.getByRole("complementary")).toHaveTextContent("WebCodex ·");
+    expect(screen.getByRole("complementary")).not.toHaveTextContent("No Tunnel connections saved in Desktop");
     expect(screen.getByRole("complementary")).not.toHaveTextContent("Local Runner");
     expect(screen.queryByText("ChatGPT connected")).not.toBeInTheDocument();
     expect(native.invoke.mock.calls.every(([command]) => command === "workspace_query")).toBe(true);
@@ -278,7 +278,7 @@ describe("product workspace task flows", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Server connectionRunning");
     expect(screen.getByRole("status")).not.toHaveTextContent("Local Runner");
     expect(screen.getByRole("status")).toHaveTextContent("1 of 1 Desktop Tunnels locally ready");
-    expect(screen.getByRole("complementary")).toHaveTextContent("Server connection · Running");
+    expect(screen.getByRole("complementary")).toHaveTextContent("WebCodex ·");
   });
 
   it("does not invent a configured Runner before topology is available", () => {
@@ -292,7 +292,7 @@ describe("product workspace task flows", () => {
     const full = { ...state, persistent_environment, readiness: { ...state.readiness, runner: "error" as const, runtime_ready: false } };
     render(wrap(<><WorkspaceStatus state={full} /><Sidebar state={full} navigation="home" setNavigation={vi.fn()} /></>, full));
     expect(screen.getByRole("status")).toHaveTextContent("Local RunnerUnavailable");
-    expect(screen.getByRole("complementary")).toHaveTextContent("Local Runner · Unavailable");
+    expect(screen.getByRole("complementary")).toHaveTextContent("WebCodex ·");
   });
 
   it("shows the configured Runner when joining an independently managed Server", () => {
@@ -300,7 +300,7 @@ describe("product workspace task flows", () => {
       topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://central.example" } }, connections: connectionSnapshot() };
     render(wrap(<><WorkspaceStatus state={joined} /><Sidebar state={joined} navigation="home" setNavigation={vi.fn()} /></>, joined));
     expect(screen.getByRole("status")).toHaveTextContent("Local RunnerRunning");
-    expect(screen.getByRole("complementary")).toHaveTextContent("Local Runner · Running");
+    expect(screen.getByRole("complementary")).toHaveTextContent("WebCodex ·");
     expect(screen.getByRole("status")).toHaveTextContent("No Tunnel connections saved in Desktop");
   });
 
@@ -309,7 +309,7 @@ describe("product workspace task flows", () => {
       readiness: { ...state.readiness, exposure: "remote_ready" as const }, connections: connectionSnapshot() };
     render(wrap(<><WorkspaceStatus state={quickShare} /><Sidebar state={quickShare} navigation="home" setNavigation={vi.fn()} /></>, quickShare));
     expect(screen.getByRole("status")).toHaveTextContent("Quick ShareRunning");
-    expect(screen.getByRole("complementary")).toHaveTextContent("Quick Share · Running");
+    expect(screen.getByRole("complementary")).toHaveTextContent("WebCodex ·");
     expect(screen.queryByText("Desktop Tunnel connections")).not.toBeInTheDocument();
     expect(screen.queryByText("No Tunnel connections saved in Desktop")).not.toBeInTheDocument();
   });
@@ -317,15 +317,15 @@ describe("product workspace task flows", () => {
   it("keeps a viewer read-only without offering a local project picker", () => {
     const viewer = { ...state, project: null, saved_projects: [], workspace_runner: null,
       topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://central.example" }, runner: { kind: "none" as const } } } as DesktopState;
-    render(wrap(<Dashboard state={viewer} refreshing={false} onRefresh={vi.fn()} onResumeRuntime={vi.fn()}
-      onChangeSetup={vi.fn()} onNavigate={vi.fn()} onStopQuickShare={vi.fn()} />, viewer));
+    render(wrap(<Dashboard state={viewer} refreshing={false} onRefresh={vi.fn()} activity={[]}
+      onConnection={vi.fn()} onNavigate={vi.fn()} onStopQuickShare={vi.fn()} />, viewer));
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
   });
   it("describes locally ready tunnels without counting a live but unhealthy process as ready", () => {
     const selected = { ...state, connections: connectionSnapshot(connectionFixture({ ready: false, process_started: true, lifecycle: "running" })) };
     render(wrap(<><WorkspaceStatus state={selected} /><Sidebar state={selected} navigation="home" setNavigation={vi.fn()} /></>, selected));
     expect(screen.getByRole("status")).toHaveTextContent("0 of 1 Desktop Tunnels locally ready");
-    expect(screen.getByRole("complementary")).toHaveTextContent("0 of 1 Desktop Tunnels locally ready");
+    expect(screen.getByRole("complementary")).not.toHaveTextContent("0 of 1 Desktop Tunnels locally ready");
     expect(screen.queryByText("ChatGPT connected")).not.toBeInTheDocument();
   });
   it.each([

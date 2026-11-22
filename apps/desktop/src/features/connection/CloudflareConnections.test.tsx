@@ -12,7 +12,7 @@ const clipboard=vi.hoisted(()=>({writeText:vi.fn()}));
 vi.mock("../../lib/desktop-api",()=>({desktopApi:api}));
 vi.mock("@tauri-apps/plugin-clipboard-manager",()=>clipboard);
 function wrap(content:React.ReactNode) { return <DesktopMantineProvider><LocaleProvider>{content}</LocaleProvider></DesktopMantineProvider>; }
-const status:CloudflareConnectionStatus={profile_id:"cf",server_instance_id:"server-selected",process_generation:7,lifecycle:"running",public_origin:"https://current.example",oauth_configured:false,observed_authorization:false,configured_revision:4,applied_revision:4,local_target:"http://127.0.0.1:8900",reason_code:null};
+const status:CloudflareConnectionStatus={profile_id:"cf",configuration_id:"cf-version",server_instance_id:"server-selected",process_generation:7,lifecycle:"running",public_origin:"https://current.example",oauth_configured:false,observed_authorization:false,configured_revision:4,applied_revision:4,local_target:"http://127.0.0.1:8900",reason_code:null};
 beforeEach(()=>{vi.resetAllMocks();localStorage.setItem("webcodex.desktop.locale","en-US");api.saveTunnelProfile.mockResolvedValue({});api.cloudflareConnection.mockResolvedValue(status);clipboard.writeText.mockResolvedValue(undefined);});
 
 describe("Cloudflare connection configuration",()=>{
@@ -161,7 +161,7 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     api.cloudflareConnection.mockImplementation(async request => request.action === "stop" ? {...status,lifecycle:"stopped",public_origin:null} : status);
     mount();
     fireEvent.click(await screen.findByRole("button",{name:"Reconnect"}));
-    await waitFor(()=>expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"start",profile_id:"cf",server_instance_id:"server-selected",expected_revision:4}));
+    await waitFor(()=>expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"start",profile_id:"cf",server_instance_id:"server-selected",expected_revision:4,expected_generation:7,expected_configuration_id:"cf-version"}));
     expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"stop",profile_id:"cf",server_instance_id:"server-selected",process_generation:7});
   });
   it("clears the old Quick address and authorization observation before reconnect completes",async()=>{
@@ -175,7 +175,7 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     expect(screen.queryByText("https://current.example/mcp")).toBeNull();
     expect(screen.queryByText("OAuth authorization observed")).toBeNull();
     completeStop({...status,lifecycle:"stopped",public_origin:null});
-    await waitFor(()=>expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"start",profile_id:"cf",server_instance_id:"server-selected",expected_revision:4}));
+    await waitFor(()=>expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"start",profile_id:"cf",server_instance_id:"server-selected",expected_revision:4,expected_generation:7,expected_configuration_id:"cf-version"}));
   });
   it("withdraws the address and retains fenced Stop/Reconnect controls while forwarding is disconnected",async()=>{
     api.cloudflareConnection.mockResolvedValue({...status,lifecycle:"disconnected",reason_code:"network_disconnected",oauth_configured:true,observed_authorization:true});
@@ -241,9 +241,8 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     expect(screen.queryByText("MCP endpoint ready")).toBeNull();
   });
   it("explains where the Gemini URL comes from and reveals it only after starting and verifying Cloudflare", async () => {
-    api.cloudflareConnection.mockImplementation(async request => request.action === "status"
-      ? {...status, lifecycle: "stopped", public_origin: null, registration_available: false}
-      : {...status, lifecycle: "running", registration_available: true});
+    api.cloudflareConnection.mockResolvedValueOnce({...status, lifecycle: "stopped", public_origin: null, registration_available: false})
+      .mockResolvedValue({...status, lifecycle: "running", registration_available: true});
     render(card());
     expect(await screen.findByText("No verified public MCP address yet")).toBeInTheDocument();
     expect(screen.getByText(/Cloudflare connection is stopped/)).toBeInTheDocument();
@@ -255,16 +254,24 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     fireEvent.click(screen.getByRole("button", {name: "Copy MCP address"}));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("https://current.example/mcp"));
     expect(api.cloudflareConnection).toHaveBeenCalledWith({
-      action: "start", profile_id: "cf", server_instance_id: "server-selected", expected_revision: 4,
+      action: "start", profile_id: "cf", server_instance_id: "server-selected", expected_revision: 4, expected_generation: 7, expected_configuration_id: "cf-version",
     });
   });
-  it("shows unverified Cloudflare origins only as candidates, never as a ready Gemini handoff", async () => {
+  it("withholds the observed address until public discovery verifies it", async () => {
     api.cloudflareConnection.mockResolvedValue({...status, registration_available: false, reason_code: "cloudflare_discovery_pending"});
     render(card());
     expect(await screen.findByText("No verified public MCP address yet")).toBeInTheDocument();
-    expect(screen.getByText(/Cloudflare reported an address, but the HTTPS\/OAuth checks have not passed/)).toBeInTheDocument();
+    expect(screen.queryByText("https://current.example/mcp")).toBeNull();
     expect(screen.queryByRole("button", {name: "Copy MCP address"})).toBeNull();
     expect(screen.queryByRole("button", {name: "Open Gemini"})).toBeNull();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+  });
+  it("rechecks the generation at clipboard handoff", async () => {
+    api.cloudflareConnection.mockResolvedValueOnce({...status, registration_available:true})
+      .mockResolvedValue({...status, process_generation:8, public_origin:null, registration_available:false});
+    render(card());
+    fireEvent.click(await screen.findByRole("button", {name:"Copy MCP address"}));
+    await waitFor(() => expect(screen.queryByText("https://current.example/mcp")).toBeNull());
     expect(clipboard.writeText).not.toHaveBeenCalled();
   });
   it("provides a concrete Runtime owner-repair reason instead of implying that a public URL exists", async () => {

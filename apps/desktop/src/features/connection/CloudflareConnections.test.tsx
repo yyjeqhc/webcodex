@@ -240,6 +240,54 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     expect(screen.queryByRole("button", {name:"Open Gemini"})).toBeNull();
     expect(screen.queryByText("MCP endpoint ready")).toBeNull();
   });
+  it("explains where the Gemini URL comes from and reveals it only after starting and verifying Cloudflare", async () => {
+    api.cloudflareConnection.mockImplementation(async request => request.action === "status"
+      ? {...status, lifecycle: "stopped", public_origin: null, registration_available: false}
+      : {...status, lifecycle: "running", registration_available: true});
+    render(card());
+    expect(await screen.findByText("No verified public MCP address yet")).toBeInTheDocument();
+    expect(screen.getByText(/Cloudflare connection is stopped/)).toBeInTheDocument();
+    expect(screen.queryByText("https://current.example/mcp")).toBeNull();
+    expect(screen.queryByRole("button", {name: "Copy MCP address"})).toBeNull();
+    fireEvent.click(screen.getByRole("button", {name: "Start public connection"}));
+    await waitFor(() => expect(screen.getByText("https://current.example/mcp")).toBeInTheDocument());
+    expect(screen.getByText("Gemini MCP address (copy the full URL)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Copy MCP address"}));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("https://current.example/mcp"));
+    expect(api.cloudflareConnection).toHaveBeenCalledWith({
+      action: "start", profile_id: "cf", server_instance_id: "server-selected", expected_revision: 4,
+    });
+  });
+  it("shows unverified Cloudflare origins only as candidates, never as a ready Gemini handoff", async () => {
+    api.cloudflareConnection.mockResolvedValue({...status, registration_available: false, reason_code: "cloudflare_discovery_pending"});
+    render(card());
+    expect(await screen.findByText("No verified public MCP address yet")).toBeInTheDocument();
+    expect(screen.getByText(/Cloudflare reported an address, but the HTTPS\/OAuth checks have not passed/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", {name: "Copy MCP address"})).toBeNull();
+    expect(screen.queryByRole("button", {name: "Open Gemini"})).toBeNull();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+  });
+  it("provides a concrete Runtime owner-repair reason instead of implying that a public URL exists", async () => {
+    const repair = vi.fn();
+    api.cloudflareConnection.mockResolvedValue({...status, lifecycle: "error", public_origin: null, reason_code: "cloudflare_owner_repair_required"});
+    render(wrap(<CloudflareConnectionCard profile={gemini} canStart busy={false} onEdit={vi.fn()} onDelete={vi.fn()} onRepair={repair} onEnableRegistration={vi.fn()} />));
+    expect(await screen.findByText("No verified public MCP address yet")).toBeInTheDocument();
+    expect(screen.getByText(/Repair the Environment user and Runner owner/)).toBeInTheDocument();
+    expect(screen.getByText("cloudflare_owner_repair_required")).toBeInTheDocument();
+    expect(screen.queryByRole("button", {name:"Copy MCP address"})).toBeNull();
+    fireEvent.click(screen.getByRole("button", {name: "Open Runtime setup"}));
+    expect(repair).toHaveBeenCalledOnce();
+  });
+  it("keeps legacy manual OAuth status behind a separate advanced disclosure in Gemini mode", async () => {
+    api.cloudflareConnection.mockResolvedValue({...status, registration_available: true});
+    render(wrap(<CloudflareConnectionCard profile={gemini} canStart busy={false} onEdit={vi.fn()} onDelete={vi.fn()} onEnableRegistration={vi.fn()} />));
+    expect(await screen.findByText("Gemini MCP address (copy the full URL)")).toBeInTheDocument();
+    const manual = screen.getByText("Manual OAuth client (advanced; not needed for Gemini)");
+    expect(manual.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("OAuth not configured")).not.toBeVisible();
+    expect(screen.getByRole("button", {name:"Copy MCP address"})).toBeEnabled();
+  });
+
   it("keeps the manual client address in advanced controls until app registration is enabled", async () => {
     const profile = {...gemini, oauth_dynamic_registration_enabled:false};
     render(wrap(<CloudflareConnectionCard profile={profile} canStart busy={false} onEdit={vi.fn()} onDelete={vi.fn()} onEnableRegistration={vi.fn()} />));

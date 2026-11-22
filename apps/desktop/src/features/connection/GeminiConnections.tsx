@@ -38,6 +38,7 @@ export function GeminiConnections({ profiles, preparation, busy, preparing, canS
     <header className="workspace-section-heading">
       <h2 id="gemini-heading" tabIndex={-1}>{c("connectGemini")}</h2>
     </header>
+    <p className="gemini-entry-help">{c("geminiEntryHelp")}</p>
     {preparation ?? <>
       {preparing && <p role="status">{c("preparingConnection")}</p>}
       {!selected && <>

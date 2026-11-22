@@ -78,8 +78,8 @@ ChatGPT 在不同工作目录之间切换时，不需要先停止 Runtime 或 Op
 
 打开**连接 → 连接 Gemini**。ChatGPT（OpenAI Secure Tunnel）与 Gemini（Cloudflare + OAuth）可以同时连接到同一个本机 WebCodex Server，互不冲突。如果检测到本机已有 WebCodex，点击**检查并继续**。Desktop 会先核对进程归属、项目清单、原有配置和运行中的作业，再记录迁移。阅读服务切换的影响后，再点击**确认保存并切换服务**。中断的迁移沿用原恢复记录；若上次失败的迁移未留下已安装的后台服务，可选择**清理未完成记录并重新检查**。新电脑选择**准备这台电脑 → 开始配置**。两种流程完成后都会回到 Gemini。如果本机连接的是远程 Server，请在运行该 Server 的电脑上配置 Gemini，或向管理员索取 MCP 地址。
 
-1. 点击**连接 Gemini**使用临时地址。首次会保存一个随 Server 运行的临时连接，并允许 Gemini 自动注册。如果已经保存了 Cloudflare 连接，请选择要使用的连接，按提示为该连接启用应用注册。若提示 **重启 Server**，请在可以中断当前工作的时间点击，等待 **MCP 入口已就绪**。若本机尚未安装 `cloudflared`，点击**连接 Gemini**会自动下载并校验固定版本的二进制文件。
-2. 点击 **复制 MCP 地址** 和 **打开 Gemini**。在 Gemini 网页的 **Settings → Connected Apps → Custom apps** 中添加地址并点击 **Next**。部分界面将 Connected Apps 放在 Personal Intelligence 下。浏览器跳转到 WebCodex 后，核对地址，在该页使用连接所有者的用户 PAT 登录，查看请求的权限并授权。Gemini 的表单只需 MCP 地址。
+1. 点击**连接 Gemini**创建临时 Cloudflare 连接；已有连接可直接选择，未启用应用注册时按提示启用。随后点击**启动公网连接**，等待 **MCP 入口已就绪**。若需要 **重启 Server** 才能应用新配置，请先确认当前工作可以中断；没有 `cloudflared` 时，启动会按既有受信流程下载并校验客户端。**“尚无可用于 Gemini 的公网 MCP 地址”表示连接还没就绪，不应该继续在 Gemini 中试填网址；请查看卡片上的具体原因。**
+2. 只有卡片显示 **Gemini MCP 地址（复制完整网址）** 后，才点击 **复制 MCP 地址** 和 **打开 Gemini**。Quick 地址形如 `https://实际随机域名.trycloudflare.com/mcp`，Named 地址形如 `https://你的固定域名/mcp`。**不要填写高级设置中的 `http://127.0.0.1:端口` 本机转发目标，也不能直接填写另一台 Server 的首页地址。**在 Gemini 网页的 **Settings → Connected Apps → Custom apps** 中添加地址并点击 **Next**。部分界面将 Connected Apps 放在 Personal Intelligence 下。浏览器跳转到 WebCodex 后，核对地址，在该页使用连接所有者的用户 PAT 登录，查看请求的权限并授权。Gemini 的表单只需 MCP 地址。
 3. 在 Gemini 对话中输入 `@` 并选择刚添加的应用，试着说“查看 WebCodex Runtime 状态”。Desktop 会分别显示已观察到的 OAuth 使用和本次连接中成功的 MCP 工具调用。之后直接在对话中使用工具；Gemini 可能要求确认写入操作。[Google 的自定义应用指南](https://support.google.com/gemini/answer/17209137)
 
 **长期连接**可选择**其他 Cloudflare 连接 → 使用固定地址**。选择已有 Named 连接即可复用其凭据。首次配置时填写 Cloudflare Tunnel ID、固定 HTTPS 地址和 Tunnel 令牌，选择随 Server 运行或独立服务及自动启动。在 Cloudflare 中把固定主机名转发到**高级连接设置**中显示的本机转发目标。一个 Server 只允许一个活动的 Cloudflare 连接。切换时先停止正在使用的连接，并在编辑配置时明确选择哪个随服务启动。

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { PasswordInput, TextInput } from "@mantine/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { desktopApi } from "../../lib/desktop-api";
+import { safeIdentifier } from "../../lib/desktop-errors";
 import { useCloudflareControl } from "./useCloudflareControl";
 import type { CloudflareConnectionStatus, CloudflareOAuthHandoff, TunnelConnection } from "../../models/connections-tools";
 import { useConnectionsTools } from "../../i18n/connections-tools";
@@ -92,14 +93,17 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
   const matchesProfile = canStart && !ingressNotApplied && !profile.server_restart_required && status?.configured_revision === profile.revision;
   const running = matchesProfile && status?.lifecycle === "running";
   const observedOrigin = status?.public_origin;
-  let origin: string | null = null;
-  if (running && observedOrigin && (!dcr || status.registration_available)) {
+  // A seen HTTPS origin is not proof that OAuth metadata and forwarding
+  // are ready. Make the distinction visible without offering an unsafe copy.
+  let candidateOrigin: string | null = null;
+  if (observedOrigin) {
     try {
       const url = new URL(observedOrigin);
       if (url.protocol === "https:" && url.origin === observedOrigin &&
-          (profile.provider?.kind !== "cloudflare_named" || profile.provider.public_origin === observedOrigin)) origin = observedOrigin;
-    } catch { /* A malformed observation has no usable public address. */ }
+          (profile.provider?.kind !== "cloudflare_named" || profile.provider.public_origin === observedOrigin)) candidateOrigin = observedOrigin;
+    } catch { /* Untrusted or malformed observations are never displayed. */ }
   }
+  const origin = running && candidateOrigin && (!dcr || status.registration_available) ? candidateOrigin : null;
   const feedback = handoffFeedback?.origin === origin && handoffFeedback?.generation === status?.process_generation &&
     handoffFeedback?.instance === status?.server_instance_id ? handoffFeedback?.kind : null;
   const handoff = async (action: "copy" | "open") => {
@@ -112,17 +116,31 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     if (alive.current) setHandoffFeedback({origin, instance: status.server_instance_id, generation: status.process_generation, kind});
   };
   const reason = status?.reason_code ?? failureCode;
+  const safeReason = safeIdentifier(reason);
   const identityRepair = reason === "cloudflare_identity_repair_required" || reason === "cloudflare_owner_repair_required" || reason === "cloudflare_runner_unavailable";
   const routeMismatch = reason === "cloudflare_forwarding_mismatch" || reason === "cloudflare_forwarding_timeout";
   const discoveryRetry = reason === "cloudflare_discovery_unavailable";
   const verifying = reason === "cloudflare_discovery_pending";
   const registrationUnavailable = dcr && running && !verifying && !status.registration_available;
   const manualButton = <button type="button" className="secondary-button" disabled={disabled || !running || !observedOrigin} onClick={() => setOauth(status)}>{c("configureOauth")}</button>;
-  const address = origin && <div className="connection-id"><span>MCP</span><code>{origin}/mcp</code>
+  const address = origin && <div className="connection-id gemini-mcp-address" role="status">
+      <strong>{dcr ? c("publicUrlReadyLabel") : "MCP"}</strong>
+      <code>{origin}/mcp</code>
       <button type="button" className="secondary-button" onClick={() => void handoff("copy")}>{feedback === "copied" ? p("copied") : c("copyMcpAddress")}</button>
       {dcr && <button type="button" className="primary-button" onClick={() => void handoff("open")}>{c("openGemini")}</button>}
     </div>;
   const advanced = dcr || Boolean(onEnableRegistration);
+  const awaitingGeminiUrl = Boolean(onEnableRegistration || dcr) && !origin;
+  const missingUrlReason = onEnableRegistration && !dcr ? c("publicUrlRegistration")
+    : !canStart ? c("publicUrlServer")
+    : ingressNotApplied || profile.server_restart_required ? c("serverRestartHelp")
+    : identityRepair ? c("cloudflareIdentityRepair")
+    : reason === "cloudflare_binary_unavailable" ? c("installCloudflared")
+    : reason === "cloudflare_discovery_unavailable" || verifying || status?.lifecycle === "starting" || actionPending ? c("publicUrlPending")
+    : registrationUnavailable ? c("registrationUnavailable")
+    : status?.lifecycle === "disconnected" ? c("publicUrlDisconnected")
+    : status?.lifecycle === "stopped" ? c("publicUrlStopped")
+    : c("publicUrlWaiting");
   const stateText = actionPending === "stop" ? c("stopping")
     : actionPending || verifying || status?.lifecycle === "starting" ? p("starting")
     : profile.server_restart_required || ingressNotApplied ? c("pendingServerRestart")
@@ -136,6 +154,11 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{quick ? c("cloudflareQuick") : c("cloudflareNamed")}</span></div><span role="status" className="connection-state">{stateText}</span></header>
     {onEnableRegistration && !dcr && <div><p>{c("dcrHelp")}</p><button type="button" className="primary-button" disabled={disabled} onClick={onEnableRegistration}>{c("enableForGemini")}</button></div>}
     {(!onEnableRegistration || dcr) && address}
+    {awaitingGeminiUrl && <div className="gemini-endpoint-pending" role="status">
+      <strong>{c("publicUrlMissing")}</strong>
+      <p>{missingUrlReason}</p>
+      {candidateOrigin && <p>{c("candidatePublicUrl")}: <code>{candidateOrigin}/mcp</code> — {c("publicUrlUnverified")}</p>}
+    </div>}
     {origin && dcr && !status?.observed_authorization && <p>{c("addInGemini")}</p>}
     {feedback && feedback !== "copied" && <p role="alert">{c(feedback)}</p>}
     {quick && <p className="workspace-notice">{c("quickReauthorize")}</p>}
@@ -156,17 +179,23 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
         actions={{ onRefresh: () => void refresh(), onCheckConnection: () => void refresh() }}
       />
     )}
-    {identityRepair && <p role="alert">{c("cloudflareIdentityRepair")}</p>}
+    {identityRepair && !awaitingGeminiUrl && <p role="alert">{c("cloudflareIdentityRepair")}</p>}
     {(failed || identityRepair || (registrationUnavailable && !discoveryRetry) || reason === "cloudflare_binary_unavailable") && onRepair && <button type="button" className="secondary-button" disabled={disabled} onClick={onRepair}>{c("openRuntimeSetup")}</button>}
     <div className="connection-actions">
-      <button type="button" className={active ? "secondary-button" : "primary-button"} disabled={disabled || !status || !canStart || unselectedService || profile.server_restart_required || status.configured_revision !== profile.revision || (!quick && !profile.credential_present)} onClick={() => void run(active ? "restart" : "start")}>{active ? c("reconnect") : dcr ? c("connectGemini") : p("start")}</button>
+      <button type="button" className={active ? "secondary-button" : "primary-button"} disabled={disabled || !status || !canStart || unselectedService || profile.server_restart_required || status.configured_revision !== profile.revision || (!quick && !profile.credential_present)} onClick={() => void run(active ? "restart" : "start")}>{active ? c("reconnect") : dcr ? c("startPublicTunnel") : p("start")}</button>
       {active && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run("stop")}>{p("stop")}</button>}
       {!advanced && manualButton}
     </div>
     <details className="connection-details"><summary>{c("profileDetails")}</summary>
       <p>{profile.host_mode === "embedded" ? c("serverOwned") : c("separateService")}</p>
       {status && <p>{c("localForwardingTarget")} <code>{status.local_target}</code></p>}
-      {advanced && <>{!dcr && address}<p>{status?.oauth_configured ? c("oauthConfigured") : c("oauthNotConfigured")}</p>{manualButton}</>}
+      {advanced && <>{!dcr && address}
+        <details className="connection-details"><summary>{c("manualOauthOnly")}</summary>
+          <p>{status?.oauth_configured ? c("oauthConfigured") : c("oauthNotConfigured")}</p>
+          {manualButton}
+        </details>
+      </>}
+      {safeReason && <p className="field-help">{c("technicalReason")}: <code>{safeReason}</code></p>}
       <div className="connection-actions">
         <button type="button" className="secondary-button" disabled={disabled} onClick={onEdit}>{p("edit")}</button>
         <button type="button" className="text-button" disabled={disabled} onClick={onDelete}>{c("delete")}</button>

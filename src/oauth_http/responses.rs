@@ -189,7 +189,7 @@ pub(super) fn authenticate_token_client(
         (id, form_secret, method)
     };
     let missing_secret = || OAuthTokenError::invalid_client("missing client_secret");
-    let ingress = crate::public_ingress_auth::entry(depot).is_some();
+    let ingress = crate::public_ingress_auth::entry(depot);
     if secret == Some("")
         || (method == DynamicClientAuth::Public
             && config.oauth2.registration_target(ingress).is_none())

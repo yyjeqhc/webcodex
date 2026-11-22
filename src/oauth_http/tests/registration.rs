@@ -416,15 +416,18 @@ fn dynamic_registration_capacity_is_atomic_and_reclaims_only_idle_clients() {
     };
     let protected = make(now - 86402);
     assert_eq!(
-        db.register_dynamic_oauth_client(&protected).unwrap(),
+        db.register_dynamic_oauth_client(&protected, None).unwrap(),
         Created
     );
     seed_refresh_token(&db, &protected, &owner, "runtime:read");
     let idle = make(now - 86401);
-    assert_eq!(db.register_dynamic_oauth_client(&idle).unwrap(), Created);
+    assert_eq!(
+        db.register_dynamic_oauth_client(&idle, None).unwrap(),
+        Created
+    );
     for _ in 0..125 {
         assert_eq!(
-            db.register_dynamic_oauth_client(&make(now)).unwrap(),
+            db.register_dynamic_oauth_client(&make(now), None).unwrap(),
             Created
         );
     }
@@ -432,15 +435,15 @@ fn dynamic_registration_capacity_is_atomic_and_reclaims_only_idle_clients() {
     let other = crate::Database::open(&tmp.path().join("oauth.db")).unwrap();
     std::thread::scope(|s| {
         let request = make(now);
-        let t = s.spawn(move || other.register_dynamic_oauth_client(&request).unwrap());
+        let t = s.spawn(move || other.register_dynamic_oauth_client(&request, None).unwrap());
         assert_eq!(
-            db.register_dynamic_oauth_client(&make(now)).unwrap(),
+            db.register_dynamic_oauth_client(&make(now), None).unwrap(),
             Created
         );
         assert_eq!(t.join().unwrap(), Created);
     });
     assert_eq!(
-        db.register_dynamic_oauth_client(&make(now)).unwrap(),
+        db.register_dynamic_oauth_client(&make(now), None).unwrap(),
         AtCapacity
     );
     assert!(db

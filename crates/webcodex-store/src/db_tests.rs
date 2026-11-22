@@ -1788,7 +1788,7 @@ fn consume_authorization_code_succeeds_once() {
 
     // First consume succeeds.
     let consumed = db
-        .consume_oauth_authorization_code_by_hash(&code_hash, now + 10)
+        .consume_oauth_authorization_code_by_hash(&code_hash, now + 10, None)
         .unwrap();
     let consumed = consumed.expect("first consume should succeed");
     assert_eq!(consumed.used_at, Some(now + 10));
@@ -1840,13 +1840,13 @@ fn consume_authorization_code_second_consume_returns_none() {
     let (_tmp, db, code_hash, _record, now) = seed_consumable_code();
 
     // First consume succeeds.
-    db.consume_oauth_authorization_code_by_hash(&code_hash, now + 10)
+    db.consume_oauth_authorization_code_by_hash(&code_hash, now + 10, None)
         .unwrap()
         .expect("first consume should succeed");
 
     // Second consume returns None.
     let result = db
-        .consume_oauth_authorization_code_by_hash(&code_hash, now + 20)
+        .consume_oauth_authorization_code_by_hash(&code_hash, now + 20, None)
         .unwrap();
     assert!(result.is_none(), "second consume should return None");
 }
@@ -1857,7 +1857,7 @@ fn consume_authorization_code_expired_returns_none() {
 
     // Consume after expiration returns None.
     let result = db
-        .consume_oauth_authorization_code_by_hash(&code_hash, now + 301)
+        .consume_oauth_authorization_code_by_hash(&code_hash, now + 301, None)
         .unwrap();
     assert!(result.is_none(), "expired code should return None");
 }
@@ -1870,7 +1870,7 @@ fn consume_authorization_code_revoked_returns_none() {
     db.revoke_oauth_authorization_code(&record.id, now + 5)
         .unwrap();
     let result = db
-        .consume_oauth_authorization_code_by_hash(&code_hash, now + 10)
+        .consume_oauth_authorization_code_by_hash(&code_hash, now + 10, None)
         .unwrap();
     assert!(result.is_none(), "revoked code should return None");
 }
@@ -1882,7 +1882,7 @@ fn consume_authorization_code_unknown_hash_returns_none() {
     let now = chrono::Utc::now().timestamp();
 
     let result = db
-        .consume_oauth_authorization_code_by_hash("nonexistent-hash", now)
+        .consume_oauth_authorization_code_by_hash("nonexistent-hash", now, None)
         .unwrap();
     assert!(result.is_none(), "unknown hash should return None");
 }
@@ -1952,7 +1952,7 @@ fn exchange_authorization_code_rejects_subject_mismatch_with_consumed_code() {
     };
 
     let err = db
-        .exchange_oauth_authorization_code_for_tokens(&code_hash, now + 10, &access, &refresh)
+        .exchange_oauth_authorization_code_for_tokens(None, &code_hash, now + 10, &access, &refresh)
         .expect_err("subject mismatch must abort exchange");
     assert!(err.to_string().contains("OAuth token subjects must match"));
     let conn = db.conn_for_tests();
@@ -2036,6 +2036,7 @@ fn rotate_refresh_token_rejects_subject_mismatch_with_old_refresh() {
 
     let err = db
         .rotate_oauth_refresh_token(
+            None,
             &old.token_hash,
             &client.client_id,
             now + 10,

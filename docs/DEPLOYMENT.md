@@ -536,7 +536,7 @@ To let Gemini or another OAuth client register itself, configure the regular man
 
 Some OAuth hosts request all permissions advertised in authorization-server discovery, even when their dynamically registered client has a narrower scope ceiling. For dynamic clients only, WebCodex narrows known requested scopes to the registered allow-list and returns the actually granted scopes in the token response; unknown scopes and requests with no permitted WebCodex permission are rejected. This does not widen the client or user authority. Manually provisioned clients retain strict scope matching.
 
-The register request limit is 16 KiB. The Server retains up to 128 dynamic clients. At capacity it can reclaim a registration at least 24 hours old, or a revoked registration, once its grants have been cleaned up. Otherwise it returns HTTP 429. The Desktop-managed Cloudflare listener and temporary Project Share use their own provisioning flows. [Gemini setup](MCP.md#gemini-web-app)
+The register request limit is 16 KiB. The Server retains up to 128 dynamic clients. At capacity it can reclaim a registration at least 24 hours old, or a revoked registration, once its grants have been cleaned up. Otherwise it returns HTTP 429. Desktop-managed Cloudflare has a separate, default-off profile switch. Temporary Project Share uses its own provisioning flow. [Desktop Cloudflare setup](MCP.md#desktop-cloudflare-setup) [Gemini setup](MCP.md#gemini-web-app)
 
 ## MCP integration
 

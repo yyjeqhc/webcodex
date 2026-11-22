@@ -1,4 +1,5 @@
 use salvo::prelude::*;
+use webcodex_store::{validate_redirect_uri, MAX_CLIENT_REDIRECT_URIS};
 
 use crate::auth::{hash_token, AuthContext};
 
@@ -6,7 +7,6 @@ use super::responses::{parse_management_json, OAuthManagementError as Management
 use super::{apply_oauth_no_store_headers, is_authorize_identity_allowed, oauth_scopes_supported};
 
 pub(super) const MAX_CLIENT_NAME_LEN: usize = 128;
-const MAX_CLIENT_REDIRECT_URIS: usize = 16;
 
 #[derive(Debug, serde::Deserialize)]
 struct CreateOAuthClientRequest {
@@ -79,46 +79,6 @@ mod detached_scope_tests {
         assert!(!default_client_allowed_scopes().contains(&"memory:read"));
         assert!(!default_client_allowed_scopes().contains(&"memory:manage"));
     }
-}
-
-/// Validate a redirect URI for OAuth client registration.
-///
-/// Rules:
-/// - Must parse as an absolute URL.
-/// - Scheme must be `http` or `https`.
-/// - `http` is only allowed for loopback hosts (`localhost`, `127.0.0.1`,
-///   `[::1]`). All other hosts must use `https`.
-pub(crate) fn validate_redirect_uri(uri: &str) -> Result<(), String> {
-    let trimmed = uri.trim();
-    if trimmed.is_empty() {
-        return Err("redirect_uri cannot be empty".to_string());
-    }
-    if trimmed.chars().any(|ch| ch.is_ascii_control()) {
-        return Err("redirect_uri must not contain ASCII control characters".to_string());
-    }
-    let parsed =
-        url::Url::parse(trimmed).map_err(|_| "redirect_uri is not a valid URL".to_string())?;
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("redirect_uri must not contain userinfo".to_string());
-    }
-    if parsed.fragment().is_some() {
-        return Err("redirect_uri must not contain a fragment".to_string());
-    }
-    let scheme = parsed.scheme().to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
-        return Err("redirect_uri must use http or https".to_string());
-    }
-    let host = parsed.host_str().unwrap_or("");
-    if scheme == "http" {
-        let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]");
-        if !is_loopback {
-            return Err("http redirect_uri is only allowed for localhost/127.0.0.1; use https for other hosts".to_string());
-        }
-    }
-    if host.is_empty() {
-        return Err("redirect_uri must have a host".to_string());
-    }
-    Ok(())
 }
 
 pub(super) fn registration_redirect_uris(redirect_uris: &[String]) -> Result<Vec<String>, String> {
@@ -453,6 +413,17 @@ pub(crate) async fn oauth_clients_update_scopes(
     let current = managed_client(&db, auth, &client_id)?
         .ok_or_else(|| ManagementError::new(StatusCode::NOT_FOUND, "OAuth client not found"))?;
 
+    if current.dynamic_registration.is_some()
+        && !webcodex_store::valid_dynamic_client_scopes(&allowed_scopes_str)
+        && db
+            .oauth_client_public_ingress_entry_id(&client_id)
+            .map_err(|e| ManagementError::internal("failed to read client binding").with_detail(e))?
+            .is_some()
+    {
+        return Err(ManagementError::bad_request(
+            "scope exceeds dynamic registration ceiling",
+        ));
+    }
     let now = chrono::Utc::now().timestamp();
     let (changed, access_tokens, refresh_tokens, authorization_codes) = match db
         .update_oauth_client_allowed_scopes_and_revoke_grants(

@@ -211,7 +211,7 @@ impl OAuth2Verifier {
         config: &Config,
         db: Option<&Arc<Database>>,
         token: &str,
-        ingress: Option<&webcodex_store::PublicIngressFence>,
+        ingress: Option<&webcodex_store::PublicIngressEntry>,
     ) -> Result<Option<AuthContext>, String> {
         Self::verify_for_ingress_sync(config, db, token, ingress)
     }
@@ -224,7 +224,7 @@ impl OAuth2Verifier {
         config: &Config,
         db: Option<&Arc<Database>>,
         token: &str,
-        ingress: Option<&webcodex_store::PublicIngressFence>,
+        ingress: Option<&webcodex_store::PublicIngressEntry>,
     ) -> Result<Option<AuthContext>, String> {
         // Only handle wc_oat_* tokens. Non-matching tokens are not recognized by
         // this verifier — let PatVerifier try.
@@ -246,7 +246,10 @@ impl OAuth2Verifier {
         let now = chrono::Utc::now().timestamp();
 
         if !db
-            .oauth_access_token_matches_public_ingress(&token_hash, ingress)
+            .oauth_access_token_matches_public_ingress(
+                &token_hash,
+                ingress.map(|entry| entry.fence()).as_ref(),
+            )
             .map_err(|_| "OAuth2 ingress verification unavailable".to_string())?
         {
             return Err("OAuth2 token is not valid for this ingress".to_string());
@@ -281,9 +284,7 @@ impl OAuth2Verifier {
             }
         };
 
-        if !config
-            .oauth2
-            .accepts_client_registration(&client, ingress.is_some())
+        if !config.oauth2.accepts_client_registration(&client, ingress)
             || (client.dynamic_registration.is_some()
                 && (at_record.subject_kind != "managed_user"
                     || client.owner_user_id != at_record.user_id))

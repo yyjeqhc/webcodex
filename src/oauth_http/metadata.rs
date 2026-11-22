@@ -94,8 +94,15 @@ pub(crate) async fn oauth_authorization_server_metadata(depot: &mut Depot, res: 
 
     if config
         .oauth2
-        .registration_target(crate::public_ingress_auth::entry(depot).is_some())
-        .is_some()
+        .registration_target(crate::public_ingress_auth::entry(depot))
+        .is_some_and(|target| {
+            target.fence.as_ref().is_none_or(|fence| {
+                crate::auth::get_db(depot).is_some_and(|db| {
+                    db.public_ingress_registration_available(fence)
+                        .unwrap_or(false)
+                })
+            })
+        })
     {
         metadata["registration_endpoint"] = format!("{endpoint_base}/oauth/register").into();
         metadata["token_endpoint_auth_methods_supported"] =

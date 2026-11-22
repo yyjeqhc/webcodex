@@ -164,7 +164,13 @@ fn issue_access_grant_fixture(
     };
     assert!(control
         .db
-        .exchange_oauth_authorization_code_for_tokens(&code.code_hash, now, &access, &refresh)
+        .exchange_oauth_authorization_code_for_tokens(
+            Some(&entry.fence()),
+            &code.code_hash,
+            now,
+            &access,
+            &refresh
+        )
         .unwrap()
         .is_some());
     access.token_hash
@@ -274,7 +280,7 @@ fn oauth_handoff_is_once_and_replacement_revokes_previous_client() {
     assert_eq!(
         control
             .db
-            .list_oauth_clients_for_public_ingress(&entry.entry_id)
+            .list_manual_oauth_clients_for_public_ingress(&entry.entry_id)
             .unwrap()
             .len(),
         1
@@ -521,7 +527,7 @@ async fn incorrect_or_missing_runner_owner_fails_without_rebinding_it() {
 #[handler]
 async fn effective_public_configuration(depot: &mut Depot, res: &mut Response) {
     let config = crate::auth::get_config(depot).unwrap();
-    res.render(Json(json!({"issuer":config.oauth2.issuer,"pkce":config.oauth2.require_pkce,"bridge":config.oauth2.shared_key_bridge_enabled})));
+    res.render(Json(json!({"issuer":config.oauth2.issuer,"pkce":config.oauth2.require_pkce,"bridge":config.oauth2.shared_key_bridge_enabled,"private_dcr_owner_present":config.oauth2.dcr_owner_user_id.is_some()})));
 }
 
 #[tokio::test]
@@ -531,6 +537,7 @@ async fn public_snapshot_enforces_pkce_and_origin_without_changing_private_confi
     let mut config = (*fixture.control.config).clone();
     config.oauth2.require_pkce = false;
     config.oauth2.issuer = Some("https://private.example".into());
+    config.oauth2.dcr_owner_user_id = Some("private-owner".into());
     config.oauth2.shared_key_bridge_enabled = true;
     Arc::get_mut(&mut fixture.control).unwrap().config = Arc::new(config);
     fixture.control.prepare("quick", 1, false).unwrap();
@@ -564,7 +571,7 @@ async fn public_snapshot_enforces_pkce_and_origin_without_changing_private_confi
     let body: serde_json::Value = response.take_json().await.unwrap();
     assert_eq!(
         body,
-        json!({"issuer":"https://fixture.trycloudflare.com","pkce":true,"bridge":false})
+        json!({"issuer":"https://fixture.trycloudflare.com","pkce":true,"bridge":false,"private_dcr_owner_present":false})
     );
     assert!(!fixture.control.config.oauth2.require_pkce);
     assert_eq!(
@@ -615,3 +622,5 @@ async fn configured_listener_port_conflict_is_explicit_and_never_reallocated() {
         Some(port)
     );
 }
+
+mod registration;

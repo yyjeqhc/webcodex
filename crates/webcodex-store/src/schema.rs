@@ -1021,7 +1021,7 @@ fn validate_supported_domain_schemas(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn table_columns(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> {
+pub(crate) fn table_columns(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
     let mut cols = Vec::new();

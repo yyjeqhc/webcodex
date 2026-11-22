@@ -71,6 +71,7 @@ fn fixture() -> (
     let health = directory.join("readiness.json");
     crate::storage::atomic_private_write(&health, b"{}").unwrap();
     let profile = TunnelRecord {
+        oauth_dynamic_registration_enabled: false,
         profile_id: "primary".into(),
         provider: TunnelProvider::Openai,
         configuration_id: None,

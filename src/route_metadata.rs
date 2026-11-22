@@ -539,6 +539,7 @@ mod tests {
                         | RouteId::OAuthAuthorize
                         | RouteId::OAuthAuthorizeLogin
                         | RouteId::OAuthAuthorizeConsent
+                        | RouteId::OAuthRegister
                         | RouteId::OAuthToken
                         | RouteId::OAuthRevoke
                 ) {

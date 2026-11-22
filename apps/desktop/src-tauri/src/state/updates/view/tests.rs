@@ -23,6 +23,7 @@ fn remote_hosts_cannot_be_observed_as_local_server() {
 #[test]
 fn update_service_inventory_matches_core_tunnel_ownership() {
     let profile = |host_mode, installed| webcodex_environment::TunnelRecord {
+        oauth_dynamic_registration_enabled: false,
         configuration_id: None,
         provider: webcodex_environment::TunnelProvider::Openai,
         profile_id: "profile".into(),

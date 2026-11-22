@@ -34,9 +34,9 @@ pub(crate) async fn oauth_register(
 ) -> Result<(), OAuthTokenError> {
     let config =
         crate::auth::get_config(depot).ok_or_else(|| OAuthTokenError::server_error("no config"))?;
-    let (owner, issuer) = config
+    let target = config
         .oauth2
-        .registration_target(crate::public_ingress_auth::entry(depot).is_some())
+        .registration_target(crate::public_ingress_auth::entry(depot))
         .ok_or_else(|| {
             OAuthTokenError::new(
                 StatusCode::NOT_FOUND,
@@ -114,12 +114,12 @@ pub(crate) async fn oauth_register(
             .map(crate::auth::hash_token)
             .unwrap_or_default(),
         dynamic_registration: Some(DynamicClientRegistration {
-            issuer: issuer.to_owned(),
+            issuer: target.issuer.to_owned(),
             auth_method,
             refresh,
         }),
         name: name.to_owned(),
-        owner_user_id: Some(owner.to_owned()),
+        owner_user_id: Some(target.owner.to_owned()),
         owner_project_grant_id: None,
         owner_shared_key_hash: None,
         redirect_uris: redirects.join("\n"),
@@ -128,10 +128,17 @@ pub(crate) async fn oauth_register(
         revoked_at: None,
     };
     match db
-        .register_dynamic_oauth_client(&record)
+        .register_dynamic_oauth_client(&record, target.fence.as_ref())
         .map_err(|_| OAuthTokenError::server_error("registration failed"))?
     {
         DynamicRegistrationOutcome::Created => {}
+        DynamicRegistrationOutcome::IngressUnavailable => {
+            return Err(OAuthTokenError::new(
+                StatusCode::NOT_FOUND,
+                "invalid_request",
+                "registration is unavailable for this entry",
+            ))
+        }
         DynamicRegistrationOutcome::OwnerUnavailable => {
             return Err(OAuthTokenError::new(
                 StatusCode::SERVICE_UNAVAILABLE,

@@ -3,6 +3,7 @@ export interface CloudflareConnectionStatus {
   profile_id: string; server_instance_id: string; process_generation: number;
   lifecycle: "stopped" | "starting" | "running" | "disconnected" | "error";
   public_origin: string | null; oauth_configured: boolean; observed_authorization: boolean;
+  registration_available?: boolean; observed_tool_call?: boolean;
   configured_revision: number; applied_revision: number | null; local_target: string; reason_code: string | null;
 }
 export type CloudflareConnectionRequest =
@@ -56,6 +57,7 @@ export interface ConnectionsSnapshot {
   server_restart_required: boolean;
 }
 export interface TunnelProfileRequest {
+  expected_target?: { environment_id: string; configuration_id: string | null };
   provider?: TunnelProvider;
   oauth_dynamic_registration_enabled?: boolean;
   cloudflare_token?: string | null;

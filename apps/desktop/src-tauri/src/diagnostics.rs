@@ -79,6 +79,7 @@ pub enum ResourceKind {
     ReportIssue,
     Contributing,
     DesktopDevelopment,
+    GeminiApps,
 }
 
 #[derive(Debug, Clone, Serialize)]

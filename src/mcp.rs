@@ -1144,6 +1144,12 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 .and_then(|r| r.get("structuredContent"))
                 .and_then(|s| s.get("success").or_else(|| s.get("ok")))
                 .and_then(|v| v.as_bool());
+            if tool_name.is_some()
+                && tool_success == Some(true)
+                && body["result"]["isError"] != true
+            {
+                crate::cloudflare_ingress::observe_successful_tool_call(depot);
+            }
             let audit_success = tool_success.unwrap_or(true);
             let mut audit_event = build_audit_event(
                 audit_success,

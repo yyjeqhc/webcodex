@@ -29,3 +29,8 @@
 .server-owned-apply p { margin: 6px 0 0; color: var(--ui-text-secondary); font-size: 14px; line-height: 1.6; }
 .server-owned-apply button { justify-self: end; }
 @media (max-width: 680px) { .server-owned-apply { grid-template-columns: 1fr; }.server-owned-apply button { justify-self: start; } }
+
+.gemini-connection { margin-block: var(--ui-space-4); padding: var(--ui-space-4); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); }
+.gemini-connection > header h2 { margin: 0; }
+.gemini-connection .connection-profile { border-bottom: 0; padding-bottom: 0; }
+.gemini-connection .connection-id code { user-select: all; overflow-wrap: anywhere; }

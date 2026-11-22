@@ -74,6 +74,24 @@ Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runn
 首页与侧栏显示**本机 Runner** 的状态，Tunnel 计数显示本地就绪数量，不确认 ChatGPT 当前已接入。项目表的会话数量表示未结束的会话。非 macOS 平台的桌面访问设置会解释权限检查不可用，并提示检查桌面登录与项目页的会话状态；不会把缺少权限观测当作桌面工具不可用。
 
 ChatGPT 在不同工作目录之间切换时，不需要先停止 Runtime 或 OpenAI Secure Tunnel。Runtime 会根据当前 Runner policy 解析兼容路径，并按需注册 Project。
+## 连接 Gemini 网页版
+
+1. 在 **连接 → 连接 Gemini** 点击 **连接 Gemini** 快速体验。首次会保存一个随 Server 运行的临时连接，并允许 Gemini 自动注册。如果已经保存了 Cloudflare 连接，请选择要使用的连接，按提示为该连接启用应用注册。若提示 **重启 Server**，请在可以中断当前工作的时间点击，等待 **MCP 入口已就绪**。
+2. 点击 **复制 MCP 地址** 和 **打开 Gemini**。在 Gemini 网页的 **Settings → Connected Apps → Custom apps** 中添加地址并点击 **Next**。部分界面将 Connected Apps 放在 Personal Intelligence 下。浏览器跳转到 WebCodex 后，核对地址，在该页使用连接所有者的用户 PAT 登录，查看请求的权限并授权。Gemini 的表单只需 MCP 地址。
+3. 在 Gemini 对话中输入 `@` 并选择刚添加的应用，试着说“查看 WebCodex Runtime 状态”。Desktop 会分别显示已观察到的 OAuth 使用和本次连接中成功的 MCP 工具调用。之后直接在对话中使用工具；Gemini 可能要求确认写入操作。[Google 的自定义应用指南](https://support.google.com/gemini/answer/17209137)
+
+**长期连接**可点击 **使用固定地址**。选择已有 Named 连接即可复用其凭据。首次配置时填写 Cloudflare Tunnel ID、固定 HTTPS 地址和 Tunnel 令牌，选择随 Server 运行或独立服务及自动启动。在 Cloudflare 中把固定主机名转发到连接卡片显示的本机转发目标。一个 Server 只允许一个活动的 Cloudflare 连接。切换时先停止正在使用的连接，并在编辑配置时明确选择哪个随服务启动。
+
+| 遇到的情况 | 如何继续 |
+| --- | --- |
+| 提示需要 Runtime、所有者或 Runner 不可用 | 打开 Runtime 设置，配置持久化本机 Server 和同一用户的 Runner，然后启动服务。若提示缺少 cloudflared，请为服务账户安装 2025.4.0 或更高版本，再启动连接。 |
+| 地址尚未出现或固定地址无法连接 | 等待启动及公网验证完成。Named 请核对 Cloudflare 主机名路由和本机转发目标，修正后重新连接。复制失败时，可手动选中卡片中的地址复制。 |
+| 看不到 Custom apps | Google 目前要求用户位于美国、年满 18 岁、使用个人账号、选择英语并开启 Gemini 历史记录。工作或学校账号暂不支持此入口。可用性以当前账号和 Google 帮助为准。 |
+| 首次登录被取消，或尚未观察到授权 | 在 Gemini 重新打开应用完成授权，再查询一次 Runtime 状态。调试时可使用 Developer Mode 的 Event Log。[Google 调试指南](https://developers.google.com/connected-apps/mcp/dev-mode/usage) |
+| 关闭窗口或重新启动 | 持久化服务独立运行。重新打开 Desktop 会读取当前连接状态。Quick 停止重建后请复制新地址，在 Gemini 重新添加并授权。Named 保持同一配置、所有者及固定地址时会保留有效授权。 |
+
+需要暂停访问时，在 Desktop 点击 **停止**。要取消 Google 端的关联，在 Gemini 的 Connected Apps 打开该应用的详情，点击 **Disconnect**。要撤销此连接上所有自动注册客户端的授权，请在 Desktop 编辑连接，关闭 **允许自动注册 OAuth 客户端**，保存并应用配置。[Google 的断开连接说明](https://support.google.com/gemini/answer/17209137)
+
 ## 连接与故障恢复
 
 连接卡片直接显示观察到的隧道与本地 MCP 可达状态。故障会显示具体原因，并提供代理设置、Runtime 或故障诊断入口。页面显示当前网络路径；故障建议使用失败时的代理证据，不会自动更改网络路径。

@@ -309,11 +309,31 @@ pub(super) fn build_managed_download_client(
         .map_err(|_| download_error("could not initialize the download client"))
 }
 
-pub(super) async fn resolve_cloudflared() -> Result<PathBuf, ProductError> {
+fn configured_cloudflared() -> Result<Option<PathBuf>, ProductError> {
     let override_bin = std::env::var_os("WEBCODEX_CLOUDFLARED_BIN").map(PathBuf::from);
-    if let Some(binary) =
-        existing_cloudflared_from(override_bin.as_deref(), std::env::var_os("PATH").as_deref())?
-    {
+    existing_cloudflared_from(override_bin.as_deref(), std::env::var_os("PATH").as_deref())
+}
+
+/// Persistent connections can autostart without an interactive user. Reuse
+/// installed binaries, including a verified managed copy, without installing.
+pub(super) async fn installed_cloudflared() -> Result<PathBuf, ProductError> {
+    if let Some(binary) = configured_cloudflared()? {
+        return Ok(binary);
+    }
+    let asset = cloudflared_asset_for(std::env::consts::OS, std::env::consts::ARCH)?;
+    let path = managed_binary_path(&managed_cloudflared_root()?, asset);
+    if managed_binary_is_valid(&path, asset).await {
+        return Ok(path);
+    }
+    Err(ProductError::new(
+        "tunnel_unavailable",
+        "cloudflared is unavailable",
+        Some("Install cloudflared for the service owner and reconnect."),
+    ))
+}
+
+pub(super) async fn resolve_cloudflared() -> Result<PathBuf, ProductError> {
+    if let Some(binary) = configured_cloudflared()? {
         return Ok(binary);
     }
 

@@ -143,7 +143,7 @@ function DesktopApp() {
         {navigation === "projects" && (
           <ProjectsPanel onComputerSettings={() => openSettings("access")} onState={commitState} />
         )}
-        {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} onSettings={openSettings} />}
+        {navigation === "connection" && <ConnectionPanel key={state.persistent_environment} onSetup={openSetup} state={state} onState={commitState} onSettings={openSettings} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
         {navigation === "extensions" && <ExtensionsPanel state={state} onState={commitState} initialTab={extensionTab} />}
         {navigation === "console" && <RuntimeConsolePanel state={state} onSettings={() => openSettings("runtime")} />}

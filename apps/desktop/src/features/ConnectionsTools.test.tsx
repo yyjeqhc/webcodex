@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "../i18n/locale";
 import { CONNECTIONS_TOOLS_MESSAGES, connectionsToolsText } from "../i18n/connections-tools";
@@ -11,7 +11,7 @@ import { connectionFixture, connectionSnapshot } from "../test/connections-fixtu
 import { ConnectionPanel } from "./connection/ConnectionPanel";
 import { McpProvidersPanel } from "./extensions/McpProvidersPanel";
 
-const api = vi.hoisted(() => ({ saveTunnelProfile: vi.fn(), tunnelProfileAction: vi.fn(), cloudflareConnection: vi.fn(), environmentServiceAction: vi.fn(), saveMcpProvider: vi.fn(), removeMcpProvider: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), stopQuickShare: vi.fn() }));
+const api = vi.hoisted(() => ({ openDiagnosticResource: vi.fn(), getState: vi.fn(), saveTunnelProfile: vi.fn(), tunnelProfileAction: vi.fn(), cloudflareConnection: vi.fn(), environmentServiceAction: vi.fn(), saveMcpProvider: vi.fn(), removeMcpProvider: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), stopQuickShare: vi.fn() }));
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn() }));
 const onSettings = vi.fn();
@@ -42,6 +42,91 @@ beforeEach(() => {
 });
 
 describe("Connections + Tools control surfaces", () => {
+  it("prepares one embedded Gemini Quick connection, applies the Server restart and hands off the current URL", async () => {
+    const initial = { ...state(), persistent_environment: "local", connections: connectionSnapshot() };
+    const quick = connectionFixture({ id: "q", configuration_id: "new", name: "Gemini", provider: {kind: "cloudflare_quick"},
+      host_mode: "embedded", revision: 1, oauth_dynamic_registration_enabled: true, server_restart_required: true });
+    const pending = { ...initial, connections: connectionSnapshot(quick) };
+    const applied = { ...initial, connections: connectionSnapshot({ ...quick, server_restart_required: false }) };
+    let finish!: (next: DesktopState) => void;
+    api.saveTunnelProfile.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    api.environmentServiceAction.mockResolvedValue(applied);
+    api.cloudflareConnection.mockResolvedValue({ profile_id: "q", server_instance_id: "server", process_generation: 1,
+      lifecycle: "running", public_origin: "https://current.trycloudflare.com", configured_revision: 1, applied_revision: 1,
+      registration_available: true, observed_authorization: false, observed_tool_call: false });
+    render(<Harness mode="connections" initial={initial} />);
+    const connect = screen.getByRole("button", { name: "Connect Gemini" });
+    fireEvent.click(connect);
+    fireEvent.click(connect);
+    expect(api.saveTunnelProfile).toHaveBeenCalledExactlyOnceWith({
+      id: null, provider: {kind: "cloudflare_quick"}, name: "Gemini", api_key: null, tunnel_id: "",
+      host_mode: "embedded", autostart: true, expected_revision: null, oauth_dynamic_registration_enabled: true,
+      expected_target: {environment_id: "local", configuration_id: null},
+    });
+    finish(pending);
+    fireEvent.click(await screen.findByRole("button", { name: "Restart Server" }));
+    expect(await screen.findByText("MCP endpoint ready")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for an authorized request")).toBeInTheDocument();
+    expect(screen.queryByText("OAuth authorization observed")).toBeNull();
+    expect(screen.getByText("https://current.trycloudflare.com/mcp")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Gemini" }));
+    expect(api.openDiagnosticResource).toHaveBeenCalledExactlyOnceWith("gemini_apps");
+    expect(api.cloudflareConnection.mock.calls.every(([request]) => request.action === "status")).toBe(true);
+  });
+
+  it("prefers the saved Named profile and enables only its policy after selection", async () => {
+    const quick = connectionFixture({ id: "quick", configuration_id: "old", provider: {kind: "cloudflare_quick"}, autostart: true });
+    const named = connectionFixture({ id: "long", configuration_id: "incarnation", name: "Studio", revision: 3, autostart: false,
+      provider: {kind: "cloudflare_named", public_origin: "https://studio.example", tunnel_id: "studio"}, tunnel_id: "studio" });
+    const initial = { ...state(), persistent_environment: "local", connections: connectionSnapshot(quick, named) };
+    api.saveTunnelProfile.mockResolvedValue(initial);
+    api.cloudflareConnection.mockImplementation(async ({profile_id}) => ({profile_id, lifecycle: "stopped", configured_revision: 3}));
+    render(<Harness mode="connections" initial={initial} />);
+    fireEvent.click(screen.getByRole("button", {name: "Use a fixed address"}));
+    expect(screen.getByRole("combobox", {name: "Saved connection"})).toHaveValue("long");
+    expect(api.saveTunnelProfile).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", {name: "Enable app registration for this connection"}));
+    await waitFor(() => expect(api.saveTunnelProfile).toHaveBeenCalledExactlyOnceWith({
+      id: "long", name: "Studio", host_mode: "standalone", autostart: false, tunnel_id: "studio", api_key: null,
+      provider: named.provider, expected_revision: 3, oauth_dynamic_registration_enabled: true,
+      expected_target: {environment_id: "local", configuration_id: "incarnation"},
+    }));
+    expect(screen.queryByLabelText("Tunnel token")).toBeNull();
+    expect(api.environmentServiceAction).not.toHaveBeenCalled();
+  });
+
+  it("does not publish a late save or start the Server after leaving Connections", async () => {
+    const initial = state();
+    initial.persistent_environment = "local";
+    initial.connections = connectionSnapshot();
+    initial.readiness.server = "stopped";
+    let finish!: (snapshot: DesktopState) => void;
+    api.saveTunnelProfile.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const publish = vi.fn();
+    const view = render(<MantineProvider><LocaleProvider><ConnectionPanel state={initial} onState={publish} onSettings={onSettings} /></LocaleProvider></MantineProvider>);
+    fireEvent.click(screen.getByRole("button", {name: "Connect Gemini"}));
+    view.unmount();
+    await act(async () => finish(initial));
+    expect(publish).not.toHaveBeenCalled();
+    expect(api.environmentServiceAction).not.toHaveBeenCalled();
+  });
+
+  it("opens the existing Named editor with app registration and Server ownership selected", () => {
+    render(<Harness mode="connections" initial={{ ...state(), persistent_environment:"local", connections:connectionSnapshot() }} />);
+    fireEvent.click(screen.getByRole("button", {name:"Use a fixed address"}));
+    expect(screen.getByLabelText("Fixed HTTPS origin")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", {name:"Allow automatic OAuth client registration"})).toBeChecked();
+    expect(screen.getByDisplayValue("embedded")).toBeChecked();
+    expect(api.saveTunnelProfile).not.toHaveBeenCalled();
+  });
+
+  it("opens Runtime setup for Gemini without a persistent local Environment", () => {
+    render(<Harness mode="connections" />);
+    fireEvent.click(screen.getByRole("button", {name: "Open Runtime setup"}));
+    expect(onSettings).toHaveBeenCalledExactlyOnceWith("runtime");
+    expect(api.saveTunnelProfile).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["http://127.0.0.1:18080", null],
     ["http://192.0.2.10:18080", null],

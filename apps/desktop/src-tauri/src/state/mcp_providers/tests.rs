@@ -360,6 +360,7 @@ async fn tunnel_configuration_edit_does_not_change_runner_generation_or_mcp_desi
         .unwrap();
     let state = app
         .save_tunnel_profile(crate::tunnel_config::TunnelProfileRequest {
+            expected_target: None,
             oauth_dynamic_registration_enabled: None,
             provider: webcodex_environment::TunnelProvider::Openai,
             cloudflare_token: None,
@@ -375,6 +376,7 @@ async fn tunnel_configuration_edit_does_not_change_runner_generation_or_mcp_desi
         .unwrap();
     let connection = &state.connections.profiles[0].config;
     app.save_tunnel_profile(crate::tunnel_config::TunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: None,
         provider: webcodex_environment::TunnelProvider::Openai,
         cloudflare_token: None,

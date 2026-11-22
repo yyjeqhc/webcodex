@@ -54,7 +54,7 @@ pub(crate) struct CloudflareTransport {
 }
 
 pub(crate) async fn prepare_cloudflared() -> Result<PathBuf, ProductError> {
-    super::cloudflared_service::resolve_cloudflared().await
+    super::cloudflared_service::installed_cloudflared().await
 }
 
 pub(crate) fn valid_quick_origin(origin: &str) -> bool {

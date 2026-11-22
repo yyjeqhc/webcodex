@@ -238,6 +238,7 @@ impl DesktopCore {
                 .configure_cloudflare_tunnel_profile(
                     &store,
                     &webcodex_environment::CloudflareTunnelProfileRequest {
+                        expected_target: request.expected_target.as_ref(),
                         oauth_dynamic_registration_enabled: request
                             .oauth_dynamic_registration_enabled,
                         profile_id: &profile_id,
@@ -255,6 +256,7 @@ impl DesktopCore {
             return cancellation.check();
         }
         if request.cloudflare_token.is_some()
+            || request.expected_target.is_some()
             || request.oauth_dynamic_registration_enabled.is_some()
         {
             return Err(connection_missing());

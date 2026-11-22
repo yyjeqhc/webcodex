@@ -63,6 +63,13 @@ async fn cloudflare_dcr_metadata_and_registration_require_admission_policy_owner
         Some(StatusCode::SERVICE_UNAVAILABLE)
     );
     let (prepared, _) = activate_quick_fixture(&fixture.control, ORIGIN);
+    assert!(
+        !fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .registration_available
+    );
     let metadata = json_response(discovery(), &service, StatusCode::OK).await;
     assert!(metadata.get("registration_endpoint").is_none());
     assert_eq!(
@@ -80,6 +87,28 @@ async fn cloudflare_dcr_metadata_and_registration_require_admission_policy_owner
         .unwrap();
     enable_dcr(&fixture);
     let (_, entry) = activate_quick_fixture(&fixture.control, ORIGIN);
+    assert!(
+        !fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .registration_available
+    );
+    fixture
+        .control
+        .attempt
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .discovery_verified = Some(true);
+    assert!(
+        fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .registration_available
+    );
     for (header, value) in [
         ("host", "private.example"),
         ("origin", "https://other.example"),
@@ -136,6 +165,13 @@ async fn cloudflare_dcr_metadata_and_registration_require_admission_policy_owner
     assert_eq!(limited["error"], "temporarily_unavailable");
     db.set_user_disabled(&entry.owner_user_id, true, chrono::Utc::now().timestamp())
         .unwrap();
+    assert!(
+        !fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .registration_available
+    );
     let metadata = json_response(discovery(), &service, StatusCode::OK).await;
     assert!(metadata.get("registration_endpoint").is_none());
     assert_eq!(
@@ -167,6 +203,17 @@ async fn gemini_cloudflare_dcr_browser_consent_pkce_mcp_call_refresh_and_revocat
         StatusCode::OK,
     )
     .await;
+    assert!(discovery_matches(ORIGIN, &resource, &metadata));
+    assert!(!discovery_matches(
+        "https://other.example",
+        &resource,
+        &metadata
+    ));
+    assert!(!discovery_matches(
+        ORIGIN,
+        &resource,
+        &json!({"issuer": ORIGIN})
+    ));
     assert_eq!(metadata["issuer"], ORIGIN);
     let endpoint = |name: &str| metadata[name].as_str().unwrap();
     let reg = json_response(TestClient::post(endpoint("registration_endpoint")).json(&json!({
@@ -271,6 +318,14 @@ async fn gemini_cloudflare_dcr_browser_consent_pkce_mcp_call_refresh_and_revocat
     )
     .await;
     assert!(!listing["result"]["tools"].as_array().unwrap().is_empty());
+    assert!(
+        fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .observed_authorization
+    );
+    assert!(!fixture.control.status("quick").unwrap().observed_tool_call);
     let result = json_response(
         mcp(
             access,
@@ -282,6 +337,7 @@ async fn gemini_cloudflare_dcr_browser_consent_pkce_mcp_call_refresh_and_revocat
     )
     .await;
     assert_eq!(result["result"]["structuredContent"]["success"], true);
+    assert!(fixture.control.status("quick").unwrap().observed_tool_call);
     assert_eq!(
         serde_json::from_str::<Value>(result["result"]["content"][0]["text"].as_str().unwrap())
             .unwrap(),

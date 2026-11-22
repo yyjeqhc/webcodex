@@ -33,6 +33,8 @@ pub(crate) struct CloudflareStatus {
     pub public_origin: Option<String>,
     pub oauth_configured: bool,
     pub observed_authorization: bool,
+    pub registration_available: bool,
+    pub observed_tool_call: bool,
     pub configured_revision: u64,
     pub applied_revision: Option<u64>,
     pub local_target: String,
@@ -46,6 +48,8 @@ struct Attempt {
     runtime_revision: u64,
     readiness_path: PathBuf,
     network_ready: bool,
+    observed_tool_call: bool,
+    discovery_verified: Option<bool>,
     generation: i64,
     probe_nonce: String,
     entry: Option<PublicIngressEntry>,
@@ -166,16 +170,37 @@ impl CloudflareControl {
                 .list_manual_oauth_clients_for_public_ingress(&entry.entry_id)
                 .is_ok_and(|clients| !clients.is_empty())
         });
-        let observed_authorization = entry.as_ref().is_some_and(|entry| {
-            self.db
-                .public_ingress_has_observed_authorization(&entry.fence())
-                .unwrap_or(false)
-        });
         let guard = self
             .attempt
             .lock()
             .map_err(|_| "ingress_state_unavailable")?;
         let attempt = guard.as_ref().filter(|attempt| attempt.profile_id == id);
+        let current = attempt.filter(|attempt| {
+            attempt.lifecycle == "running"
+                && attempt.configuration_id == profile.configuration_id
+                && attempt.runtime_revision == profile.runtime_revision
+        });
+        let admitted = entry.as_ref().filter(|entry| {
+            entry.active
+                && entry.admission_open
+                && current
+                    .and_then(|attempt| attempt.entry.as_ref())
+                    .is_some_and(|running| running.fence() == entry.fence())
+        });
+        let observed_authorization = admitted.is_some_and(|entry| {
+            self.db
+                .public_ingress_has_observed_authorization(&entry.fence())
+                .unwrap_or(false)
+        });
+        // Activation already verified forwarding to this exact generation. Use the
+        // same live owner/epoch/policy check as the discovery endpoint.
+        let registration_available = current.is_some_and(|attempt| {
+            attempt.network_ready && attempt.discovery_verified == Some(true)
+        }) && admitted.is_some_and(|entry| {
+            self.db
+                .public_ingress_registration_available(&entry.fence())
+                .unwrap_or(false)
+        });
         Ok(CloudflareStatus {
             profile_id: id.to_owned(),
             server_instance_id: self.instance_id.clone(),
@@ -189,12 +214,12 @@ impl CloudflareControl {
                     }
                 })
                 .to_owned(),
-            public_origin: attempt
-                .and_then(|attempt| attempt.entry.as_ref())
-                .filter(|entry| entry.admission_open)
-                .map(|entry| entry.origin.clone()),
+            public_origin: admitted.map(|entry| entry.origin.clone()),
             oauth_configured,
             observed_authorization,
+            registration_available,
+            observed_tool_call: admitted.is_some()
+                && current.is_some_and(|attempt| attempt.observed_tool_call),
             configured_revision: profile.revision,
             applied_revision: attempt
                 .filter(|attempt| attempt.lifecycle == "running")
@@ -203,6 +228,20 @@ impl CloudflareControl {
             reason_code: attempt
                 .and_then(|attempt| {
                     attempt.reason.or_else(|| {
+                        if attempt.lifecycle == "running" && current.is_none() {
+                            return Some("cloudflare_revision_conflict");
+                        }
+                        if attempt.lifecycle == "running"
+                            && attempt.network_ready
+                            && profile.oauth_dynamic_registration_enabled
+                        {
+                            match attempt.discovery_verified {
+                                None => return Some("cloudflare_discovery_pending"),
+                                Some(false) => return Some("cloudflare_discovery_unavailable"),
+                                Some(true) => {}
+                            }
+                        }
+
                         (attempt.lifecycle == "running" && !attempt.network_ready)
                             .then_some("network_disconnected")
                     })
@@ -290,6 +329,8 @@ impl CloudflareControl {
             runtime_revision: profile.runtime_revision,
             readiness_path: profile.readiness_path,
             network_ready: false,
+            observed_tool_call: false,
+            discovery_verified: None,
             generation,
             probe_nonce: probe_nonce.clone(),
             entry: Some(entry),
@@ -309,6 +350,35 @@ impl CloudflareControl {
     }
 
     async fn activate(
+        &self,
+        prepared: &PreparedIngress,
+        revision: u64,
+        origin: &str,
+    ) -> Result<PublicIngressEntry, &'static str> {
+        let entry = self.admit(prepared, revision, origin).await?;
+        if entry.oauth_dynamic_registration_enabled {
+            // Once per admission, outside the catalog/attempt locks. Never register
+            // a client, send a credential or follow a discovered URL here.
+            let verified = verify_discovery(origin).await;
+            let mut guard = self
+                .attempt
+                .lock()
+                .map_err(|_| "ingress_state_unavailable")?;
+            let attempt = guard
+                .as_mut()
+                .filter(|attempt| {
+                    attempt
+                        .entry
+                        .as_ref()
+                        .is_some_and(|running| running.fence() == entry.fence())
+                })
+                .ok_or("cloudflare_stale_attempt")?;
+            attempt.discovery_verified = Some(verified);
+        }
+        Ok(entry)
+    }
+
+    async fn admit(
         &self,
         prepared: &PreparedIngress,
         revision: u64,
@@ -557,22 +627,23 @@ fn probe_client() -> Result<reqwest::Client, &'static str> {
         .map_err(|_| "cloudflare_probe_unavailable")
 }
 
-async fn forwarding_matches(
+async fn probe_json<T: serde::de::DeserializeOwned>(
     client: &reqwest::Client,
     origin: &str,
-    prepared: &PreparedIngress,
-) -> Result<bool, &'static str> {
+    path: &str,
+    limit: usize,
+) -> Result<Option<T>, &'static str> {
     let mut response = client
-        .get(format!("{origin}{PROBE_PATH}"))
+        .get(format!("{origin}{path}"))
         .send()
         .await
         .map_err(|_| "cloudflare_probe_unavailable")?;
     if !response.status().is_success() {
-        return Ok(false);
+        return Ok(None);
     }
     if response
         .content_length()
-        .is_some_and(|length| length > 4096)
+        .is_some_and(|length| length > limit as u64)
     {
         return Err("cloudflare_forwarding_mismatch");
     }
@@ -582,13 +653,59 @@ async fn forwarding_matches(
         .await
         .map_err(|_| "cloudflare_probe_unavailable")?
     {
-        if bytes.len() + chunk.len() > 4096 {
+        if bytes.len().saturating_add(chunk.len()) > limit {
             return Err("cloudflare_forwarding_mismatch");
         }
         bytes.extend_from_slice(&chunk);
     }
-    let observed: PreparedIngress =
-        serde_json::from_slice(&bytes).map_err(|_| "cloudflare_forwarding_mismatch")?;
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| "cloudflare_forwarding_mismatch")
+}
+
+fn discovery_matches(
+    origin: &str,
+    resource: &serde_json::Value,
+    server: &serde_json::Value,
+) -> bool {
+    resource["resource"] == format!("{origin}/mcp")
+        && resource["authorization_servers"] == serde_json::json!([origin])
+        && server["issuer"] == origin
+        && server["registration_endpoint"] == format!("{origin}/oauth/register")
+        && server["authorization_endpoint"] == format!("{origin}/oauth/authorize")
+        && server["token_endpoint"] == format!("{origin}/oauth/token")
+}
+
+async fn verify_discovery(origin: &str) -> bool {
+    let Ok(client) = probe_client() else {
+        return false;
+    };
+    let (resource, server) = tokio::join!(
+        probe_json(
+            &client,
+            origin,
+            "/.well-known/oauth-protected-resource",
+            16 * 1024
+        ),
+        probe_json(
+            &client,
+            origin,
+            "/.well-known/oauth-authorization-server",
+            16 * 1024
+        ),
+    );
+    matches!((resource, server), (Ok(Some(resource)), Ok(Some(server))) if discovery_matches(origin, &resource, &server))
+}
+
+async fn forwarding_matches(
+    client: &reqwest::Client,
+    origin: &str,
+    prepared: &PreparedIngress,
+) -> Result<bool, &'static str> {
+    let Some(observed) = probe_json::<PreparedIngress>(client, origin, PROBE_PATH, 4096).await?
+    else {
+        return Ok(false);
+    };
     if observed.profile_id != prepared.profile_id
         || observed.server_instance_id != prepared.server_instance_id
         || observed.process_generation != prepared.process_generation
@@ -1007,6 +1124,27 @@ impl CloudflareControl {
         Ok(
             serde_json::json!({"client_id":client.client_id,"client_secret":secret,"already_configured":false}),
         )
+    }
+}
+
+/// Only the public listener supplies both the request entry and its process owner.
+pub(crate) fn observe_successful_tool_call(depot: &Depot) {
+    let (Some(entry), Ok(control)) = (
+        crate::public_ingress_auth::entry(depot),
+        depot.obtain::<Arc<CloudflareControl>>(),
+    ) else {
+        return;
+    };
+    if let Ok(mut guard) = control.attempt.lock() {
+        if let Some(attempt) = guard.as_mut().filter(|attempt| {
+            attempt.lifecycle == "running"
+                && attempt
+                    .entry
+                    .as_ref()
+                    .is_some_and(|running| running.fence() == entry.fence())
+        }) {
+            attempt.observed_tool_call = true;
+        }
     }
 }
 

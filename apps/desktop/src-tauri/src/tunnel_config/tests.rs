@@ -22,6 +22,7 @@ impl Drop for Fixture {
 }
 fn create(name: &str, tunnel_id: &str, key: &str) -> TunnelProfileRequest {
     TunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: None,
         provider: webcodex_environment::TunnelProvider::Openai,
         cloudflare_token: None,
@@ -41,6 +42,7 @@ fn edit(
     key: Option<&str>,
 ) -> TunnelProfileRequest {
     TunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: None,
         provider: webcodex_environment::TunnelProvider::Openai,
         cloudflare_token: None,
@@ -513,6 +515,7 @@ fn persistent_environment_reconciles_exact_legacy_claims_and_fails_closed_on_con
         .update_profile(
             &fixture.path(),
             TunnelProfileRequest {
+                expected_target: None,
                 oauth_dynamic_registration_enabled: None,
                 provider: webcodex_environment::TunnelProvider::Openai,
                 cloudflare_token: None,

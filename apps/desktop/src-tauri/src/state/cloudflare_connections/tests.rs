@@ -48,6 +48,7 @@ fn cloudflare_native_actions_require_selected_instance_and_secret_free_status() 
     assert!(!projected.contains("client_secret"));
     assert!(!projected.contains("must-not-project"));
     assert!(!status.observed_authorization);
+    assert!(!status.registration_available && !status.observed_tool_call);
 }
 
 #[tokio::test]
@@ -125,6 +126,21 @@ async fn cloudflare_native_http_preserves_only_explicit_ingress_restart_handoff(
             "503 Service Unavailable",
             canonical,
             "cloudflare_ingress_not_applied",
+        ),
+        (
+            "409 Conflict",
+            r#"{"error":"cloudflare_restart_server_required"}"#,
+            "cloudflare_ingress_not_applied",
+        ),
+        (
+            "409 Conflict",
+            r#"{"error":"cloudflare_owner_repair_required"}"#,
+            "cloudflare_owner_repair_required",
+        ),
+        (
+            "409 Conflict",
+            r#"{"error":"private-response-body"}"#,
+            "cloudflare_control_unavailable",
         ),
         (
             "500 Internal Server Error",

@@ -50,6 +50,10 @@ pub struct CloudflareConnectionStatus {
     pub public_origin: Option<String>,
     pub oauth_configured: bool,
     pub observed_authorization: bool,
+    #[serde(default)]
+    pub registration_available: bool,
+    #[serde(default)]
+    pub observed_tool_call: bool,
     pub configured_revision: u64,
     pub applied_revision: Option<u64>,
     pub local_target: String,
@@ -293,6 +297,36 @@ async fn control_response(
                 "The running Server has not loaded Cloudflare connections yet",
                 "Review the saved connection and explicitly restart the Server to apply it.",
             ));
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Conflict {
+            error: String,
+        }
+        if status == reqwest::StatusCode::CONFLICT {
+            if let Ok(conflict) = serde_json::from_slice::<Conflict>(&bytes) {
+                match conflict.error.as_str() {
+                    "cloudflare_restart_server_required" => {
+                        return Err(DesktopError::new(
+                            "cloudflare_ingress_not_applied",
+                            "Cloudflare configuration requires Server apply",
+                            "Restart the selected Server to apply the saved configuration.",
+                        ))
+                    }
+                    "cloudflare_already_active"
+                    | "cloudflare_identity_repair_required"
+                    | "cloudflare_owner_repair_required"
+                    | "cloudflare_revision_conflict"
+                    | "cloudflare_stale_attempt" => {
+                        return Err(DesktopError::new(
+                            conflict.error,
+                            "Cloudflare could not apply this operation",
+                            "Review the current connection before retrying.",
+                        ))
+                    }
+                    _ => {}
+                }
+            }
         }
         return Err(unavailable());
     }

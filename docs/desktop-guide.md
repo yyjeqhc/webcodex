@@ -104,6 +104,24 @@ Activity separates **Tool calls**, **Workflow Sessions**, and **Service events**
 
 Home and the sidebar show the **Local Runner** status and count locally ready Tunnels without claiming current ChatGPT presence. Project session counts describe open sessions. On platforms without native permission probing, desktop access settings explain the missing probe and point to desktop sign-in and the Projects session status; missing permission evidence does not imply unavailable desktop tools.
 
+## Connect Gemini on the web
+
+1. Open **Connections → Connect Gemini** and click **Connect Gemini** for a temporary address. Desktop saves a connection that runs with the Server and allows Gemini to register. If you already have Cloudflare connections, select the one you want and enable app registration when prompted. If Desktop shows **Restart Server**, choose a time when active work can be interrupted, click it and wait for **MCP endpoint ready**.
+2. Click **Copy MCP address** and **Open Gemini**. In Gemini on the web, go to **Settings → Connected Apps → Custom apps**, add the address and click **Next**. Some accounts show Connected Apps under Personal Intelligence. Follow the redirect to WebCodex, check the address, sign in there with the connection owner's user PAT, and approve the requested access. Gemini's form needs only the MCP address.
+3. Type `@` in Gemini, select the app and ask “Show my WebCodex Runtime status.” Desktop shows observed OAuth use and successful MCP tool calls on this run separately. Continue using the tools in chat. Gemini may ask you to confirm write actions. [Google’s custom app guide](https://support.google.com/gemini/answer/17209137)
+
+For a **long-term connection**, choose **Use a fixed address**. Select an existing Named connection to reuse its credentials. For a new one, enter the Cloudflare Tunnel ID, fixed HTTPS origin and Tunnel token, choose the Server or a separate service as owner, and select the startup preference. In Cloudflare, route the hostname to the local forwarding target on the connection card. One Cloudflare connection can be active per Server. When switching, stop the active connection and explicitly select which one starts automatically in its editor.
+
+| What you see | How to continue |
+| --- | --- |
+| Runtime setup, owner or Runner required | Open Runtime setup, configure a persistent local Server and its owner's Runner, and start the services. If cloudflared is missing, install version 2025.4.0 or later for the service account and start the connection again. |
+| Address pending or fixed address unreachable | Wait for startup and public verification. For Named, check the Cloudflare hostname route against the displayed local forwarding target, then reconnect. If copying fails, select and copy the address shown. |
+| Custom apps missing | Google currently requires a personal account, age 18 or older in the US, English and Gemini History enabled. Work and school accounts are currently ineligible for this entry point. Check the current Google help and the options available to your account. |
+| Sign-in canceled or authorization pending | Reopen the app in Gemini, finish authorization and request Runtime status. For debugging, inspect the Event Log in Developer Mode. [Google’s debugging guide](https://developers.google.com/connected-apps/mcp/dev-mode/usage) |
+| Window closed or tunnel restarted | Persistent services run independently. Reopening Desktop reads the current status. After stopping and rebuilding Quick, copy the new address, add it in Gemini and authorize again. Named retains valid grants for the same configuration, owner and fixed origin. |
+
+To pause access, click **Stop** in Desktop. To unlink the app from Google, open its details in Gemini’s Connected Apps and click **Disconnect**. To revoke all dynamically registered clients for this connection, edit it in Desktop, turn off **Allow automatic OAuth client registration**, save and apply the configuration. [Google’s disconnection instructions](https://support.google.com/gemini/answer/17209137)
+
 ## Connections and recovery
 
 Connection cards show observed Tunnel and local MCP reachability. Failures include a specific reason and a shortcut to proxy settings, Runtime, or diagnostics. The page shows the current network route; failure guidance uses the failed attempt’s proxy evidence and never changes routes automatically.

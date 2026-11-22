@@ -612,7 +612,7 @@ beforeEach(() => {
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_saved" } });
     const key = screen.getByLabelText("API key"); expect(key).toHaveAttribute("type", "password");
     fireEvent.change(key, { target: { value: "test-only-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(submitted).toHaveLength(1));
     expect(submitted[0]).toMatchObject({ id: "default", tunnel_id: "tunnel_saved", api_key: "test-only-key", expected_revision: 1 });
     await waitFor(() => expect(screen.queryByLabelText("API key")).not.toBeInTheDocument());
@@ -620,7 +620,7 @@ beforeEach(() => {
     expect(api.startRegularTunnel).not.toHaveBeenCalled(); expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "编辑 ChatGPT" }));
     expect(screen.getByLabelText("API key")).toHaveValue("");
-    fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(submitted).toHaveLength(2));
     expect(submitted[1]).toMatchObject({ id: "default", api_key: null, expected_revision: 2 });
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();
@@ -634,7 +634,7 @@ beforeEach(() => {
     fireEvent.change(tunnelInput, { target: { value: "tunnel_test" } });
     const key = screen.getByLabelText("API key");
     fireEvent.change(key, { target: { value: "test-only-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(api.configureEnvironment).not.toHaveBeenCalled();
     expect(api.configureLocal).not.toHaveBeenCalled();
@@ -833,12 +833,12 @@ beforeEach(() => {
     expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "添加连接" }));
     expect(await screen.findByLabelText("API key")).toHaveValue(""); expect(screen.getByLabelText("Tunnel ID")).toHaveValue("");
-    expect(screen.getByRole("button", { name: "保存并应用" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "ChatGPT Personal" } });
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_fixture" } });
-    expect(screen.getByRole("button", { name: "保存并应用" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "test-only" } });
-    expect(screen.getByRole("button", { name: "保存并应用" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
     expect(api.saveTunnelProfile).not.toHaveBeenCalled(); expect(api.tunnelProfileAction).not.toHaveBeenCalled();

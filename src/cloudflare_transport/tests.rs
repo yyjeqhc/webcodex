@@ -166,6 +166,16 @@ mod real_process {
         }
     }
 
+    async fn spawned_fixture(binary: &Path, pid_file: &Path) -> (CloudflareTransport, i32) {
+        // These tests budget readiness only after the real fixture has started.
+        // start_quick and version verification have separate end-to-end coverage;
+        // their process startup must not consume this phase's short deadline.
+        let transport =
+            CloudflareTransport::spawn(binary, Some("http://localhost:2345"), None).unwrap();
+        let pid = descendant(pid_file).await;
+        (transport, pid)
+    }
+
     async fn assert_dead(pid: i32) {
         let deadline = Instant::now() + Duration::from_secs(3);
         while live(pid) {
@@ -217,17 +227,34 @@ mod real_process {
             &pid_file,
             "echo https://pending.trycloudflare.com\nwhile :; do sleep 1; done",
         ));
-        let start = CloudflareTransport::start_quick(
-            &binary,
-            "http://127.0.0.1:2345",
-            Instant::now() + Duration::from_millis(400),
-        );
-        let (result, pid) = tokio::join!(start, descendant(&pid_file));
+        let (mut transport, pid) = spawned_fixture(&binary, &pid_file).await;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let url_observed = {
+                let facts = transport.output.facts.lock().unwrap();
+                assert!(!facts.connected);
+                facts.quick_url.as_deref() == Some("https://pending.trycloudflare.com")
+            };
+            if url_observed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fixture URL was not read before the readiness check"
+            );
+            assert!(transport.is_alive().unwrap());
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(transport.is_alive().unwrap());
+        assert!(live(pid));
+        let result = transport
+            .wait_ready(false, Instant::now() + Duration::from_millis(400))
+            .await;
         assert!(result
             .err()
             .expect("URL alone must not open ingress")
             .message
-            .contains("timed out"));
+            .contains("connector startup timed out"));
         assert_dead(pid).await;
     }
 
@@ -264,13 +291,16 @@ mod real_process {
                 "while :; do sleep 1; done"
             };
             let (_directory, binary) = fixture(&descendant_body(&pid_file, suffix));
-            let start = CloudflareTransport::start_quick(
-                &binary,
-                "http://localhost:2345",
-                Instant::now() + Duration::from_millis(400),
-            );
-            let (result, pid) = tokio::join!(start, descendant(&pid_file));
+            let (mut transport, pid) = spawned_fixture(&binary, &pid_file).await;
+            let result = transport
+                .wait_ready(false, Instant::now() + Duration::from_millis(400))
+                .await;
             let error = result.err().expect("fixture should fail startup");
+            assert!(error.message.contains(if parent_exits {
+                "exited before connector readiness"
+            } else {
+                "connector startup timed out"
+            }));
             assert!(!serde_json::to_string(&error)
                 .unwrap()
                 .contains("secret-token"));

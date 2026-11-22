@@ -183,6 +183,111 @@ fn two_registration_writers_share_entry_quota_and_failed_bind_rolls_back_client(
 }
 
 #[test]
+fn quick_reconnect_releases_registration_slots_without_reviving_old_grants() {
+    let mut f = Fixture::new(PublicIngressMode::Quick);
+    f.spec.oauth_dynamic_registration_enabled = true;
+    let original = f.activate();
+    for i in 0..16 {
+        assert_eq!(
+            f.db.register_dynamic_oauth_client(
+                &f.registration(&format!("quick-old-{i}")),
+                Some(&original.fence()),
+            )
+            .unwrap(),
+            Created
+        );
+    }
+    f.client = f.registration("quick-old-0");
+    let (old_access, _) = f.issue(&original, "quick-old-grant");
+    assert_eq!(
+        f.db.register_dynamic_oauth_client(
+            &f.registration("old-overflow"),
+            Some(&original.fence())
+        )
+        .unwrap(),
+        AtCapacity
+    );
+    assert!(f
+        .db
+        .set_public_ingress_admission(&original.fence(), false)
+        .unwrap());
+    let new_entry = f.restart(&original);
+    assert_ne!(new_entry.auth_epoch, original.auth_epoch);
+    assert!(!f
+        .db
+        .oauth_client_matches_public_ingress("quick-old-0", &new_entry.fence())
+        .unwrap());
+    assert!(!f
+        .db
+        .oauth_access_token_matches_public_ingress(&old_access.token_hash, Some(&new_entry.fence()))
+        .unwrap());
+
+    // Old registrations are still retained for audit and the global capacity,
+    // but they must not occupy the new Quick attempt's per-entry slots.
+    for i in 0..16 {
+        assert_eq!(
+            f.db.register_dynamic_oauth_client(
+                &f.registration(&format!("quick-new-{i}")),
+                Some(&new_entry.fence()),
+            )
+            .unwrap(),
+            Created
+        );
+    }
+    assert_eq!(
+        f.db.register_dynamic_oauth_client(
+            &f.registration("new-overflow"),
+            Some(&new_entry.fence())
+        )
+        .unwrap(),
+        AtCapacity
+    );
+    assert!(!f
+        .db
+        .oauth_client_matches_public_ingress("quick-old-0", &new_entry.fence())
+        .unwrap());
+}
+
+#[test]
+fn quick_epoch_slots_do_not_bypass_global_registration_capacity() {
+    let mut f = Fixture::new(PublicIngressMode::Quick);
+    f.spec.oauth_dynamic_registration_enabled = true;
+    let mut entry = f.activate();
+    // Eight generations can each allocate 16 current-epoch registrations,
+    // but historical records must still count toward the global 128 cap.
+    for generation in 0..8 {
+        for i in 0..16 {
+            assert_eq!(
+                f.db.register_dynamic_oauth_client(
+                    &f.registration(&format!("quick-{generation}-{i}")),
+                    Some(&entry.fence()),
+                )
+                .unwrap(),
+                Created
+            );
+        }
+        assert!(f
+            .db
+            .set_public_ingress_admission(&entry.fence(), false)
+            .unwrap());
+        entry = f.restart(&entry);
+    }
+    assert_eq!(
+        f.db.register_dynamic_oauth_client(
+            &f.registration("global-overflow"),
+            Some(&entry.fence()),
+        )
+        .unwrap(),
+        AtCapacity
+    );
+    assert!(f
+        .db
+        .get_oauth_client_by_client_id("global-overflow")
+        .unwrap()
+        .is_none());
+}
+
+#[test]
 fn named_and_quick_dynamic_clients_follow_entry_epoch_even_when_owner_and_hostname_repeat() {
     for mode in [PublicIngressMode::Named, PublicIngressMode::Quick] {
         let mut f = Fixture::new(mode);

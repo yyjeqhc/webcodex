@@ -123,7 +123,7 @@ impl Database {
         if let Some(entry) = &entry {
             if !make_registration_room(
                 &tx,
-                Some(&entry.entry_id),
+                Some((&entry.entry_id, entry.auth_epoch)),
                 MAX_ENTRY_DYNAMIC_CLIENTS,
                 reclaim_before,
             )? {
@@ -149,28 +149,37 @@ impl Database {
 /// a spent code awaiting normal cleanup, protects its registration.
 fn make_registration_room(
     conn: &Connection,
-    entry_id: Option<&str>,
+    entry: Option<(&str, i64)>,
     limit: i64,
     reclaim_before: i64,
 ) -> anyhow::Result<bool> {
+    // A Quick reconnect rotates the authorization epoch. Its old registrations
+    // are no longer usable, so they must not exhaust the new attempt's slots.
+    // The global (entry=None) cap still counts every retained registration.
     const CANDIDATES: &str =
         "FROM oauth_clients c LEFT JOIN oauth_public_ingress_clients b USING(client_id)
-        WHERE c.dynamic_registration IS NOT NULL AND (?1 IS NULL OR b.entry_id=?1)";
-    let count: i64 = conn.query_row(&format!("SELECT count(*) {CANDIDATES}"), [entry_id], |r| {
-        r.get(0)
-    })?;
+        WHERE c.dynamic_registration IS NOT NULL
+          AND (?1 IS NULL OR (b.entry_id=?1 AND b.registration_epoch=?2))";
+    let (entry_id, registration_epoch) = entry
+        .map(|(id, epoch)| (Some(id), Some(epoch)))
+        .unwrap_or((None, None));
+    let count: i64 = conn.query_row(
+        &format!("SELECT count(*) {CANDIDATES}"),
+        params![entry_id, registration_epoch],
+        |r| r.get(0),
+    )?;
     if count < limit {
         return Ok(true);
     }
     Ok(conn.execute(
         &format!(
             "DELETE FROM oauth_clients WHERE id = (SELECT c.id {CANDIDATES}
-        AND (c.created_at <= ?2 OR c.revoked_at IS NOT NULL)
+        AND (c.created_at <= ?3 OR c.revoked_at IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM oauth_authorization_codes WHERE client_id=c.client_id)
         AND NOT EXISTS (SELECT 1 FROM oauth_access_tokens WHERE client_id=c.client_id)
         AND NOT EXISTS (SELECT 1 FROM oauth_refresh_tokens WHERE client_id=c.client_id)
         ORDER BY c.created_at, c.id LIMIT 1)"
         ),
-        params![entry_id, reclaim_before],
+        params![entry_id, registration_epoch, reclaim_before],
     )? == 1)
 }

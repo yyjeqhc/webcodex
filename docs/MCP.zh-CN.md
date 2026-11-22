@@ -290,7 +290,7 @@ webcodex environment configure-tunnel trial --environment-dir "$TEST_ENVIRONMENT
 
 Quick 每次重建都要重新注册并授权，主机名变化时还需更新 MCP URL。Named 在 Owner 和 Origin 相同时可跨正常重启保留注册和有效授权。更换其中任意一项，或删除后重建 Profile，旧授权都会失效。需要立即关闭访问时可停止 Profile。要退役该入口所有动态客户端，保存 `--oauth-dcr false` 并应用配置。撤销单个客户端可使用经过认证的私有 `/api/oauth/clients/revoke` 接口。各监听器只接受自身绑定的授权。可委托的工具权限同时受本地用户权限配置和 Owner 授权范围限制。
 
-注册请求上限为 16 KiB，每个入口最多保留 16 个动态客户端，全库最多 128 个。满额时可回收已撤销或已满 24 小时、且相关授权记录已清理的注册，否则返回 HTTP 429 和 `temporarily_unavailable`。匿名调用方共享入口配额，单个调用方可能占满该入口的名额。转发 IP 请求头不影响配额。
+注册请求上限为 16 KiB，每个入口在**当前授权 epoch** 内最多有 16 个动态客户端，全库跨 epoch 最多保留 128 个。Quick 重连会轮换 epoch，释放新连接的入口配额，但旧注册和 Token 不会重新生效；历史注册仍占用全库配额。满额时可回收已撤销或已满 24 小时、且相关授权记录已清理的注册，否则返回 HTTP 429 和 `temporarily_unavailable`。匿名调用方共享入口配额，单个调用方可能占满该入口的名额。转发 IP 请求头不影响配额。
 
 手动 Cloudflare OAuth 与临时 OAuth Project Share 仍可在 Gemini **Additional settings** 中填写已配置的客户端凭据。OpenAI Secure MCP Tunnel 客户端沿用专用连接上的受保护本地凭据注入。Cloudflare Tunnel Token 供 cloudflared 使用。在 WebCodex 登录页仅输入 Owner 的用户 PAT。WebCodex 会轮换刷新令牌，Google 的可选 Persistent Linking 模式要求复用同一刷新令牌。[Google OAuth 指南](https://developers.google.com/connected-apps/mcp/oauth)
 

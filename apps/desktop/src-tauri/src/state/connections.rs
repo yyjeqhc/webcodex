@@ -238,6 +238,7 @@ impl DesktopCore {
                 .configure_cloudflare_tunnel_profile(
                     &store,
                     &webcodex_environment::CloudflareTunnelProfileRequest {
+                        expected_target: request.expected_target.as_ref(),
                         oauth_dynamic_registration_enabled: request
                             .oauth_dynamic_registration_enabled,
                         profile_id: &profile_id,
@@ -255,6 +256,7 @@ impl DesktopCore {
             return cancellation.check();
         }
         if request.cloudflare_token.is_some()
+            || request.expected_target.is_some()
             || request.oauth_dynamic_registration_enabled.is_some()
         {
             return Err(connection_missing());
@@ -294,10 +296,16 @@ impl DesktopCore {
                 ),
             }),
         };
+        let proxy_update = match effective_tunnel_proxy(&self.config.tunnel_proxy)?.url {
+            Some(url) => webcodex_environment::TunnelProxyUpdate::Explicit(
+                webcodex_environment::Secret::new(url),
+            ),
+            None => webcodex_environment::TunnelProxyUpdate::Direct,
+        };
         let native = webcodex_environment::NativeEnvironment::new()
             .map_err(super::environment::desktop_error)?;
         native
-            .configure_tunnel_profile(
+            .configure_tunnel_profile_with_proxy(
                 &store,
                 &profile_id,
                 Some(&request.name),
@@ -305,6 +313,7 @@ impl DesktopCore {
                 Some(request.autostart),
                 request.expected_revision,
                 credentials.as_ref(),
+                &proxy_update,
                 request.host_mode == webcodex_environment::TunnelHostMode::Standalone,
             )
             .await

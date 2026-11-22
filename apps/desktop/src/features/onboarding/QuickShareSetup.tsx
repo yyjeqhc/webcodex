@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { displayProjectPath } from "../../../../../frontend/src/ui/projectPresentation";
 import { desktopApi, type QuickShareProvider } from "../../lib/desktop-api";
@@ -15,6 +15,8 @@ export function QuickShareSetup({ state, onState, onBack, onComplete }: {
   const [provider, setProvider] = useState<QuickShareProvider>("cloudflare");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const blocked = busy || Boolean(state.current_operation);
   const chooseProject = async () => {
     if (blocked) return;
@@ -28,7 +30,10 @@ export function QuickShareSetup({ state, onState, onBack, onComplete }: {
   const run = async () => {
     if (blocked || !project) return;
     setBusy(true); setError(null);
-    try { onState(await desktopApi.startQuickShare(project.path, provider)); onComplete?.(); }
+    try {
+      const next = await desktopApi.startQuickShare(project.path, provider);
+      if (mounted.current) { onState(next); onComplete?.(); }
+    }
     catch (value) { setError(normalizeDesktopError(value)); }
     finally { setBusy(false); }
   };

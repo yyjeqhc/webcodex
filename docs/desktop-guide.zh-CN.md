@@ -38,21 +38,21 @@ Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runn
 
 ## 第一次使用
 
-1. 启动 WebCodex Desktop，选择**创建主节点**或**加入主节点**。普通创建同时启用独立的 Server 与本机 Runner；普通加入把本机 Runner 接入已有 Server。初始项目可跳过，Runner 仍保持启用。确认配置后才会安装持久服务、请求系统授权；仅打开窗口不会抢先把新机器绑定到本地 Server。
-2. 直接在 ChatGPT 中描述工作。请求给出工作目录后，Runtime 会在 Runner 允许的范围内自动解析或注册对应 Project。后续打开 Desktop 只观察已保存的持久服务，不会自动重启被主动停止的组件。
+1. 在新电脑上打开 Desktop，点击**开始配置**，WebCodex 即可在本机运行，默认在登录后启动。展开**高级**可以选择初始项目、填写 Runner 名称或更改启动方式。要连接已有 Server，选择**返回全部配置方式 → 连接其他电脑**。
+2. 配置完成后可以选择**连接 AI 应用**、**项目**或**打开概览**。连接应用后，就可以在其中描述工作。请求给出工作目录后，Runtime 会在 Runner 允许的范围内自动解析或注册对应 Project。后续打开 Desktop 只观察已保存的持久服务，不会自动重启被主动停止的组件。
 3. **项目**页显示已经出现的 Runtime Project。需要手动添加本机目录时，点击**添加本机文件夹**，选择目录后确认**授权并添加文件夹**。这会显式允许现有本机 Runner 访问该目录及其子目录，并复用原有 Server 与 Tunnel 凭据；不需要新的 Tunnel ID 或 API Key。仅查看的 viewer 连接不提供本机目录添加入口。
 4. 只有需要让 ChatGPT 从外部访问本机时，才配置 **OpenAI Secure Tunnel**。Tunnel 负责连接，不定义 Project 权限。
 5. 观察到真实项目调用只能证明此前发生过客户端使用，不能证明宿主此刻在线。
 
-选择**加入主节点**时，填写从本机可访问的中心 Server 直接地址，并通过受保护输入提供一次性配对码。ChatGPT 使用另一条 OpenAI Tunnel 连接；Tunnel 地址和主节点的环回地址不能作为追加 Runner 的接入口。无需主节点的 Tunnel Key 或 bootstrap 凭据。已有连接复用原身份。**高级**保留明确的 Server-only、viewer-only 设置；重新打开设置不会改变既有环境的角色或服务所有权。
+选择**连接其他电脑**时，填写从本机可访问的中心 Server 直接地址，并通过受保护输入提供一次性配对码。ChatGPT 使用另一条 OpenAI Tunnel 连接；Tunnel 地址和主节点的环回地址不能作为追加 Runner 的接入口。无需主节点的 Tunnel Key 或 bootstrap 凭据。已有连接复用原身份。**高级**保留明确的 Server-only、viewer-only 设置；重新打开设置不会改变既有环境的角色或服务所有权。
 
-如果只想临时共享一个项目，展开**高级**，选择 **用 Quick Share 共享项目** 和连接提供方。Quick Share 仍保留显式项目选择和独立的临时生命周期。
+如果只想临时共享一个项目，打开**返回全部配置方式 → 高级**，选择 **用 Quick Share 共享项目** 和连接提供方。Quick Share 仍保留显式项目选择和独立的临时生命周期。
 
 ## 添加其他设备
 
 在已保存的本地 Server 环境中，打开**项目 → 添加设备**；没有设备清单时也可使用。打开窗口不会签发配对码。填写其他机器可访问的 Server 地址，再明确点击**创建邀请**。邀请权限由现有 Core 和 Server 检查决定；填写的地址仅用于接入说明，不选择签发目标。窗口不会修改监听地址、防火墙或服务设置。
 
-配对码默认掩码显示，有效期十分钟，仅可使用一次。**查看配对码**和每项复制操作都需要明确点击。在追加机器安装 WebCodex，选择**加入主节点**并输入地址与配对码，初始项目可以跳过。关闭窗口、切换环境或本地展示期结束后清除所展示的配对码；关闭不会撤销 Server 上的邀请。失败或结果未确认时不会自动生成新码。
+配对码默认掩码显示，有效期十分钟，仅可使用一次。**查看配对码**和每项复制操作都需要明确点击。在追加机器安装 WebCodex，选择**连接其他电脑**并输入地址与配对码，初始项目可以跳过。关闭窗口、切换环境或本地展示期结束后清除所展示的配对码；关闭不会撤销 Server 上的邀请。失败或结果未确认时不会自动生成新码。
 
 点击**查看设备和项目**刷新现有授权清单。邀请已创建、Runner 在线、ChatGPT 真实读取项目是不同的观察结果。项目文件保留在各自机器上；同名、同路径项目仍按 Runner 与项目身份区分。
 
@@ -74,6 +74,27 @@ Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runn
 首页与侧栏显示**本机 Runner** 的状态，Tunnel 计数显示本地就绪数量，不确认 ChatGPT 当前已接入。项目表的会话数量表示未结束的会话。非 macOS 平台的桌面访问设置会解释权限检查不可用，并提示检查桌面登录与项目页的会话状态；不会把缺少权限观测当作桌面工具不可用。
 
 ChatGPT 在不同工作目录之间切换时，不需要先停止 Runtime 或 OpenAI Secure Tunnel。Runtime 会根据当前 Runner policy 解析兼容路径，并按需注册 Project。
+## 连接 Gemini 网页版
+
+打开**连接 → 连接 Gemini**。ChatGPT（OpenAI Secure Tunnel）与 Gemini（Cloudflare + OAuth）可以同时连接到同一个本机 WebCodex Server，互不冲突。如果检测到本机已有 WebCodex，点击**检查并继续**。Desktop 会先核对进程归属、项目清单、原有配置和运行中的作业，再记录迁移。阅读服务切换的影响后，再点击**确认保存并切换服务**。中断的迁移沿用原恢复记录；若上次失败的迁移未留下已安装的后台服务，可选择**清理未完成记录并重新检查**。新电脑选择**准备这台电脑 → 开始配置**。两种流程完成后都会回到 Gemini。如果本机连接的是远程 Server，请在运行该 Server 的电脑上配置 Gemini，或向管理员索取 MCP 地址。
+
+1. 点击**连接 Gemini**创建临时 Cloudflare 连接；已有连接可直接选择，未启用应用注册时按提示启用。随后点击**启动公网连接**，等待 **MCP 入口已就绪**。若需要 **重启 Server** 才能应用新配置，请先确认当前工作可以中断；没有 `cloudflared` 时，启动会按既有受信流程下载并校验客户端。**“尚无可用于 Gemini 的公网 MCP 地址”表示连接还没就绪，不应该继续在 Gemini 中试填网址；请查看卡片上的具体原因。**
+2. 只有卡片显示 **Gemini MCP 地址（复制完整网址）** 后，才点击 **复制 MCP 地址** 和 **打开 Gemini**。Quick 地址形如 `https://实际随机域名.trycloudflare.com/mcp`，Named 地址形如 `https://你的固定域名/mcp`。**不要填写高级设置中的 `http://127.0.0.1:端口` 本机转发目标，也不能直接填写另一台 Server 的首页地址。**在 Gemini 网页的 **Settings → Connected Apps → Custom apps** 中添加地址并点击 **Next**。部分界面将 Connected Apps 放在 Personal Intelligence 下。浏览器跳转到 WebCodex 后，核对地址，在该页使用连接所有者的用户 PAT 登录，查看请求的权限并授权。Gemini 的表单只需 MCP 地址。
+3. 在 Gemini 对话中输入 `@` 并选择刚添加的应用，试着说“查看 WebCodex Runtime 状态”。Desktop 会分别显示已观察到的 OAuth 使用和本次连接中成功的 MCP 工具调用。之后直接在对话中使用工具；Gemini 可能要求确认写入操作。[Google 的自定义应用指南](https://support.google.com/gemini/answer/17209137)
+
+**长期连接**可选择**其他 Cloudflare 连接 → 使用固定地址**。选择已有 Named 连接即可复用其凭据。首次配置时填写 Cloudflare Tunnel ID、固定 HTTPS 地址和 Tunnel 令牌，选择随 Server 运行或独立服务及自动启动。在 Cloudflare 中把固定主机名转发到**高级连接设置**中显示的本机转发目标。一个 Server 只允许一个活动的 Cloudflare 连接。切换时先停止正在使用的连接，并在编辑配置时明确选择哪个随服务启动。
+
+| 遇到的情况 | 如何继续 |
+| --- | --- |
+| 所有者或 Runner 不可用 | 打开 Runtime 设置，检查本机 Server 和同一用户的 Runner。若提示缺少 `cloudflared`，点击**连接 Gemini**可自动下载校验版本，离线环境也可手动安装 2025.4.0 或更高版本后再启动连接。 |
+| 暂时无法读取 Gemini 登录所需的信息 | 保持连接运行，WebCodex 会自动重新检查公网登录元数据。 |
+| 地址尚未出现或固定地址无法连接 | 等待启动及公网验证完成。Named 请核对 Cloudflare 主机名路由和本机转发目标，修正后重新连接。复制失败时，可手动选中卡片中的地址复制。 |
+| 看不到 Custom apps | Google 目前要求用户位于美国、年满 18 岁、使用个人账号、选择英语并开启 Gemini 历史记录。工作或学校账号暂不支持此入口。可用性以当前账号和 Google 帮助为准。 |
+| 首次登录被取消，或尚未观察到授权 | 在 Gemini 重新打开应用完成授权，再查询一次 Runtime 状态。调试时可使用 Developer Mode 的 Event Log。[Google 调试指南](https://developers.google.com/connected-apps/mcp/dev-mode/usage) |
+| 关闭窗口或重新启动 | 持久化服务独立运行。重新打开 Desktop 会读取当前连接状态。Quick 停止重建后请复制新地址，在 Gemini 重新添加并授权。Named 保持同一配置、所有者及固定地址时会保留有效授权。 |
+
+需要暂停访问时，在 Desktop 点击 **停止**。要取消 Google 端的关联，在 Gemini 的 Connected Apps 打开该应用的详情，点击 **Disconnect**。要撤销此连接上所有自动注册客户端的授权，请在 Desktop 编辑连接，关闭 **允许自动注册 OAuth 客户端**，保存并应用配置。[Google 的断开连接说明](https://support.google.com/gemini/answer/17209137)
+
 ## 连接与故障恢复
 
 连接卡片直接显示观察到的隧道与本地 MCP 可达状态。故障会显示具体原因，并提供代理设置、Runtime 或故障诊断入口。页面显示当前网络路径；故障建议使用失败时的代理证据，不会自动更改网络路径。

@@ -48,6 +48,18 @@ fn cloudflare_native_actions_require_selected_instance_and_secret_free_status() 
     assert!(!projected.contains("client_secret"));
     assert!(!projected.contains("must-not-project"));
     assert!(!status.observed_authorization);
+    assert!(!status.registration_available && !status.observed_tool_call);
+    let mut active = status;
+    active.registration_available = true;
+    active.check_materialized_revision(3);
+    assert!(active.registration_available && active.reason_code.is_none());
+    active.check_materialized_revision(4);
+    assert_eq!(active.registration_available, !cfg!(windows));
+    assert_eq!(
+        active.reason_code.as_deref(),
+        cfg!(windows).then_some("cloudflare_restart_server_required")
+    );
+    assert_eq!(active.process_generation, 2);
 }
 
 #[tokio::test]
@@ -127,6 +139,21 @@ async fn cloudflare_native_http_preserves_only_explicit_ingress_restart_handoff(
             "cloudflare_ingress_not_applied",
         ),
         (
+            "409 Conflict",
+            r#"{"error":"cloudflare_restart_server_required"}"#,
+            "cloudflare_ingress_not_applied",
+        ),
+        (
+            "409 Conflict",
+            r#"{"error":"cloudflare_owner_repair_required"}"#,
+            "cloudflare_owner_repair_required",
+        ),
+        (
+            "409 Conflict",
+            r#"{"error":"private-response-body"}"#,
+            "cloudflare_control_unavailable",
+        ),
+        (
             "500 Internal Server Error",
             canonical,
             "cloudflare_control_unavailable",
@@ -187,7 +214,7 @@ async fn cloudflare_native_http_distinguishes_auth_conflict_server_error_and_sta
             401u16,
         ),
         ("403 Forbidden", "cloudflare_authentication_failed", 403u16),
-        ("409 Conflict", "cloudflare_revision_stale", 409u16),
+        ("409 Conflict", "cloudflare_control_unavailable", 409u16),
         (
             "503 Service Unavailable",
             "cloudflare_control_unavailable",
@@ -228,6 +255,16 @@ async fn cloudflare_native_http_distinguishes_auth_conflict_server_error_and_sta
         assert_eq!(diag.http_status, Some(expected_http));
         assert_eq!(diag.stage.as_deref(), Some("cloudflare_status"));
         assert_eq!(diag.resource_id.as_deref(), Some("cf-profile-1"));
+        if expected_http == 409 {
+            assert!(
+                !diag.retry_allowed,
+                "an unknown conflict must not replay a write"
+            );
+            assert_eq!(
+                diag.safe_action,
+                crate::error::SafeRecoveryAction::ObserveBeforeRetry
+            );
+        }
         let projected = serde_json::to_string(&error).unwrap();
         assert!(!projected.contains("PRIVATE_CF_SECRET"));
         assert!(!projected.contains("test-private-bootstrap"));

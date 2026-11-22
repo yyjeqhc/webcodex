@@ -195,6 +195,7 @@ pub(super) async fn configure(
         credentials.and_then(|file| file.token).map(Secret::new)
     };
     let request = CloudflareTunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: input.oauth_dynamic_registration_enabled,
         profile_id: id,
         name: input.name.as_deref(),

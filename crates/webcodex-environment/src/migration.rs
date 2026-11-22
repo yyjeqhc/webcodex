@@ -1,12 +1,17 @@
 //! Durable handoff from a known legacy process owner to its selected native service manager.
 //! The journal contains paths and process identities, never credential contents.
+use crate::native::{canonical_server_url, same_project_path};
 #[cfg(windows)]
 use crate::service::ServiceCredential;
 use crate::service::{Component, Ownership, ServiceManager};
 use crate::storage::{
-    atomic_private_write, ensure_private_directory, read_private, EnvironmentLock,
+    atomic_private_write, ensure_private_directory, is_link, read_legacy_source, read_private,
+    EnvironmentLock,
 };
-use crate::tunnel::{tunnel_service_spec, TunnelCredentials};
+use crate::tunnel::{
+    import_embedded_tunnel_profile_under_lock, tunnel_profiles, tunnel_service_spec,
+    TunnelCredentials, TunnelHostMode, TunnelProxyUpdate,
+};
 use crate::{
     service_spec, EnvironmentMode, EnvironmentRecord, EnvironmentSetup, EnvironmentStore,
     NativeEnvironment, ProjectRecord, ServiceOperation, SetupDiagnostic, SetupJournal,
@@ -51,6 +56,11 @@ impl LegacyOwnerSnapshot {
 /// were captured before handoff. Core controls native services separately.
 pub trait LegacyOwner {
     async fn inspect(&mut self) -> SetupResultValue<LegacyOwnerSnapshot>;
+    /// Read-only interruption check after service preflight. A rejection leaves
+    /// the captured owner running and the same journal available for recovery.
+    async fn check_before_stop(&mut self, _observed: &LegacyOwnerSnapshot) -> SetupResultValue<()> {
+        Ok(())
+    }
     async fn stop(&mut self, expected: &LegacyOwnerSnapshot) -> SetupResultValue<()>;
     async fn restore(&mut self, expected: &LegacyOwnerSnapshot) -> SetupResultValue<()>;
     async fn verify_imported_data(&mut self) -> SetupResultValue<()> {
@@ -71,12 +81,32 @@ pub trait LegacyOwner {
             "The original Tunnel credential source is unavailable",
         ))
     }
+    /// Effective HTTP(S) proxy URL for OpenAI Tunnel control-plane traffic, if configured.
+    fn tunnel_proxy(&self) -> Option<crate::Secret> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LegacyTunnelProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub profile_id: String,
     pub start: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_mode: Option<TunnelHostMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autostart: Option<bool>,
+}
+
+impl LegacyTunnelProfile {
+    pub fn effective_host_mode(&self) -> TunnelHostMode {
+        self.host_mode.unwrap_or(TunnelHostMode::Standalone)
+    }
+
+    pub fn effective_autostart(&self) -> bool {
+        self.autostart.unwrap_or(self.start)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,14 +145,51 @@ pub struct MigrationJournal {
     pub last_diagnostic: Option<SetupDiagnostic>,
 }
 
+fn recovery_hint_for(code: &str) -> &'static str {
+    match code {
+        "legacy_project_registry" | "legacy_project_identity" => {
+            "Check that each saved project folder still exists and matches its Runner registration, then check again."
+        }
+        "legacy_server_binding"
+        | "legacy_server_configuration"
+        | "legacy_server_mode"
+        | "legacy_data_path"
+        | "legacy_env_ambiguous" => {
+            "Check that the original local Server configuration and data directory are readable, then check again."
+        }
+        "legacy_runner_binding"
+        | "legacy_runner_configuration"
+        | "legacy_identity"
+        | "legacy_user_credential"
+        | "legacy_component_conflict" => {
+            "Check that the original Runner configuration and user credential match this Server, then check again."
+        }
+        "legacy_tunnel_credentials" | "legacy_tunnel_profile" => {
+            "Check the saved ChatGPT Tunnel ID and API key in Connections, then check again."
+        }
+        "legacy_tunnel_owner" => {
+            "Check the running Tunnel connections in Connections, then check again."
+        }
+        "legacy_process_changed" | "legacy_owner_changed" => {
+            "The running Desktop processes or settings changed since the unfinished migration was recorded. Clear the unfinished record if no background services were installed, then check again."
+        }
+        "migration_conflict" => {
+            "Another unfinished migration record exists. Review Diagnostics or clear the unfinished record if no background services were installed."
+        }
+        "project_user_required" => {
+            "Run migration as the same local user account that owns the projects."
+        }
+        "tunnel_host_unsupported" => {
+            "Embedded Tunnel hosting requires user-session services on Windows; use user startup or standalone Tunnel services."
+        }
+        _ => "Inspect both owners and resume the saved migration only after their state is known",
+    }
+}
+
 fn diagnostic(code: &str, message: &str) -> SetupDiagnostic {
-    SetupDiagnostic::new(
-        code,
-        message,
-        "Inspect both owners and resume the saved migration only after their state is known",
-    )
-    .with_component("migration")
-    .with_stage("migration_handoff")
+    SetupDiagnostic::new(code, message, recovery_hint_for(code))
+        .with_component("migration")
+        .with_stage("migration_handoff")
 }
 
 fn journal(store: &EnvironmentStore) -> SetupResultValue<Option<MigrationJournal>> {
@@ -160,12 +227,215 @@ fn verify_legacy(
     Ok(())
 }
 
+impl MigrationJournal {
+    pub fn verify_current_owner(&self, observed: &LegacyOwnerSnapshot) -> SetupResultValue<()> {
+        verify_legacy(&self.captured, observed)
+    }
+}
+
 fn stopped_legacy(
     expected: &LegacyOwnerSnapshot,
     actual: &LegacyOwnerSnapshot,
 ) -> SetupResultValue<bool> {
     verify_legacy(expected, actual)?;
     Ok(expected.stopped_against(actual))
+}
+
+/// Read-only validation of legacy files and bindings without mutating state or
+/// creating `migration.json`.
+pub fn inspect_legacy_import(
+    request: &SetupRequest,
+    import: &LegacyImport,
+) -> SetupResultValue<()> {
+    validate_import(request, import)?;
+    inspect_import(request, import)
+}
+
+/// Full read-only preflight before writing `migration.json` or stopping any
+/// legacy process. Never creates a journal or installs services.
+pub fn preflight_legacy_import(
+    store: &EnvironmentStore,
+    request: &SetupRequest,
+    import: &LegacyImport,
+    replaces_server: bool,
+    replaces_runner: bool,
+) -> SetupResultValue<()> {
+    crate::native::validate_request_with_preserved_listen(request, replaces_server)?;
+    validate_import(request, import)?;
+    inspect_import(request, import)?;
+    preflight_new_owner_readonly(
+        store,
+        request,
+        import,
+        "preflight",
+        replaces_server,
+        replaces_runner,
+    )
+}
+
+fn check_resettable_migration(
+    store: &EnvironmentStore,
+    journal: &MigrationJournal,
+) -> SetupResultValue<bool> {
+    if !matches!(
+        journal.phase,
+        MigrationPhase::Prepared | MigrationPhase::RecoveryRequired
+    ) {
+        return Ok(false);
+    }
+    if store.load_environment()?.is_some() {
+        return Ok(false);
+    }
+    if journal.phase == MigrationPhase::Prepared && store.load_journal()?.is_some() {
+        return Ok(false);
+    }
+    let record = store
+        .load_journal()?
+        .map(|saved| saved.environment)
+        .unwrap_or_else(|| EnvironmentRecord {
+            schema_version: ENVIRONMENT_SCHEMA,
+            environment_id: journal.operation_id.clone(),
+            request: journal.request.clone(),
+            username: Some(journal.import.username.clone()),
+            runner_client_id: journal.import.runner_client_id.clone(),
+            projects: journal.import.projects.clone(),
+            configured: false,
+        });
+    for component in [Component::Server, Component::Runner] {
+        if (component == Component::Server && !record.request.local_server())
+            || (component == Component::Runner && !record.request.local_runner())
+        {
+            continue;
+        }
+        let spec = service_spec(store, &record, component)?;
+        if ServiceManager::inspect(&spec)
+            .map_err(service_diagnostic)?
+            .ownership
+            != Ownership::Absent
+        {
+            return Ok(false);
+        }
+    }
+    let mut tunnel_ids = journal
+        .import
+        .tunnel_profiles
+        .iter()
+        .map(|profile| profile.profile_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Ok(saved_tunnels) = tunnel_profiles(store) {
+        for profile in saved_tunnels {
+            tunnel_ids.insert(profile.profile_id);
+        }
+    }
+    for profile_id in tunnel_ids {
+        let spec = tunnel_service_spec(store, &record, &profile_id)?;
+        if ServiceManager::inspect(&spec)
+            .map_err(service_diagnostic)?
+            .ownership
+            != Ownership::Absent
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Returns true only when a saved migration journal is in `Prepared` or
+/// `RecoveryRequired`, no persistent environment has been committed, and every
+/// target native service is verified `Ownership::Absent`.
+pub fn can_reset_migration(store: &EnvironmentStore) -> SetupResultValue<bool> {
+    let Some(journal) = journal(store)? else {
+        return Ok(false);
+    };
+    check_resettable_migration(store, &journal)
+}
+
+fn remove_staged_path(path: &Path) -> SetupResultValue<()> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(SetupDiagnostic::io()),
+        Ok(metadata) if is_link(&metadata) => Err(diagnostic(
+            "migration_recovery_required",
+            "Refusing to remove a symbolic link inside the environment store",
+        )),
+        Ok(metadata) if metadata.is_file() => {
+            fs::remove_file(path).map_err(|_| SetupDiagnostic::io())
+        }
+        Ok(metadata) if metadata.is_dir() => remove_staged_dir(path, 0),
+        Ok(_) => Err(SetupDiagnostic::io()),
+    }
+}
+
+fn remove_staged_dir(dir: &Path, depth: usize) -> SetupResultValue<()> {
+    if depth > 32 {
+        return Err(SetupDiagnostic::io());
+    }
+    for entry in fs::read_dir(dir).map_err(|_| SetupDiagnostic::io())? {
+        let entry = entry.map_err(|_| SetupDiagnostic::io())?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(|_| SetupDiagnostic::io())?;
+        if is_link(&metadata) {
+            return Err(diagnostic(
+                "migration_recovery_required",
+                "Refusing to remove a symbolic link inside the environment store",
+            ));
+        }
+        if metadata.is_dir() {
+            remove_staged_dir(&path, depth + 1)?;
+        } else {
+            fs::remove_file(&path).map_err(|_| SetupDiagnostic::io())?;
+        }
+    }
+    fs::remove_dir(dir).map_err(|_| SetupDiagnostic::io())
+}
+
+/// Explicitly discard a verified-clean unstarted (`Prepared`) or fully rolled-back
+/// (`RecoveryRequired`) migration journal and any uncommitted staged copies inside
+/// the destination EnvironmentStore. Fails closed whenever a committed environment
+/// or any target native service is present or unverifiable.
+pub fn reset_failed_migration(store: &EnvironmentStore) -> SetupResultValue<()> {
+    let _lock = store.lock()?;
+    crate::ensure_upgrade_idle_under_lock(store)?;
+    let Some(existing) = journal(store)? else {
+        return Ok(());
+    };
+    if !check_resettable_migration(store, &existing)? {
+        return Err(diagnostic(
+            "migration_recovery_required",
+            "The unfinished migration cannot be cleared while a persistent environment or native service remains",
+        ));
+    }
+    if existing.phase == MigrationPhase::RecoveryRequired {
+        for relative in [
+            "setup.json",
+            "tunnel.json",
+            "runner.toml",
+            "webcodex-user-token",
+            "enrollment-recovery.json",
+            "project-registry",
+            "server",
+            "cu",
+        ] {
+            remove_staged_path(&store.root().join(relative))?;
+        }
+    }
+    remove_staged_path(&store.root().join("migration.json"))
+}
+
+async fn validate_legacy_tunnel_credentials(
+    import: &LegacyImport,
+    owner: &mut impl LegacyOwner,
+) -> SetupResultValue<()> {
+    for profile in &import.tunnel_profiles {
+        let credentials = owner.tunnel_credentials(&profile.profile_id).await?;
+        crate::tunnel::validate_credentials(&credentials).map_err(|_| {
+            diagnostic(
+                "legacy_tunnel_credentials",
+                "Original Tunnel credentials are incomplete or invalid",
+            )
+        })?;
+    }
+    Ok(())
 }
 
 /// The caller provides a host owner adapter; setup, imported identities,
@@ -205,6 +475,11 @@ pub async fn migrate_legacy_environment(
                     "The destination already has an environment",
                 ));
             }
+            // Complete all read-only file, credential, and service preflight checks
+            // BEFORE persisting migration.json so a validation failure never leaves
+            // a stale Prepared journal behind.
+            inspect_import(&request, &import)?;
+            validate_legacy_tunnel_credentials(&import, owner).await?;
             let captured = owner.inspect().await?;
             if captured.owner_id.is_empty() || captured.configuration_fingerprint.is_empty() {
                 return Err(diagnostic(
@@ -231,9 +506,18 @@ pub async fn migrate_legacy_environment(
                     "Active legacy Tunnel processes do not match the import list",
                 ));
             }
+            let operation_id = uuid::Uuid::new_v4().to_string();
+            preflight_new_owner_readonly(
+                store,
+                &request,
+                &import,
+                &operation_id,
+                owner.replaces_native_service(Component::Server),
+                owner.replaces_native_service(Component::Runner),
+            )?;
             let value = MigrationJournal {
                 schema_version: MIGRATION_SCHEMA,
-                operation_id: uuid::Uuid::new_v4().to_string(),
+                operation_id,
                 phase: MigrationPhase::Prepared,
                 request,
                 import,
@@ -269,38 +553,19 @@ pub async fn migrate_legacy_environment(
     }
 
     let observed = owner.inspect().await?;
-    verify_legacy(&migration.captured, &observed)?;
+    migration.verify_current_owner(&observed)?;
     if migration.phase == MigrationPhase::Prepared {
-        // Reject service ownership and account conflicts before touching the
-        // original processes. On Windows this also reserves the disabled
-        // Runner service and verifies the account credential before cutover.
+        // Re-verify read-only checks for resumed Prepared journals and, on Windows
+        // system scope, reserve the disabled Runner service before cutover.
         inspect_import(&migration.request, &migration.import)?;
-        for profile in &migration.import.tunnel_profiles {
-            let credentials = owner.tunnel_credentials(&profile.profile_id).await?;
-            if !credentials
-                .tunnel_id
-                .expose()
-                .strip_prefix("tunnel_")
-                .is_some_and(|suffix| {
-                    suffix.len() == 32
-                        && suffix
-                            .bytes()
-                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                })
-                || credentials.api_key.expose().is_empty()
-            {
-                return Err(diagnostic(
-                    "legacy_tunnel_credentials",
-                    "Original Tunnel credentials are incomplete",
-                ));
-            }
-        }
+        validate_legacy_tunnel_credentials(&migration.import, owner).await?;
         preflight_new_owner(store, &migration, secrets, owner).await?;
         migration.phase = MigrationPhase::OldStopRequested;
         save(store, &migration)?;
     }
     if migration.phase == MigrationPhase::OldStopRequested {
         if !stopped_legacy(&migration.captured, &observed)? {
+            owner.check_before_stop(&observed).await?;
             if let Err(error) = owner.stop(&migration.captured).await {
                 migration.phase = MigrationPhase::Restoring;
                 migration.last_diagnostic = Some(error.clone());
@@ -359,6 +624,13 @@ pub async fn migrate_legacy_environment(
             return Err(error);
         }
         if let Err(error) = import_original_files(store, &lock, &migration) {
+            migration.phase = MigrationPhase::Restoring;
+            migration.last_diagnostic = Some(error.clone());
+            save(store, &migration)?;
+            restore_original(store, &mut migration, owner).await?;
+            return Err(error);
+        }
+        if let Err(error) = import_embedded_tunnels(store, &lock, &migration, owner).await {
             migration.phase = MigrationPhase::Restoring;
             migration.last_diagnostic = Some(error.clone());
             save(store, &migration)?;
@@ -448,24 +720,64 @@ pub async fn migrate_legacy_environment(
     ))
 }
 
+async fn import_embedded_tunnels(
+    store: &EnvironmentStore,
+    lock: &EnvironmentLock,
+    migration: &MigrationJournal,
+    owner: &mut impl LegacyOwner,
+) -> SetupResultValue<()> {
+    let proxy_update = match owner.tunnel_proxy() {
+        Some(proxy) => TunnelProxyUpdate::Explicit(proxy),
+        None => TunnelProxyUpdate::Direct,
+    };
+    for profile in &migration.import.tunnel_profiles {
+        if profile.effective_host_mode() != TunnelHostMode::Embedded {
+            continue;
+        }
+        let credentials = owner.tunnel_credentials(&profile.profile_id).await?;
+        import_embedded_tunnel_profile_under_lock(
+            store,
+            lock,
+            &profile.profile_id,
+            profile.name.as_deref(),
+            profile.effective_autostart(),
+            &credentials,
+            &proxy_update,
+        )?;
+    }
+    Ok(())
+}
+
 async fn finish_tunnels(
     store: &EnvironmentStore,
     lock: &EnvironmentLock,
     migration: &MigrationJournal,
     owner: &mut impl LegacyOwner,
 ) -> SetupResultValue<()> {
-    if migration.import.tunnel_profiles.is_empty() {
+    let standalone = migration
+        .import
+        .tunnel_profiles
+        .iter()
+        .filter(|profile| profile.effective_host_mode() == TunnelHostMode::Standalone)
+        .collect::<Vec<_>>();
+    if standalone.is_empty() {
         return Ok(());
     }
+    let proxy_update = match owner.tunnel_proxy() {
+        Some(proxy) => TunnelProxyUpdate::Explicit(proxy),
+        None => TunnelProxyUpdate::Direct,
+    };
     let native = NativeEnvironment::new()?;
-    for profile in &migration.import.tunnel_profiles {
+    for profile in standalone {
         let credentials = owner.tunnel_credentials(&profile.profile_id).await?;
         let status = native
             .configure_tunnel_under_lock(
                 store,
                 lock,
                 &profile.profile_id,
+                profile.name.as_deref(),
                 Some(&credentials),
+                &proxy_update,
                 profile.start,
             )
             .await?;
@@ -479,19 +791,21 @@ async fn finish_tunnels(
     Ok(())
 }
 
-async fn preflight_new_owner(
+fn preflight_new_owner_readonly(
     store: &EnvironmentStore,
-    migration: &MigrationJournal,
-    secrets: &SetupSecrets,
-    owner: &impl LegacyOwner,
+    request: &SetupRequest,
+    import: &LegacyImport,
+    operation_id: &str,
+    replaces_server: bool,
+    replaces_runner: bool,
 ) -> SetupResultValue<()> {
     let record = EnvironmentRecord {
         schema_version: ENVIRONMENT_SCHEMA,
-        environment_id: migration.operation_id.clone(),
-        request: migration.request.clone(),
-        username: Some(migration.import.username.clone()),
-        runner_client_id: migration.import.runner_client_id.clone(),
-        projects: migration.import.projects.clone(),
+        environment_id: operation_id.to_owned(),
+        request: request.clone(),
+        username: Some(import.username.clone()),
+        runner_client_id: import.runner_client_id.clone(),
+        projects: import.projects.clone(),
         configured: false,
     };
     if crate::current_account()?.identity != record.request.account.identity {
@@ -506,20 +820,61 @@ async fn preflight_new_owner(
         {
             continue;
         }
+        let replaces = match component {
+            Component::Server => replaces_server,
+            Component::Runner => replaces_runner,
+            Component::Tunnel => false,
+        };
         let spec = service_spec(store, &record, component)?;
-        if !owner.replaces_native_service(component) {
+        if !replaces {
             ServiceManager::preflight(&spec).map_err(service_diagnostic)?;
         } else {
             #[cfg(target_os = "linux")]
             ServiceManager::preflight_replacing(&spec).map_err(service_diagnostic)?;
         }
     }
-    for profile in &migration.import.tunnel_profiles {
+    for profile in &import.tunnel_profiles {
         let spec = tunnel_service_spec(store, &record, &profile.profile_id)?;
-        ServiceManager::preflight(&spec).map_err(service_diagnostic)?;
+        if profile.effective_host_mode() == TunnelHostMode::Embedded {
+            let status = ServiceManager::inspect(&spec).map_err(service_diagnostic)?;
+            if status.ownership != Ownership::Absent {
+                return Err(diagnostic(
+                    "tunnel_owner_conflict",
+                    "A standalone Tunnel service already exists for an imported profile",
+                ));
+            }
+        } else {
+            ServiceManager::preflight(&spec).map_err(service_diagnostic)?;
+        }
     }
+    Ok(())
+}
+
+async fn preflight_new_owner(
+    store: &EnvironmentStore,
+    migration: &MigrationJournal,
+    secrets: &SetupSecrets,
+    owner: &impl LegacyOwner,
+) -> SetupResultValue<()> {
+    preflight_new_owner_readonly(
+        store,
+        &migration.request,
+        &migration.import,
+        &migration.operation_id,
+        owner.replaces_native_service(Component::Server),
+        owner.replaces_native_service(Component::Runner),
+    )?;
     #[cfg(windows)]
-    if record.request.local_runner() && record.request.service_scope.is_system() {
+    if migration.request.local_runner() && migration.request.service_scope.is_system() {
+        let record = EnvironmentRecord {
+            schema_version: ENVIRONMENT_SCHEMA,
+            environment_id: migration.operation_id.clone(),
+            request: migration.request.clone(),
+            username: Some(migration.import.username.clone()),
+            runner_client_id: migration.import.runner_client_id.clone(),
+            projects: migration.import.projects.clone(),
+            configured: false,
+        };
         let credential = secrets
             .service_password
             .as_ref()
@@ -724,12 +1079,15 @@ fn validate_import(request: &SetupRequest, import: &LegacyImport) -> SetupResult
             "The original project registration is incomplete",
         ));
     }
-    if request.project.is_some()
-        && !import
-            .projects
-            .iter()
-            .any(|project| Some(&project.path) == request.project.as_ref())
-    {
+    if request.project.as_ref().is_some_and(|selected| {
+        !import.projects.iter().any(|project| {
+            project
+                .path
+                .to_str()
+                .is_some_and(|recorded| same_project_path(recorded, selected))
+                || project.path == *selected
+        })
+    }) {
         return Err(diagnostic(
             "legacy_project_identity",
             "The selected project is not registered under the original Runner",
@@ -740,6 +1098,35 @@ fn validate_import(request: &SetupRequest, import: &LegacyImport) -> SetupResult
             "legacy_tunnel_owner",
             "A Runner-only machine cannot import Server Tunnel profiles",
         ));
+    }
+    if cfg!(windows)
+        && request.service_scope.is_system()
+        && import
+            .tunnel_profiles
+            .iter()
+            .any(|profile| profile.effective_host_mode() == TunnelHostMode::Embedded)
+    {
+        return Err(diagnostic(
+            "tunnel_host_unsupported",
+            "Embedded Tunnel setup currently requires a user-owned Server on Windows",
+        ));
+    }
+    if import
+        .tunnel_profiles
+        .iter()
+        .filter(|profile| profile.effective_host_mode() == TunnelHostMode::Embedded)
+        .count()
+        > 16
+    {
+        return Err(diagnostic(
+            "tunnel_profile_capacity",
+            "At most 16 Server-owned Tunnel profiles are supported",
+        ));
+    }
+    for profile in &import.tunnel_profiles {
+        if let Some(name) = &profile.name {
+            crate::tunnel::validate_name(name)?;
+        }
     }
     if import.tunnel_profiles.iter().any(|profile| {
         profile.profile_id.is_empty()
@@ -767,7 +1154,7 @@ fn validate_import(request: &SetupRequest, import: &LegacyImport) -> SetupResult
 }
 
 fn inspect_import(request: &SetupRequest, import: &LegacyImport) -> SetupResultValue<()> {
-    let user_token = read_private(&import.user_token_file)?;
+    let user_token = read_legacy_source(&import.user_token_file)?;
     if user_token.is_empty() {
         return Err(diagnostic(
             "legacy_user_credential",
@@ -775,7 +1162,7 @@ fn inspect_import(request: &SetupRequest, import: &LegacyImport) -> SetupResultV
         ));
     }
     if let Some(path) = &import.server_env_file {
-        let env = String::from_utf8(read_private(path)?).map_err(|_| {
+        let env = String::from_utf8(read_legacy_source(path)?).map_err(|_| {
             diagnostic(
                 "legacy_server_configuration",
                 "The original Server environment is not UTF-8",
@@ -812,7 +1199,7 @@ fn inspect_import(request: &SetupRequest, import: &LegacyImport) -> SetupResultV
         }
     }
     if let Some(path) = &import.runner_config_file {
-        let content = String::from_utf8(read_private(path)?).map_err(|_| {
+        let content = String::from_utf8(read_legacy_source(path)?).map_err(|_| {
             diagnostic(
                 "legacy_runner_configuration",
                 "The original Runner configuration is not UTF-8",
@@ -824,8 +1211,13 @@ fn inspect_import(request: &SetupRequest, import: &LegacyImport) -> SetupResultV
                 "The original Runner configuration is invalid",
             )
         })?;
-        if config.get("server_url").and_then(toml::Value::as_str)
-            != Some(request.server_url.as_str())
+        let recorded_server = config
+            .get("server_url")
+            .and_then(toml::Value::as_str)
+            .and_then(|url| canonical_server_url(url).ok());
+        let expected_server = canonical_server_url(&request.server_url).ok();
+        if recorded_server.is_none()
+            || recorded_server != expected_server
             || config.get("client_id").and_then(toml::Value::as_str)
                 != import.runner_client_id.as_deref()
             || config.get("owner").and_then(toml::Value::as_str) != Some(import.username.as_str())
@@ -852,7 +1244,7 @@ fn inspect_import(request: &SetupRequest, import: &LegacyImport) -> SetupResultV
             }
             for project in &import.projects {
                 let source = registry.join(format!("{}.toml", project.id));
-                let bytes = read_private(&source)?;
+                let bytes = read_legacy_source(&source)?;
                 let value: toml::Value =
                     toml::from_str(std::str::from_utf8(&bytes).map_err(|_| {
                         diagnostic(
@@ -867,7 +1259,10 @@ fn inspect_import(request: &SetupRequest, import: &LegacyImport) -> SetupResultV
                         )
                     })?;
                 if value.get("id").and_then(toml::Value::as_str) != Some(project.id.as_str())
-                    || value.get("path").and_then(toml::Value::as_str) != project.path.to_str()
+                    || !value
+                        .get("path")
+                        .and_then(toml::Value::as_str)
+                        .is_some_and(|recorded| same_project_path(recorded, &project.path))
                 {
                     return Err(diagnostic(
                         "legacy_project_registry",
@@ -880,20 +1275,45 @@ fn inspect_import(request: &SetupRequest, import: &LegacyImport) -> SetupResultV
     Ok(())
 }
 
+fn parse_env_key(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    trimmed
+        .strip_prefix("export ")
+        .map(str::trim_start)
+        .unwrap_or(trimmed)
+}
+
+fn unquote_env_value(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 2
+        && ((trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
+    {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    }
+}
+
 fn exactly_one_env(content: &str, key: &str) -> SetupResultValue<Option<String>> {
     let mut found = None;
     for line in content.lines() {
-        let Some((name, value)) = line.split_once('=') else {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((name, value)) = trimmed.split_once('=') else {
             continue;
         };
-        if name.trim() == key {
-            if found.is_some() || value.trim().is_empty() {
+        if parse_env_key(name) == key {
+            let value = unquote_env_value(value);
+            if found.is_some() || value.is_empty() {
                 return Err(diagnostic(
                     "legacy_env_ambiguous",
                     "The original Server environment has duplicate or empty required fields",
                 ));
             }
-            found = Some(value.trim().to_owned());
+            found = Some(value.to_owned());
         }
     }
     Ok(found)
@@ -906,10 +1326,10 @@ fn import_original_files(
 ) -> SetupResultValue<()> {
     inspect_import(&migration.request, &migration.import)?;
     let root = store.root();
-    let token = read_private(&migration.import.user_token_file)?;
+    let token = read_legacy_source(&migration.import.user_token_file)?;
     write_same_or_new(&root.join("webcodex-user-token"), &token)?;
     if let Some(path) = &migration.import.server_env_file {
-        let old_env = String::from_utf8(read_private(path)?).map_err(|_| {
+        let old_env = String::from_utf8(read_legacy_source(path)?).map_err(|_| {
             diagnostic(
                 "legacy_server_configuration",
                 "The original Server environment is not UTF-8",
@@ -930,9 +1350,10 @@ fn import_original_files(
         let env = old_env
             .lines()
             .map(|line| {
-                if line
-                    .split_once('=')
-                    .is_some_and(|(key, _)| key.trim() == "WEBCODEX_DATA")
+                if !line.trim_start().starts_with('#')
+                    && line
+                        .split_once('=')
+                        .is_some_and(|(key, _)| parse_env_key(key) == "WEBCODEX_DATA")
                 {
                     format!("WEBCODEX_DATA={}", new_data.display())
                 } else {
@@ -945,7 +1366,7 @@ fn import_original_files(
         write_same_or_new(&server.join("webcodex.env"), env.as_bytes())?;
     }
     if let Some(path) = &migration.import.runner_config_file {
-        let original = String::from_utf8(read_private(path)?).map_err(|_| {
+        let original = String::from_utf8(read_legacy_source(path)?).map_err(|_| {
             diagnostic(
                 "legacy_runner_configuration",
                 "The original Runner configuration is not UTF-8",
@@ -968,6 +1389,10 @@ fn import_original_files(
             )
         })?;
         table.insert(
+            "server_url".into(),
+            migration.request.server_url.clone().into(),
+        );
+        table.insert(
             "project_registry_dir".into(),
             root.join("project-registry")
                 .to_string_lossy()
@@ -982,7 +1407,7 @@ fn import_original_files(
                 .join(format!("{}.toml", project.id));
             if let Some(source) = &source_registry {
                 let source = source.join(format!("{}.toml", project.id));
-                let bytes = read_private(&source)?;
+                let bytes = read_legacy_source(&source)?;
                 write_same_or_new(&registry, &bytes)?;
                 continue;
             }
@@ -1116,6 +1541,19 @@ fn copy_data_tree(source: &Path, target: &Path) -> SetupResultValue<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_tunnel_receipts_retain_the_original_wire_format_without_a_name() {
+        let original = serde_json::json!({"profile_id": "primary", "start": true});
+        let mut profile: LegacyTunnelProfile = serde_json::from_value(original.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&profile).unwrap(), original);
+        profile.name = Some("ChatGPT Personal".into());
+        let encoded = serde_json::to_vec(&profile).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<LegacyTunnelProfile>(&encoded).unwrap(),
+            profile
+        );
+    }
+
     #[test]
     fn rejects_changed_owner_generation_and_unknown_process() {
         let initial = LegacyOwnerSnapshot {
@@ -1353,6 +1791,261 @@ mod tests {
         assert_eq!(
             store.load_journal().unwrap().unwrap().environment.projects[0].id,
             "existing-project"
+        );
+    }
+
+    #[test]
+    fn accepts_legacy_0644_project_registry_quoted_env_and_canonical_paths() {
+        let temp = crate::test_tempdir().unwrap();
+        let project = temp.path().join("project with spaces");
+        fs::create_dir(&project).unwrap();
+        let canonical_project = project.canonicalize().unwrap();
+        let data_dir = temp.path().join("server data");
+        fs::create_dir(&data_dir).unwrap();
+        let token_file = temp.path().join("legacy-user-token");
+        let server_env = temp.path().join("legacy-webcodex.env");
+        let config_file = temp.path().join("legacy-runner.toml");
+        let source_registry = temp.path().join("old-registry");
+        fs::create_dir(&source_registry).unwrap();
+
+        // Simulate Runner's File::create default permissions (0644 on Unix) and
+        // non-canonical project path (or symlink alias on Unix).
+        let recorded_path = {
+            #[cfg(unix)]
+            {
+                let alias = temp.path().join("project-link");
+                std::os::unix::fs::symlink(&canonical_project, &alias).unwrap();
+                alias
+            }
+            #[cfg(not(unix))]
+            {
+                project.clone()
+            }
+        };
+        let registry_file = source_registry.join("existing-project.toml");
+        fs::write(
+            &registry_file,
+            format!(
+                "id = 'existing-project'\npath = '{}'\nallow_patch = true\n",
+                recorded_path.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&registry_file, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        fs::write(&token_file, b"wc_user_existing").unwrap();
+        fs::write(
+            &server_env,
+            format!(
+                "# legacy server env\nWEBCODEX_ADDR=127.0.0.1:62645\nexport WEBCODEX_DATA=\"{}\"\nWEBCODEX_TOKEN='wc_boot_existing'\n",
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &config_file,
+            format!(
+                "server_url = 'http://127.0.0.1:62645/'\nclient_id = 'existing-runner'\nowner = 'alice'\ntoken = 'wc_agent_existing'\nproject_registry_dir = '{}'\n",
+                source_registry.display()
+            ),
+        )
+        .unwrap();
+
+        let request = SetupRequest {
+            runner_display_name: None,
+            service_scope: crate::service::ServiceScope::User,
+            mode: EnvironmentMode::Create {
+                listen: "127.0.0.1:62645".into(),
+            },
+            server_url: "http://127.0.0.1:62645".into(),
+            project: Some(canonical_project.clone()),
+            runner: Some(true),
+            account: crate::LocalAccount {
+                name: "alice".into(),
+                identity: "1001".into(),
+                home: temp.path().to_path_buf(),
+            },
+            binaries: crate::RuntimeBinaries {
+                cli: "/bin/webcodex".into(),
+                server: "/bin/webcodex-server".into(),
+                runner: "/bin/webcodex-runner".into(),
+            },
+        };
+        let import = LegacyImport {
+            server_env_file: Some(server_env),
+            runner_config_file: Some(config_file),
+            user_token_file: token_file,
+            username: "alice".into(),
+            runner_client_id: Some("existing-runner".into()),
+            projects: vec![ProjectRecord {
+                id: "existing-project".into(),
+                path: canonical_project,
+            }],
+            tunnel_profiles: vec![],
+        };
+        inspect_legacy_import(&request, &import).unwrap();
+
+        let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+        let migration = MigrationJournal {
+            schema_version: MIGRATION_SCHEMA,
+            operation_id: "migration-0644".into(),
+            phase: MigrationPhase::OldStopped,
+            request,
+            import,
+            captured: LegacyOwnerSnapshot {
+                owner_id: "desktop".into(),
+                configuration_fingerprint: "binding".into(),
+                processes: vec![],
+            },
+            last_diagnostic: None,
+        };
+        let lock = store.lock().unwrap();
+        import_original_files(&store, &lock, &migration).unwrap();
+        let imported_env = read_private(&store.root().join("server/webcodex.env")).unwrap();
+        let imported_env = String::from_utf8(imported_env).unwrap();
+        assert_eq!(
+            exactly_one_env(&imported_env, "WEBCODEX_DATA")
+                .unwrap()
+                .as_deref(),
+            store.root().join("server/data").to_str()
+        );
+        let imported_runner: toml::Value = toml::from_str(
+            std::str::from_utf8(&read_private(&store.root().join("runner.toml")).unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            imported_runner["server_url"].as_str(),
+            Some("http://127.0.0.1:62645")
+        );
+    }
+
+    #[test]
+    fn preflight_failure_does_not_persist_a_stale_prepared_journal() {
+        struct NoopOwner;
+        impl LegacyOwner for NoopOwner {
+            async fn inspect(&mut self) -> SetupResultValue<LegacyOwnerSnapshot> {
+                Ok(LegacyOwnerSnapshot {
+                    owner_id: "desktop".into(),
+                    configuration_fingerprint: "fp".into(),
+                    processes: vec![],
+                })
+            }
+            async fn stop(&mut self, _: &LegacyOwnerSnapshot) -> SetupResultValue<()> {
+                panic!("preflight failure must not stop legacy processes");
+            }
+            async fn restore(&mut self, _: &LegacyOwnerSnapshot) -> SetupResultValue<()> {
+                panic!("preflight failure must not restore legacy processes");
+            }
+        }
+        let temp = crate::test_tempdir().unwrap();
+        let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+        let missing_token = temp.path().join("missing-token");
+        let request = SetupRequest {
+            runner_display_name: None,
+            service_scope: crate::service::ServiceScope::User,
+            mode: EnvironmentMode::Join,
+            server_url: "https://server.example".into(),
+            project: None,
+            runner: Some(false),
+            account: crate::current_account().unwrap(),
+            binaries: crate::RuntimeBinaries {
+                cli: temp.path().join("cli"),
+                server: temp.path().join("server"),
+                runner: temp.path().join("runner"),
+            },
+        };
+        let import = LegacyImport {
+            server_env_file: None,
+            runner_config_file: None,
+            user_token_file: missing_token,
+            username: "alice".into(),
+            runner_client_id: None,
+            projects: vec![],
+            tunnel_profiles: vec![],
+        };
+        let mut owner = NoopOwner;
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let err = runtime
+            .block_on(migrate_legacy_environment(
+                &store,
+                request,
+                import,
+                &mut owner,
+                &SetupSecrets::default(),
+                |_| {},
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, "state_io");
+        assert!(migration_journal(&store).unwrap().is_none());
+    }
+
+    #[test]
+    fn reset_failed_migration_clears_clean_journal_and_fails_closed_when_committed() {
+        let temp = crate::test_tempdir().unwrap();
+        let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+        let request = SetupRequest {
+            runner_display_name: None,
+            service_scope: crate::service::ServiceScope::User,
+            mode: EnvironmentMode::Join,
+            server_url: "https://server.example".into(),
+            project: None,
+            runner: Some(false),
+            account: crate::current_account().unwrap(),
+            binaries: crate::RuntimeBinaries {
+                cli: temp.path().join("cli"),
+                server: temp.path().join("server"),
+                runner: temp.path().join("runner"),
+            },
+        };
+        let mut journal_value = MigrationJournal {
+            schema_version: MIGRATION_SCHEMA,
+            operation_id: "reset-test".into(),
+            phase: MigrationPhase::RecoveryRequired,
+            request: request.clone(),
+            import: LegacyImport {
+                server_env_file: None,
+                runner_config_file: None,
+                user_token_file: temp.path().join("token"),
+                username: "alice".into(),
+                runner_client_id: None,
+                projects: vec![],
+                tunnel_profiles: vec![],
+            },
+            captured: LegacyOwnerSnapshot {
+                owner_id: "desktop".into(),
+                configuration_fingerprint: "fp".into(),
+                processes: vec![],
+            },
+            last_diagnostic: None,
+        };
+        save(&store, &journal_value).unwrap();
+        atomic_private_write(&store.root().join("webcodex-user-token"), b"staged").unwrap();
+        assert!(can_reset_migration(&store).unwrap());
+        reset_failed_migration(&store).unwrap();
+        assert!(migration_journal(&store).unwrap().is_none());
+        assert!(!store.root().join("webcodex-user-token").exists());
+
+        // Never reset when an environment has already been committed.
+        journal_value.phase = MigrationPhase::Prepared;
+        save(&store, &journal_value).unwrap();
+        store
+            .save_environment(&EnvironmentRecord {
+                schema_version: ENVIRONMENT_SCHEMA,
+                environment_id: "committed".into(),
+                request,
+                username: Some("alice".into()),
+                runner_client_id: None,
+                projects: vec![],
+                configured: true,
+            })
+            .unwrap();
+        assert!(!can_reset_migration(&store).unwrap());
+        assert_eq!(
+            reset_failed_migration(&store).unwrap_err().code,
+            "migration_recovery_required"
         );
     }
 }

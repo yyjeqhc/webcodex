@@ -28,6 +28,8 @@ const api = vi.hoisted(() => ({
   activity: vi.fn(),
   configureLocal: vi.fn(),
   configureEnvironment: vi.fn(),
+  inspectLocalMigration: vi.fn(),
+  resetLocalMigration: vi.fn(),
   activateLocalProject: vi.fn(),
   configureRemote: vi.fn(),
   startQuickShare: vi.fn(),
@@ -276,6 +278,7 @@ beforeEach(() => {
     api.resumeSavedConnections.mockResolvedValue(readyState);
     api.configureEnvironment.mockResolvedValue(readyState);
     api.configureLocal.mockResolvedValue(projectlessReadyState);
+    api.inspectLocalMigration.mockResolvedValue({ fingerprint: "original", resuming: false });
     api.observeChatgptActivity.mockResolvedValue(readyState);
     api.updateTunnelProxy.mockResolvedValue(readyState);
     api.startRegularTunnel.mockResolvedValue(readyState);
@@ -331,22 +334,19 @@ beforeEach(() => {
     renderApp();
     await screen.findByRole("heading", { level: 1, name: "概览" });
     await changeServerConnection();
-    fireEvent.click(await screen.findByRole("button", { name: /创建主节点/ }));
-    expect(screen.getByRole("checkbox", { name: "允许 AI 在此电脑上工作" })).toBeChecked();
-    expect(screen.getByRole("button", { name: "选择文件夹" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
+    fireEvent.click(await screen.findByRole("button", { name: /使用这台电脑/ }));
+    fireEvent.click(screen.getByRole("button", {name: "检查并继续"}));
+    fireEvent.click(await screen.findByRole("button", {name: "确认保存并切换服务"}));
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
-      mode: "create", serverUrl: null, projectPath: null, runner: true, serviceScope:"user",
-      pairingCode: null, userToken: null, replacePairingCode: false,
+      mode: "create", expectedLocalTarget: {kind: "legacy", fingerprint: "original"}, serviceScope: "user",
     }));
   });
 
   it("joins as a viewer with an existing user credential and no pairing", async () => {
-    api.getState.mockResolvedValue(projectlessReadyState); renderApp();
-    await screen.findByRole("heading", { level: 1, name: "概览" });
-    await changeServerConnection();
-    fireEvent.click(await screen.findByRole("button", { name: /加入主节点/ }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "允许 AI 在此电脑上工作" }));
+    api.getState.mockResolvedValue(firstRunState); renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: /全部配置方式/ }));
+    fireEvent.click(screen.getByText("高级"));
+    fireEvent.click(screen.getByRole("button", { name: /仅查看/ }));
     fireEvent.change(screen.getByLabelText("Server URL"), { target: { value: "https://server.example" } });
     fireEvent.change(screen.getByLabelText("用户 API 凭据"), { target: { value: "wc_user_secret" } });
     expect(screen.queryByLabelText("一次性配对码")).not.toBeInTheDocument();
@@ -358,12 +358,11 @@ beforeEach(() => {
   });
 
   it("clears a submitted one-time code after a failed projectless Runner join", async () => {
-    api.getState.mockResolvedValue(projectlessReadyState);
+    api.getState.mockResolvedValue(firstRunState);
     api.configureEnvironment.mockRejectedValueOnce({ code: "pairing_code_invalid", message: "Pairing failed", next_action: "Use a new code." });
     renderApp();
-    await screen.findByRole("heading", { level: 1, name: "概览" });
-    await changeServerConnection();
-    fireEvent.click(await screen.findByRole("button", { name: /加入主节点/ }));
+    fireEvent.click(await screen.findByRole("button", {name: /全部配置方式/}));
+    fireEvent.click(screen.getByRole("button", { name: /连接其他电脑/ }));
     fireEvent.change(screen.getByLabelText("Server URL"), { target: { value: "https://server.example" } });
     const code = screen.getByLabelText("一次性配对码");
     fireEvent.change(code, { target: { value: "wc_pair_once" } });
@@ -705,10 +704,11 @@ beforeEach(() => {
     renderApp();
     await screen.findByRole("heading", { level: 1, name: "概览" });
     await changeServerConnection();
-    fireEvent.click(screen.getByRole("button", { name: /加入主节点/ }));
+    fireEvent.click(screen.getByRole("button", { name: /连接其他电脑/ }));
     expect(screen.getByText("将复用现有连接")).toBeInTheDocument();
     expect(screen.queryByLabelText("一次性配对码")).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByText("高级"));
     expect(screen.getByRole("button", { name: "选择文件夹" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "连接电脑" }));
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({
@@ -732,15 +732,13 @@ beforeEach(() => {
     renderApp();
     await screen.findByRole("heading", { level: 1, name: "概览" });
     await changeServerConnection();
-    fireEvent.click(screen.getByRole("button", { name: /创建主节点/ }));
+    fireEvent.click(screen.getByRole("button", { name: /使用这台电脑/ }));
     expect(screen.queryByRole("checkbox", { name: "配置完成后连接 ChatGPT" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始配置" }));
 
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({ mode: "create", runner: true })));
     expect(api.startRegularTunnel).not.toHaveBeenCalled();
-    expect(await screen.findByRole("heading", { level: 1, name: "完成 ChatGPT 连接" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", {name:"打开概览"}));
-    expect(await screen.findByRole("heading", { level: 1, name: "概览" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", {name:"Runtime 与服务"})).toHaveAttribute("aria-selected", "true");
   });
 
   it("navigates by accessible role/name and marks the current page", async () => {
@@ -881,10 +879,10 @@ beforeEach(() => {
     await waitFor(() => expect(launchAtLogin).toBeChecked());
   });
 
-  it("shows Create and Join on fresh launch without setup or service effects", async () => {
+  it("shows the local defaults on fresh launch without setup or service effects", async () => {
     api.getState.mockResolvedValue(firstRunState); renderApp();
-    expect(await screen.findByRole("button", {name:/创建主节点/})).toBeInTheDocument();
-    expect(screen.getByRole("button", {name:/加入主节点/})).toBeInTheDocument();
+    expect(await screen.findByRole("button", {name: "开始配置"})).toBeEnabled();
+    expect(screen.getByText("高级").closest("details")).not.toHaveAttribute("open");
     expect(api.configureLocal).not.toHaveBeenCalled();
     expect(api.configureEnvironment).not.toHaveBeenCalled();
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
@@ -893,22 +891,24 @@ beforeEach(() => {
     expect(api.startQuickShare).not.toHaveBeenCalled();
   });
 
-  it.each(["create", "join"] as const)("continues fresh %s setup to role-specific connection guidance", async mode => {
+  it.each(["create", "join"] as const)("finishes fresh %s setup with independent choices for apps and projects", async mode => {
     api.getState.mockResolvedValue(firstRunState);
     const configured = {...projectlessReadyState,persistent_environment:"fresh-env",topology:{...projectlessReadyState.topology!,server: mode === "create" ? {kind:"local" as const} : {kind:"remote" as const,url:"https://main.example"}}};
     api.configureEnvironment.mockResolvedValue(configured);
     renderApp();
-    fireEvent.click(await screen.findByRole("button",{name:mode === "create" ? /创建主节点/ : /加入主节点/}));
+    await screen.findByRole("button", {name: "开始配置"});
     if (mode === "join") {
+      fireEvent.click(screen.getByRole("button", {name: /全部配置方式/}));
+      fireEvent.click(screen.getByRole("button", {name: /连接其他电脑/}));
       fireEvent.change(screen.getByLabelText("Server URL"),{target:{value:"https://main.example"}});
       fireEvent.change(screen.getByLabelText("一次性配对码"),{target:{value:"one-time-code"}});
     }
-    fireEvent.click(screen.getByRole("button",{name:mode === "create" ? "配置 WebCodex" : "连接电脑"}));
-    expect(await screen.findByRole("heading",{level:1,name:"完成 ChatGPT 连接"})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:mode === "create" ? "开始配置" : "连接电脑"}));
+    expect(await screen.findByRole("heading",{level:1,name:"WebCodex 配置完成"})).toBeInTheDocument();
     expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({mode,runner:true,projectPath:null}));
     expect(api.configureLocal).not.toHaveBeenCalled();
-    if (mode === "create") expect(screen.getByRole("button",{name:"添加 ChatGPT Tunnel"})).toBeInTheDocument();
-    else expect(screen.queryByRole("button",{name:"添加 ChatGPT Tunnel"})).toBeNull();
+    expect(screen.getByRole("button", {name: "连接 AI 应用"})).toBeEnabled();
+    expect(screen.queryByRole("button", {name: "添加 ChatGPT Tunnel"})).toBeNull();
   });
 
   it("keeps PowerShell 7 guidance available in manual local recovery without requiring a project", async () => {
@@ -924,13 +924,13 @@ beforeEach(() => {
     await screen.findByRole("heading", { level: 1, name: "概览" });
 
     await changeServerConnection();
-    fireEvent.click(screen.getByRole("button", { name: /创建主节点/ }));
+    fireEvent.click(screen.getByRole("button", { name: /使用这台电脑/ }));
     const guidance = screen.getByText("建议安装 PowerShell 7").closest("article");
     expect(guidance).not.toBeNull();
     expect(guidance).toHaveTextContent("Windows PowerShell 5.1");
     expect(guidance).toHaveTextContent("winget install --id Microsoft.PowerShell --source winget");
     expect(screen.queryByRole("button", { name: "选择文件夹" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "检查并继续" })).toBeEnabled();
 
     fireEvent.click(within(guidance!).getByRole("button", { name: "打开 Microsoft 安装说明" }));
     await waitFor(() => expect(api.openPowerShellInstallGuide).toHaveBeenCalledTimes(1));
@@ -938,13 +938,11 @@ beforeEach(() => {
   });
 
   it("surfaces a failed explicit persistent local setup without inventing a default project", async () => {
-    api.getState.mockResolvedValue(projectlessReadyState);
+    api.getState.mockResolvedValue(firstRunState);
     api.configureEnvironment.mockRejectedValue({ code: "runner_offline", message: "Runner did not become connected", next_action: "Retry setup." });
     renderApp();
-    await screen.findByRole("heading", { level: 1, name: "概览" });
-    await changeServerConnection();
-    fireEvent.click(await screen.findByRole("button", { name: /创建主节点/ }));
-    fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
+    await screen.findByRole("heading", { name: "在这台电脑上运行 WebCodex" });
+    fireEvent.click(screen.getByRole("button", { name: "开始配置" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("runner_offline");
     expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({ projectPath: null, runner: true }));
     expect(api.activateLocalProject).not.toHaveBeenCalled();
@@ -974,7 +972,7 @@ beforeEach(() => {
     await waitFor(() => expect(api.getState).toHaveBeenCalledTimes(2));
 
     await act(async () => { retryState.resolve(firstRunState); });
-    expect(await screen.findByRole("button", { name: /创建主节点/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "开始配置" })).toBeInTheDocument();
     expect(api.configureLocal).not.toHaveBeenCalled();
     expect(api.configureEnvironment).not.toHaveBeenCalled();
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
@@ -1407,7 +1405,7 @@ beforeEach(() => {
 
     await waitFor(() => expect(api.resumeSavedRuntime).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { level: 1, name: "概览" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "配置 WebCodex" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开始配置" })).not.toBeInTheDocument();
   });
 
   it("observes persistent services on launch without restarting stopped components", async () => {

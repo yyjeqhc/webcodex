@@ -87,6 +87,7 @@ async fn connection_resume_uses_current_profile_preferences_without_enabling_sto
                 .update_profile(
                     &path,
                     TunnelProfileRequest {
+                        expected_target: None,
                         oauth_dynamic_registration_enabled: None,
                         provider: webcodex_environment::TunnelProvider::Openai,
                         cloudflare_token: None,

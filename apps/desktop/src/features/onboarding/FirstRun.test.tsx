@@ -6,7 +6,7 @@ import { DesktopMantineProvider } from "../../components/DesktopMantineProvider"
 import type { DesktopState } from "../../models/topology";
 import { FirstRun } from "./FirstRun";
 
-const api = vi.hoisted(() => ({ configureEnvironment: vi.fn(), inspectProject: vi.fn(), startQuickShare: vi.fn() }));
+const api = vi.hoisted(() => ({ configureEnvironment: vi.fn(), inspectLocalMigration: vi.fn(), resetLocalMigration: vi.fn(), inspectProject: vi.fn(), startQuickShare: vi.fn() }));
 const picker = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => picker);
@@ -30,6 +30,7 @@ beforeEach(() => {
   localStorage.setItem("webcodex.desktop.locale", "en-US");
   api.configureEnvironment.mockResolvedValue(state);
   api.startQuickShare.mockResolvedValue(state);
+  api.inspectLocalMigration.mockResolvedValue({fingerprint: "original", resuming: false});
   api.inspectProject.mockResolvedValue(project);
   picker.open.mockResolvedValue(project.path);
 });
@@ -43,6 +44,7 @@ describe("explicit environment setup", () => {
   });
   it("blocks an invalid Runner name before configuring", () => {
     const {container}=mount(); action(container,"choose-local-setup");
+    fireEvent.click(screen.getByText("Advanced"));
     fireEvent.change(screen.getByLabelText("Runner name (optional)"), {target:{value:"😀".repeat(201)}});
     expect(screen.getByRole("alert")).toBeInTheDocument();
     fireEvent.submit(container.querySelector("form")!);
@@ -56,11 +58,11 @@ describe("explicit environment setup", () => {
     await waitFor(()=>expect(api.configureEnvironment).toHaveBeenCalledTimes(1));
     expect(api.configureEnvironment.mock.calls[0][0]).not.toHaveProperty("runnerDisplayName");
   });
-  it("shows Create main node and Join main node as the two ordinary entries", () => {
+  it("offers local and remote computers in the explicit setup choices", () => {
     mount();
-    expect(screen.getByRole("button", { name: /Create main node/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Join main node/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Quick Share/ })).not.toBeVisible();
+    expect(screen.getByRole("button", { name: /Use this computer/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Connect to another computer/ })).toBeInTheDocument();
+    expect(screen.getByText("Quick Share a project")).not.toBeVisible();
     expect(api.configureEnvironment).not.toHaveBeenCalled();
   });
   it("chooses machine startup explicitly and never retries a user failure as a system install", async () => {
@@ -70,9 +72,9 @@ describe("explicit environment setup", () => {
     await screen.findByRole("alert");
     expect(api.configureEnvironment).toHaveBeenCalledTimes(1);
     expect(api.configureEnvironment.mock.calls[0][0].serviceScope).toBe("user");
-    const advanced = screen.getByText("Advanced deployment options").closest("details")!;
+    const advanced = screen.getByText("Advanced").closest("details")!;
     expect(advanced).not.toHaveAttribute("open");
-    fireEvent.click(screen.getByText("Advanced deployment options"));
+    fireEvent.click(screen.getByText("Advanced"));
     selectOption(screen.getByRole("combobox", { name: "Background startup" }), "system");
     action(container,"configure-local");
     await waitFor(()=>expect(api.configureEnvironment).toHaveBeenCalledTimes(2));
@@ -99,17 +101,15 @@ describe("explicit environment setup", () => {
     } as DesktopState;
     const { container } = mount(local, true);
     action(container, "choose-local-setup");
-    const advanced = screen.getByText("Advanced deployment options").closest("details")!;
-    expect(advanced).not.toHaveAttribute("open");
-    fireEvent.click(screen.getByText("Advanced deployment options"));
+    fireEvent.click(screen.getByRole("button", {name: "Check existing setup"}));
+    const confirm = await screen.findByRole("button", {name: "Save and switch services"});
+    expect(api.configureEnvironment).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Advanced"));
     selectOption(screen.getByRole("combobox", { name: "Background startup" }), "system");
-    action(container, "configure-local");
-    await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({
-      mode: "create",
-      projectPath: null,
-      runner: true,
-      serviceScope: "system",
-    })));
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
+      mode: "create", expectedLocalTarget: {kind: "legacy", fingerprint: "original"}, serviceScope: "system",
+    }));
   });
   it("offers persistent local/join and temporary sharing without registering a default project", async () => {
     const { container, onState } = mount();
@@ -120,7 +120,7 @@ describe("explicit environment setup", () => {
     expect(container.querySelector('[data-webcodex-action="choose-project"]')).toBeEnabled();
     action(container, "configure-local");
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
-      mode: "create", serverUrl: null, projectPath: null, runner: true, serviceScope: "user",
+      mode: "create", expectedLocalTarget: {kind: "fresh"}, serverUrl: null, projectPath: null, runner: true, serviceScope: "user",
       pairingCode: null, userToken: null, replacePairingCode: false,
     }));
     expect(onState).toHaveBeenCalledWith(state);

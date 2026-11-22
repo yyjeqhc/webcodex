@@ -72,7 +72,6 @@ input:not([type="radio"]):not([type="checkbox"]):not(.mantine-Input-input), sele
 
 .first-run-completion { display: grid; gap: 20px; }
 .first-run-completion h1:focus { outline-offset: 6px; }
-.first-run-completion .workspace-status-strip { flex-wrap: wrap; }
 .completion-identities { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 0; }
 .completion-identities > div { min-width: 0; }
 .completion-identities dt { color: var(--ui-text-secondary); font-size: 13px; }
@@ -90,9 +89,6 @@ input:not([type="radio"]):not([type="checkbox"]):not(.mantine-Input-input), sele
   .completion-identities code { white-space: normal; }
 }
 
-.setup-route { display: flex; gap: 24px; flex-wrap: wrap; padding-inline-start: 24px; }
-.setup-route li { padding-inline-end: 8px; }
-.setup-route [aria-current="step"] { font-weight: 700; }
 .setup-shell h1:focus, .first-run h1:focus { outline-offset: 6px; }
 .desktop-error-alert { gap: 6px; }
 .desktop-error-alert.tone-info { border-color: color-mix(in srgb, var(--ui-accent) 34%, var(--ui-border)); background: color-mix(in srgb, var(--ui-accent) 10%, var(--ui-surface)); color: var(--ui-text-primary); }

@@ -17,7 +17,8 @@ pub use cloudflare_tunnel::{
     cloudflare_ingress_port, cloudflare_tunnel_profile, cloudflare_tunnel_profiles,
     load_cloudflare_server_ingress_port, load_cloudflare_server_materializations,
     load_cloudflare_tunnel_materialization, materialize_cloudflare_tunnel_profiles,
-    CloudflareTunnelProfileRequest, CloudflareTunnelRuntimeProfile, TunnelProvider,
+    CloudflareProfileTarget, CloudflareTunnelProfileRequest, CloudflareTunnelRuntimeProfile,
+    TunnelProvider,
 };
 mod embedded_tunnel;
 mod engine;
@@ -55,8 +56,9 @@ pub mod upgrade_transport;
 
 pub use engine::{EnvironmentBackend, EnvironmentSetup, Reconciliation};
 pub use migration::{
-    migrate_legacy_environment, migration_journal, LegacyImport, LegacyOwner, LegacyOwnerSnapshot,
-    LegacyProcess, LegacyTunnelProfile, MigrationJournal, MigrationPhase,
+    can_reset_migration, inspect_legacy_import, migrate_legacy_environment, migration_journal,
+    preflight_legacy_import, reset_failed_migration, LegacyImport, LegacyOwner,
+    LegacyOwnerSnapshot, LegacyProcess, LegacyTunnelProfile, MigrationJournal, MigrationPhase,
 };
 pub use native::{
     canonical_server_url, current_account, read_secret, resolve_service_scope, service_spec,
@@ -85,6 +87,6 @@ pub use tunnel::{
     tunnel_profile_credentials, tunnel_profile_snapshots, tunnel_profiles, tunnel_service_spec,
     write_embedded_tunnel_health, write_embedded_tunnel_observation, write_tunnel_health,
     TunnelConfigurationNextAction, TunnelConfigurationResult, TunnelCredentials,
-    TunnelDiagnosticObservation, TunnelHostMode, TunnelProfileSnapshot, TunnelRecord,
-    TunnelRuntimeObservation, TunnelState,
+    TunnelDiagnosticObservation, TunnelHostMode, TunnelProfileSnapshot, TunnelProxyUpdate,
+    TunnelRecord, TunnelRuntimeObservation, TunnelState,
 };

@@ -18,6 +18,8 @@ pub fn directory(path: &Path) -> DesktopResult<()> {
     open_literal(path.as_os_str())
 }
 
+pub(crate) const GEMINI_APPS: &str = "https://gemini.google.com/apps";
+
 pub fn url(url: &str) -> DesktopResult<()> {
     let parsed = url::Url::parse(url).map_err(|_| unavailable())?;
     let local = matches!(
@@ -29,7 +31,7 @@ pub fn url(url: &str) -> DesktopResult<()> {
         && parsed.port().is_none()
         && (parsed.path() == "/yyjeqhc/webcodex"
             || parsed.path().starts_with("/yyjeqhc/webcodex/"));
-    if (!local && !github)
+    if (!local && !github && url != GEMINI_APPS)
         || !matches!(parsed.scheme(), "http" | "https")
         || !parsed.username().is_empty()
         || parsed.password().is_some()

@@ -1,34 +1,43 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Alert, Button, Checkbox, Select, PasswordInput, TextInput } from "@mantine/core";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopState } from "../../models/topology";
 import type { TunnelConnection, TunnelHostMode, TunnelProfileRequest, TunnelProvider } from "../../models/connections-tools";
+import { normalizeDesktopError } from "../../i18n/presentation";
 import { useProduct } from "../../i18n/product";
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 
-export function ConnectionEditor({ profile, persistentLocal, onState, onClose, onSetup }: {
+export function ConnectionEditor({ profile, geminiNamed = false, chatgptPreset = false, initialAutostart = true, environmentId, persistentLocal, onState, onClose, onSetup }: {
   profile: TunnelConnection | null;
   persistentLocal: boolean;
+  environmentId?: string | null;
+  geminiNamed?: boolean;
+  chatgptPreset?: boolean;
+  initialAutostart?: boolean;
   onState: (state: DesktopState) => void;
   onClose: () => void;
   onSetup?: () => void;
 }) {
   const p = useProduct();
   const c = useConnectionsTools();
-  const [name, setName] = useState(profile?.name || "");
+  const [name, setName] = useState(profile?.name ?? (geminiNamed ? "Gemini" : chatgptPreset ? "ChatGPT" : ""));
   const [tunnelId, setTunnelId] = useState(profile?.tunnel_id || "");
   const [apiKey, setApiKey] = useState("");
-  const [providerKind, setProviderKind] = useState<TunnelProvider["kind"]>(profile?.provider?.kind ?? "openai");
+  const [providerKind, setProviderKind] = useState<TunnelProvider["kind"]>(profile?.provider?.kind ?? (geminiNamed ? "cloudflare_named" : "openai"));
   const [publicOrigin, setPublicOrigin] = useState(profile?.provider?.kind === "cloudflare_named" ? profile.provider.public_origin : "");
   const [cloudflareToken, setCloudflareToken] = useState("");
   const cloudflare = providerKind !== "openai";
   const named = providerKind === "cloudflare_named";
-  const [autostart, setAutostart] = useState(profile?.autostart ?? true);
+  const [autostart, setAutostart] = useState(profile?.autostart ?? initialAutostart);
   const [hostMode, setHostMode] = useState<TunnelHostMode>(profile?.host_mode ?? (persistentLocal ? "embedded" : "standalone"));
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failureCode, setFailureCode] = useState<string | null>(null);
   const submitted = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const savedDcr = profile?.oauth_dynamic_registration_enabled ?? false;
+  const [dcr, setDcr] = useState(geminiNamed || savedDcr);
   const canChooseHost = persistentLocal && profile === null;
   const identityLocked = persistentLocal && profile !== null;
   const submit = async (event: FormEvent) => {
@@ -36,7 +45,7 @@ export function ConnectionEditor({ profile, persistentLocal, onState, onClose, o
     if (submitted.current || (cloudflare && !persistentLocal)) return;
     submitted.current = true;
     setBusy(true);
-    setFailed(false);
+    setFailureCode(null);
     const request: TunnelProfileRequest = {
       id: profile?.id ?? null,
       name: name.trim(),
@@ -47,6 +56,8 @@ export function ConnectionEditor({ profile, persistentLocal, onState, onClose, o
       expected_revision: profile?.revision ?? null,
     };
     if (cloudflare) {
+      if (environmentId) request.expected_target = {environment_id: environmentId, configuration_id: profile?.configuration_id ?? null};
+      if (!profile || dcr !== savedDcr) request.oauth_dynamic_registration_enabled = dcr;
       request.provider = named ? {kind:"cloudflare_named",public_origin:publicOrigin.trim().replace(/\/$/, ""),tunnel_id:tunnelId.trim()} : {kind:"cloudflare_quick"};
       request.cloudflare_token = named ? cloudflareToken || null : null;
       request.api_key = null;
@@ -54,10 +65,12 @@ export function ConnectionEditor({ profile, persistentLocal, onState, onClose, o
     setApiKey("");
     setCloudflareToken("");
     try {
-      onState(await desktopApi.saveTunnelProfile(request));
+      const next = await desktopApi.saveTunnelProfile(request);
+      if (!mounted.current) return;
+      onState(next);
       onClose();
-    } catch {
-      setFailed(true);
+    } catch (error) {
+      setFailureCode(normalizeDesktopError(error).code);
     } finally {
       request.api_key = null;
       if (cloudflare) request.cloudflare_token = null;
@@ -68,9 +81,9 @@ export function ConnectionEditor({ profile, persistentLocal, onState, onClose, o
   const selectedOwner = hostMode === "embedded" ? c("runWithServer") : c("separateTunnelService");
   return <WorkspaceDialog title={profile ? `${p("edit")} ${profile.name}` : c("addConnection")} onClose={onClose} busy={busy}>
     <form className="profile-editor connection-profile-editor" onSubmit={event => void submit(event)} aria-busy={busy}>
-      <Select label={c("provider")} aria-label={c("provider")} value={providerKind} allowDeselect={false} onChange={value => { if (!value) return; setProviderKind(value as TunnelProvider["kind"]); setApiKey(""); setCloudflareToken(""); }} disabled={busy || profile !== null} data={[{value:"openai",label:"OpenAI Tunnel"},{value:"cloudflare_named",label:c("cloudflareNamed")},{value:"cloudflare_quick",label:c("cloudflareQuick")}]} />
+      <Select label={c("provider")} aria-label={c("provider")} value={providerKind} allowDeselect={false} onChange={value => { if (!value) return; setProviderKind(value as TunnelProvider["kind"]); setApiKey(""); setCloudflareToken(""); }} disabled={busy || profile !== null || geminiNamed} data={[{value:"openai",label:"OpenAI Tunnel"},{value:"cloudflare_named",label:c("cloudflareNamed")},{value:"cloudflare_quick",label:c("cloudflareQuick")}]} />
       <p className="field-help">{cloudflare ? c("cloudflareHelp") : p("tunnelCredentialHelp")}</p>
-      {cloudflare && !persistentLocal && <Alert role="status"><p>{c("cloudflareEnvironment")}</p>{onSetup && <Button variant="default" onClick={() => { onClose(); onSetup(); }}>{c("openRuntimeSetup")}</Button>}</Alert>}
+      {cloudflare && !persistentLocal && <Alert role="status"><p>{c("cloudflareEnvironment")}</p>{onSetup && <Button variant="default" onClick={() => { onClose(); onSetup(); }}>{c("connectGemini")}</Button>}</Alert>}
       {canChooseHost && <fieldset className="connection-owner-choice">
         <legend>{c("connectionLifecycle")}</legend>
         <label data-selected={hostMode === "embedded"}>
@@ -87,9 +100,10 @@ export function ConnectionEditor({ profile, persistentLocal, onState, onClose, o
       {(!cloudflare || named) && <TextInput className="field-group" id="connection-profile-tunnel-id" label="Tunnel ID" aria-label="Tunnel ID" name="tunnel_id" value={tunnelId} onChange={event => setTunnelId(event.currentTarget.value)} required maxLength={256} pattern="(?:[A-Za-z0-9_]|-)+" spellCheck={false} autoCapitalize="none" disabled={busy || identityLocked} description={identityLocked ? c("tunnelIdentityLocked") : undefined} />}
       {!cloudflare && <PasswordInput className="field-group" id="connection-profile-api-key" label="API key" aria-label="API key" name="api_key" value={apiKey} onChange={event => setApiKey(event.currentTarget.value)} required={!profile?.credential_present} maxLength={8192} autoComplete="new-password" spellCheck={false} disabled={busy} description={profile?.credential_present ? p("savedKey") : undefined} />}
       {named && <><TextInput label={c("publicOrigin")} aria-label={c("publicOrigin")} type="url" maxLength={2048} required value={publicOrigin} onChange={event => setPublicOrigin(event.currentTarget.value)} placeholder="https://mcp.example.com" disabled={busy} /><PasswordInput label={c("cloudflareToken")} aria-label={c("cloudflareToken")} value={cloudflareToken} onChange={event => setCloudflareToken(event.currentTarget.value)} required={!profile?.credential_present} maxLength={8192} autoComplete="new-password" disabled={busy} description={profile?.credential_present ? p("savedKey") : undefined} /></>}
+      {cloudflare && <Checkbox label={c("dcrLabel")} description={savedDcr && !dcr ? c("dcrDisable") : c("dcrHelp")} checked={dcr} onChange={event => setDcr(event.currentTarget.checked)} disabled={busy} />}
       {providerKind === "cloudflare_quick" && <p className="workspace-notice">{c("quickReauthorize")}</p>}
       {(cloudflare || !persistentLocal || hostMode === "embedded") && <Checkbox className="profile-checkbox" id="connection-profile-autostart" label={hostMode === "embedded" ? c("serverAutostart") : c("autostart")} checked={autostart} onChange={event => setAutostart(event.currentTarget.checked)} disabled={busy} />}
-      {failed && <Alert color="red" role="alert">{c("operationFailed")}</Alert>}
+      {failureCode && <Alert color="red" role="alert">{c(failureCode === "tunnel_revision_stale" ? "staleConnection" : failureCode === "cloudflare_selection_conflict" ? "otherCloudflareActive" : "operationFailed")}</Alert>}
       <div className="connection-actions"><Button type="submit" className="primary-button" disabled={busy || !name.trim() || (cloudflare && !persistentLocal) || ((!cloudflare || named) && !/^[A-Za-z0-9_-]+$/.test(tunnelId.trim())) || (!cloudflare && !profile?.credential_present && !apiKey.trim()) || (named && (!publicOrigin.trim().startsWith("https://") || (!profile?.credential_present && !cloudflareToken.trim())))}>{c("saveApply")}</Button><Button type="button" className="secondary-button" variant="default" disabled={busy} onClick={onClose}>{p("cancel")}</Button></div>
     </form>
   </WorkspaceDialog>;

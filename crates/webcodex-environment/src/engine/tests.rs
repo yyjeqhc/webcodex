@@ -83,6 +83,49 @@ fn request(create: bool, project: bool) -> SetupRequest {
 }
 
 #[tokio::test]
+async fn local_setup_confirmation_cannot_resume_an_unseen_journal() {
+    let dir = crate::test_tempdir().unwrap();
+    let store = EnvironmentStore::open(dir.path().join("environment")).unwrap();
+    let mut setup = EnvironmentSetup::new(Host {
+        fail_after: Some(SetupStep::ServerServiceInstall),
+        ..Host::default()
+    });
+    let intent = request(true, false);
+    let secrets = SetupSecrets::default();
+    assert_eq!(
+        setup
+            .configure_local_if_current(&store, None, intent.clone(), &secrets, |_| {})
+            .await
+            .unwrap_err()
+            .code,
+        "interrupted"
+    );
+    let pending = store
+        .load_journal()
+        .unwrap()
+        .unwrap()
+        .environment
+        .environment_id;
+    let effects = setup.backend.effects.clone();
+    for expected in [None, Some("another-environment")] {
+        assert_eq!(
+            setup
+                .configure_local_if_current(&store, expected, intent.clone(), &secrets, |_| {})
+                .await
+                .unwrap_err()
+                .code,
+            "environment_changed"
+        );
+        assert_eq!(setup.backend.effects, effects);
+    }
+    let result = setup
+        .configure_local_if_current(&store, Some(&pending), intent, &secrets, |_| {})
+        .await
+        .unwrap();
+    assert_eq!(result.environment.environment_id, pending);
+}
+
+#[tokio::test]
 async fn four_paths_share_one_core_and_viewers_never_enroll() {
     for create in [false, true] {
         for project in [false, true] {

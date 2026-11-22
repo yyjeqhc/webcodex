@@ -587,10 +587,25 @@ pub struct EnvironmentSetupSnapshot {
     pub configured: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LocalSetupTarget {
+    Fresh,
+    Pending { environment_id: String },
+    Legacy { fingerprint: String },
+}
+
+#[derive(serde::Serialize)]
+pub struct LocalMigrationPreview {
+    pub fingerprint: String,
+    pub resuming: bool,
+}
+
 /// Transient native IPC input; never persisted or logged.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentInput {
+    pub expected_local_target: Option<LocalSetupTarget>,
     /// New personal environments default to user scope; saved/migrated ones keep their namespace.
     pub service_scope: Option<webcodex_environment::service::ServiceScope>,
     pub mode: String,

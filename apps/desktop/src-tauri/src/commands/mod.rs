@@ -405,6 +405,21 @@ pub async fn environment_service_action(
 }
 
 #[tauri::command]
+pub async fn inspect_local_migration(
+    state: State<'_, AppState>,
+) -> DesktopResult<crate::models::LocalMigrationPreview> {
+    state.inspect_local_migration().await
+}
+
+#[tauri::command]
+pub async fn reset_local_migration(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> DesktopResult<DesktopStateSnapshot> {
+    project_state_result(&app, state.reset_local_migration().await)
+}
+
+#[tauri::command]
 pub async fn configure_environment(
     request: crate::models::EnvironmentInput,
     app: AppHandle,

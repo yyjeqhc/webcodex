@@ -324,6 +324,7 @@ fn runtime_binding_rejects_arbitrary_management_targets_and_identity_mismatch() 
 fn name_edits_preserve_applied_runtime_revision_and_origin_or_token_edits_advance_it() {
     let saved = record("named", named("https://old.example.com", "id-one"), true);
     let mut request = CloudflareTunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: None,
         profile_id: "named",
         name: None,
@@ -376,6 +377,7 @@ async fn stale_cloudflare_writer_cannot_rotate_credentials_or_change_saved_profi
     store.write_json("tunnel.json", &[saved.clone()]).unwrap();
     let token = Secret::new("replacement-token".into());
     let request = CloudflareTunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: None,
         profile_id: "named",
         name: Some("New"),
@@ -392,6 +394,34 @@ async fn stale_cloudflare_writer_cannot_rotate_credentials_or_change_saved_profi
         .await
         .unwrap_err();
     assert_eq!(error.code, "tunnel_revision_stale");
+    // Even the correct revision cannot retarget a displayed Desktop edit.
+    let mut request = request;
+    request.expected_revision = Some(saved.revision.max(1));
+    for target in [
+        CloudflareProfileTarget {
+            environment_id: "replacement".into(),
+            configuration_id: saved.effective_configuration_id(),
+        },
+        CloudflareProfileTarget {
+            environment_id: store.load_environment().unwrap().unwrap().environment_id,
+            configuration_id: Some("replacement".into()),
+        },
+    ] {
+        let edit = CloudflareTunnelProfileRequest {
+            expected_target: Some(&target),
+            provider: request.provider.clone(),
+            ..request
+        };
+        assert_eq!(
+            NativeEnvironment::new()
+                .unwrap()
+                .configure_cloudflare_tunnel_profile(&store, &edit)
+                .await
+                .unwrap_err()
+                .code,
+            "tunnel_revision_stale"
+        );
+    }
     assert_eq!(read_secret(&path).unwrap().expose(), "saved-token");
     assert_eq!(tunnel_profiles(&store).unwrap()[0].provider, saved.provider);
 }
@@ -444,6 +474,7 @@ fn unchanged_materialization_preserves_installer_file_identity() {
 #[test]
 fn recreated_cloudflare_profile_gets_a_fresh_incarnation_and_edits_retain_it() {
     let request = CloudflareTunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: None,
         profile_id: "quick",
         name: None,
@@ -512,6 +543,7 @@ fn retired_profile_revision_prevents_an_old_editor_from_targeting_recreation() {
     // The absent-service boundary has already admitted catalog withdrawal; no
     // native service or network fixture is needed for this durability fence.
     let request = CloudflareTunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: None,
         profile_id: "quick",
         name: None,
@@ -740,6 +772,7 @@ async fn retirement_intent_fences_live_catalog_before_withdrawal_and_rejects_rep
         "tunnel_profile_recovery_required"
     );
     let request = CloudflareTunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: None,
         profile_id: &saved.profile_id,
         name: Some("Changed while deletion is pending"),
@@ -878,6 +911,7 @@ async fn withdrawn_profile_cleanup_retains_exact_recovery_and_resumes_after_loca
     }
     let replacement_token = Secret::new("replacement-token".into());
     let request = CloudflareTunnelProfileRequest {
+        expected_target: None,
         oauth_dynamic_registration_enabled: None,
         profile_id: &saved.profile_id,
         name: None,

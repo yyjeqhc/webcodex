@@ -59,10 +59,25 @@ pub struct CloudflareConnectionStatus {
     pub public_origin: Option<String>,
     pub oauth_configured: bool,
     pub observed_authorization: bool,
+    #[serde(default)]
+    pub registration_available: bool,
+    #[serde(default)]
+    pub observed_tool_call: bool,
     pub configured_revision: u64,
     pub applied_revision: Option<u64>,
     pub local_target: String,
     pub reason_code: Option<String>,
+}
+
+impl CloudflareConnectionStatus {
+    fn check_materialized_revision(&mut self, revision: u64) {
+        // Windows Server reads protected materializations. Preserve the observed
+        // generation for Stop while the user applies the newer catalog revision.
+        if cfg!(windows) && self.configured_revision < revision {
+            self.reason_code = Some("cloudflare_restart_server_required".into());
+            self.registration_available = false;
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -273,7 +288,7 @@ impl AppState {
                 },
             ));
         }
-        let status: CloudflareConnectionStatus =
+        let mut status: CloudflareConnectionStatus =
             serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
         if status.profile_id != request.profile_id()
             || !matches!(
@@ -283,6 +298,7 @@ impl AppState {
         {
             return Err(unavailable());
         }
+        status.check_materialized_revision(profile.revision);
         Ok(CloudflareConnectionResponse::Status(status))
     }
 }
@@ -372,8 +388,68 @@ async fn control_response(
             .with_http_status(status.as_u16())
             .with_operation_context(None, None, Some(profile_id), None));
         }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Conflict {
+            error: String,
+        }
         if status == reqwest::StatusCode::CONFLICT {
-            return Err(stale_revision(stage, profile_id).with_http_status(status.as_u16()));
+            if let Ok(conflict) = serde_json::from_slice::<Conflict>(&bytes) {
+                match conflict.error.as_str() {
+                    "cloudflare_restart_server_required" => {
+                        return Err(DesktopError::new(
+                            "cloudflare_ingress_not_applied",
+                            "Cloudflare configuration requires Server apply",
+                            "Restart the selected Server to apply the saved configuration.",
+                        )
+                        .with_component(crate::error::ErrorComponent::Tunnel)
+                        .with_stage(stage)
+                        .with_http_status(status.as_u16())
+                        .with_operation_context(
+                            None,
+                            None,
+                            Some(profile_id),
+                            None,
+                        ));
+                    }
+                    "cloudflare_already_active"
+                    | "cloudflare_identity_repair_required"
+                    | "cloudflare_owner_repair_required"
+                    | "cloudflare_revision_conflict"
+                    | "cloudflare_stale_attempt" => {
+                        return Err(DesktopError::new(
+                            conflict.error,
+                            "Cloudflare could not apply this operation",
+                            "Review the current connection before retrying.",
+                        )
+                        .with_component(crate::error::ErrorComponent::Tunnel)
+                        .with_stage(stage)
+                        .with_http_status(status.as_u16())
+                        .with_recovery(
+                            crate::error::RecoveryKind::ConfirmationRequired,
+                            crate::error::SafeRecoveryAction::ObserveBeforeRetry,
+                            false,
+                        )
+                        .with_operation_context(
+                            None,
+                            None,
+                            Some(profile_id),
+                            None,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            // A generic HTTP 409 does not establish which ownership/revision
+            // fence failed. Preserve the status without inventing a stale
+            // revision diagnosis or permitting an uncertain mutation replay.
+            return Err(unavailable_for(stage, profile_id, None)
+                .with_http_status(status.as_u16())
+                .with_recovery(
+                    crate::error::RecoveryKind::ConfirmationRequired,
+                    crate::error::SafeRecoveryAction::ObserveBeforeRetry,
+                    false,
+                ));
         }
         return Err(unavailable_for(stage, profile_id, None).with_http_status(status.as_u16()));
     }

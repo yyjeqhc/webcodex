@@ -301,6 +301,9 @@ class Fixture(Smoke):
         while time.monotonic() < deadline:
             status = self.control(profile)
             check(status["lifecycle"] != "error", f"Cloudflare admission failed: {status.get('reason_code')}")
+            if status.get("reason_code") == "cloudflare_discovery_pending":
+                time.sleep(.2)
+                continue
             if status["lifecycle"] == "running":
                 check(status["public_origin"], "running origin missing")
                 return status
@@ -431,6 +434,7 @@ class Fixture(Smoke):
         # Start once, then observe that same receipt. Neither transport recovery
         # nor a missing response authorizes replaying the business operation.
         deadline = time.monotonic() + 25
+        check(named["registration_available"] and not named["observed_tool_call"], "initial DCR handoff not ready")
         origin = named["public_origin"]
         marker = self.project_dir / "job-effects.txt"
         release = self.project_dir / "job-release"
@@ -540,11 +544,13 @@ class Fixture(Smoke):
         self.project_round_trip(named["public_origin"], tokens["access_token"], "dcr", "named")
         self.boundaries(named["public_origin"], tokens["access_token"])
         check(self.control("named")["observed_authorization"], "used OAuth authorization not observed")
+        check(self.control("named")["observed_tool_call"], "successful tool call not observed")
         old_instance = named["server_instance_id"]
         stop_tree(self.server)
         self.start_server()
         self.wait_ready(self.project, self.owner)
         named = self.start_profile("named")
+        check(named["registration_available"] and not named["observed_tool_call"], "stale call observation after restart")
         check(named["server_instance_id"] != old_instance, "Server restart did not replace instance")
         self.project_round_trip(named["public_origin"], tokens["access_token"], "named", "restarted")
         status, _, raw = self.public(named["public_origin"], "/oauth/token", "POST", {

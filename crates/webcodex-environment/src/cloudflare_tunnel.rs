@@ -19,8 +19,17 @@ pub enum TunnelProvider {
     CloudflareQuick,
 }
 
+/// The Environment and profile incarnation displayed to an interactive editor.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudflareProfileTarget {
+    pub environment_id: String,
+    pub configuration_id: Option<String>,
+}
+
 /// Write-only credentials. None retains this exact profile's saved token.
 pub struct CloudflareTunnelProfileRequest<'a> {
+    pub expected_target: Option<&'a CloudflareProfileTarget>,
     /// Omit on edit to preserve the saved policy. New profiles default to disabled.
     pub oauth_dynamic_registration_enabled: Option<bool>,
     pub profile_id: &'a str,
@@ -1135,6 +1144,17 @@ impl NativeEnvironment {
             .iter()
             .position(|profile| profile.profile_id == request.profile_id);
         let existing = index.map(|index| &profiles[index]);
+        if let Some(target) = request.expected_target {
+            if target.environment_id != environment.environment_id
+                || target.configuration_id
+                    != existing.and_then(TunnelRecord::effective_configuration_id)
+            {
+                return Err(invalid(
+                    "tunnel_revision_stale",
+                    "The selected Environment or Cloudflare profile changed",
+                ));
+            }
+        }
         match (existing, request.expected_revision) {
             (Some(profile), Some(expected)) if expected == profile.revision.max(1) => {}
             (None, None) => {}

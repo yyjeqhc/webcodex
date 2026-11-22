@@ -307,6 +307,10 @@ impl AppState {
                 drop(slot);
                 return crate::platform::opener::url("https://github.com/yyjeqhc/webcodex/blob/main/docs/DESKTOP_RUNTIME_COMPATIBILITY.md");
             }
+            ResourceKind::GeminiApps => {
+                drop(slot);
+                return crate::platform::opener::url(crate::platform::opener::GEMINI_APPS);
+            }
             ResourceKind::Github => {
                 drop(slot);
                 return crate::platform::opener::url("https://github.com/yyjeqhc/webcodex");

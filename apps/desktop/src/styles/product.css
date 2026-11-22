@@ -736,3 +736,22 @@ input[type="checkbox"].desktop-switch:hover:not(:disabled):not(:checked) { backg
 /* The focus ring follows the rounded outer control, including password shells. */
 .ui-mantine-input, input:not([type="radio"]):not([type="checkbox"]):not([type="file"]):not([type="color"]):not([type="date"]):not(.mantine-Input-input), textarea:not(.mantine-Input-input) { border-radius: var(--ui-radius-md); }
 .ui-mantine-input:focus, .ui-mantine-input:focus-within { border-color: var(--ui-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 16%, transparent); outline: 0; }
+
+.setup-shell { max-width: 760px; overflow-wrap: anywhere; }
+.setup-shell .form-card { grid-template-columns: minmax(0, 1fr); gap: var(--ui-space-3); padding: var(--ui-space-4); }
+.setup-shell .lede { max-width: 62ch; margin-bottom: var(--ui-space-3); }
+.setup-default { margin-block: var(--ui-space-3); color: var(--ui-text-secondary); font-size: 14px; }
+.setup-options { margin-block: var(--ui-space-3); border-block: 1px solid var(--ui-border-subtle); }
+.setup-options > summary { padding-block: var(--ui-space-3); color: var(--ui-text-secondary); cursor: pointer; }
+.setup-fields, .setup-project { display: grid; gap: var(--ui-space-3); min-width: 0; }
+.setup-fields { max-width: 56ch; padding-bottom: var(--ui-space-4); }
+.setup-fields .field-help { margin: 0; }
+.setup-project code { white-space: normal; overflow-wrap: anywhere; }
+.gemini-connection .setup-shell { width: 100%; max-width: none; margin-top: var(--ui-space-3); padding: 0; border: 0; box-shadow: none; background: transparent; }
+.gemini-connection .setup-shell :is(h1, h2) { font-size: 1.125rem; }
+.gemini-connection .connection-details label { display: grid; gap: var(--ui-space-2); margin-block: var(--ui-space-3); }
+.gemini-connection select { width: fit-content; max-width: 100%; }
+.connection-coexistence { margin: 0 0 var(--ui-space-4); color: var(--ui-text-secondary); font-size: 13px; line-height: 1.6; }
+.chatgpt-connection { margin-top: var(--ui-space-5); padding-top: var(--ui-space-4); border-top: 1px solid var(--ui-border-subtle); }
+.chatgpt-connection .workspace-section-heading { align-items: flex-start; gap: var(--ui-space-3); }
+.chatgpt-connection .workspace-section-heading .field-help { margin: 4px 0 0; }

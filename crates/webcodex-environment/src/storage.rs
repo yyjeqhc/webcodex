@@ -320,10 +320,61 @@ pub(crate) fn open_private(path: &Path, create_new: bool) -> SetupResultValue<Fi
 
 pub(crate) fn read_private(path: &Path) -> SetupResultValue<Vec<u8>> {
     let metadata = std::fs::symlink_metadata(path).map_err(|_| SetupDiagnostic::io())?;
-    if !metadata.is_file() || metadata.is_symlink() || metadata.len() > MAX_STATE_BYTES {
+    if !metadata.is_file() || is_link(&metadata) || metadata.len() > MAX_STATE_BYTES {
         return Err(SetupDiagnostic::io());
     }
     let mut file = open_existing_private(path, false)?;
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(MAX_STATE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| SetupDiagnostic::io())?;
+    if bytes.len() as u64 > MAX_STATE_BYTES {
+        return Err(SetupDiagnostic::io());
+    }
+    Ok(bytes)
+}
+
+/// Read an existing legacy configuration or registry source during migration.
+/// Rejects symlinks, reparse points, non-regular files, oversize files, foreign
+/// owners, and world-writable files while accepting legacy 0644 project registry
+/// files and inherited Windows user-profile ACLs before tightening on copy.
+pub(crate) fn read_legacy_source(path: &Path) -> SetupResultValue<Vec<u8>> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| SetupDiagnostic::io())?;
+    if !metadata.is_file() || is_link(&metadata) || metadata.len() > MAX_STATE_BYTES {
+        return Err(SetupDiagnostic::io());
+    }
+    #[cfg(windows)]
+    {
+        let expected = crate::service::current_account()
+            .map_err(crate::native::service_error)?
+            .identity;
+        if windows_path_owner(path)? != expected {
+            return Err(SetupDiagnostic::io());
+        }
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = options.open(path).map_err(|_| SetupDiagnostic::io())?;
+    let opened = file.metadata().map_err(|_| SetupDiagnostic::io())?;
+    if !opened.is_file() {
+        return Err(SetupDiagnostic::io());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.uid() != unsafe { libc::geteuid() }
+            || opened.mode() & 0o002 != 0
+            || opened.nlink() != 1
+        {
+            return Err(SetupDiagnostic::io());
+        }
+    }
     let mut bytes = Vec::new();
     Read::by_ref(&mut file)
         .take(MAX_STATE_BYTES + 1)

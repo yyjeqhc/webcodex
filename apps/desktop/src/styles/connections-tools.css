@@ -29,3 +29,17 @@
 .server-owned-apply p { margin: 6px 0 0; color: var(--ui-text-secondary); font-size: 14px; line-height: 1.6; }
 .server-owned-apply button { justify-self: end; }
 @media (max-width: 680px) { .server-owned-apply { grid-template-columns: 1fr; }.server-owned-apply button { justify-self: start; } }
+
+.gemini-connection { margin-block: var(--ui-space-4); padding: var(--ui-space-4); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); }
+.gemini-connection > header h2 { margin: 0; }
+.gemini-connection .connection-profile { border-bottom: 0; padding-bottom: 0; }
+.gemini-connection .connection-id code { user-select: all; overflow-wrap: anywhere; }
+
+.gemini-entry-help { margin: var(--ui-space-3) 0 0; color: var(--ui-text-secondary); font-size: 14px; line-height: 1.6; }
+.gemini-endpoint-pending { display: grid; gap: 6px; margin: var(--ui-space-3) 0; padding: var(--ui-space-3) var(--ui-space-4); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface-secondary); }
+.gemini-endpoint-pending strong { font-size: 14px; }
+.gemini-endpoint-pending p { margin: 0; font-size: 14px; color: var(--ui-text-secondary); overflow-wrap: anywhere; line-height: 1.55; }
+.gemini-endpoint-pending code { overflow-wrap: anywhere; }
+.gemini-mcp-address { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); padding: var(--ui-space-3); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); }
+.gemini-mcp-address strong { width: 100%; font-size: 14px; }
+.gemini-mcp-address code { min-width: 0; overflow-wrap: anywhere; }

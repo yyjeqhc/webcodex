@@ -276,6 +276,8 @@ http_headers = { "X-WebCodex-MCP-Surface" = "cli", "X-WebCodex-MCP-Profile" = "d
 
 ### Desktop Cloudflare 配置
 
+在 Desktop 使用 **连接 → 连接 Gemini** 可自动准备 Quick 连接，也可选择固定地址。普通用户请按[桌面连接步骤](desktop-guide.zh-CN.md#连接-gemini-网页版)完成 Gemini 首次授权。以下 CLI 步骤供隔离环境诊断。
+
 在独立测试环境中准备 Desktop 持久化 Environment，启用私有 Server 认证，连接属于托管用户的 Runner，并创建 Cloudflare Quick 或 Named Profile。新建时可在本地 `webcodex environment configure-tunnel` 命令中加上 `--oauth-dcr true`。若已通过 Desktop 保存 Profile，请使用其实际 ID 和当前修订号。将 `TEST_ENVIRONMENT` 设为测试 Environment 目录，以下命令中的 `trial` 替换为实际 Profile ID，`N` 替换为 `configured_revision` 或首次保存返回的修订号。
 
 ```sh
@@ -286,7 +288,7 @@ webcodex environment configure-tunnel trial --environment-dir "$TEST_ENVIRONMENT
 
 按配置结果启动或重启对应组件。未启用自动启动的嵌入式 Profile，使用**新的**修订号执行 `webcodex environment cloudflare-start trial --environment-dir "$TEST_ENVIRONMENT" --expected-revision N --json`。Named 还需在 Cloudflare 将远端主机名转发到专用的本地入口。等 `cloudflare-status` 显示正在运行及 HTTPS `public_origin`，访问该来源的 `/.well-known/oauth-authorization-server`，确认 `registration_endpoint` 指向其自身的 `/oauth/register`。入口提供 Owner 和 Issuer。普通 Server 的 `WEBCODEX_OAUTH2_DCR_OWNER_USER_ID` 仅对其自身监听器生效。[Cloudflare Profile 和转发配置](CLOUDFLARE_CONNECTIONS.md#configure-and-connect)
 
-在 Gemini Developer Mode 输入当前公网来源加 `/mcp`。如提示选择认证方式，选 **Dynamic Client Registration**。在 WebCodex 来源下的登录页输入 Profile 所有者的用户 PAT，核对回调地址、申请的权限，确认授权。在 **Available actions** 核对工具，发起一次 Runtime 状态查询，在 Gemini **Event Log** 查看成功调用。注册只签发客户端凭据。调用 MCP 需要经过授权和 S256 PKCE 换取 Access Token。本版可通过本地 CLI 和原生配置接口设置开关。原生 `save_tunnel_profile` 请求接受可选的 `oauth_dynamic_registration_enabled` 和已有的 `expected_revision`。编辑时省略开关会沿用已有值，Profile 快照缺少该字段表示关闭。[Google Developer Mode 说明](https://developers.google.com/connected-apps/mcp/dev-mode/usage)
+在 Gemini Developer Mode 输入当前公网来源加 `/mcp`。如提示选择认证方式，选 **Dynamic Client Registration**。在 WebCodex 来源下的登录页输入 Profile 所有者的用户 PAT，核对回调地址、申请的权限，确认授权。在 **Available actions** 核对工具，发起一次 Runtime 状态查询，在 Gemini **Event Log** 查看成功调用。注册只签发客户端凭据。调用 MCP 需要经过授权和 S256 PKCE 换取 Access Token。也可在 Desktop 的连接编辑器中设置开关。原生 `save_tunnel_profile` 请求接受可选的 `oauth_dynamic_registration_enabled` 和已有的 `expected_revision`。编辑时省略开关会沿用已有值，Profile 快照缺少该字段表示关闭。[Google Developer Mode 说明](https://developers.google.com/connected-apps/mcp/dev-mode/usage)
 
 Quick 每次重建都要重新注册并授权，主机名变化时还需更新 MCP URL。Named 在 Owner 和 Origin 相同时可跨正常重启保留注册和有效授权。更换其中任意一项，或删除后重建 Profile，旧授权都会失效。需要立即关闭访问时可停止 Profile。要退役该入口所有动态客户端，保存 `--oauth-dcr false` 并应用配置。撤销单个客户端可使用经过认证的私有 `/api/oauth/clients/revoke` 接口。各监听器只接受自身绑定的授权。可委托的工具权限同时受本地用户权限配置和 Owner 授权范围限制。
 

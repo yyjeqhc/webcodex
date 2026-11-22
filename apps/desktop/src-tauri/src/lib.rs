@@ -162,6 +162,8 @@ fn desktop_builder() -> tauri::Builder<tauri::Wry> {
             commands::inspect_project,
             commands::inspect_project_access,
             commands::configure_local_setup,
+            commands::inspect_local_migration,
+            commands::reset_local_migration,
             commands::configure_environment,
             commands::create_environment_invitation,
             commands::environment_service_action,

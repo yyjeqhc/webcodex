@@ -54,7 +54,7 @@ routing. Activation requires a round-trip probe proving the exact Server,
 profile, process generation and unpredictable nonce. A different WebCodex Server
 or a generic successful HTTP response cannot satisfy the probe.
 
-For Gemini, enable DCR on this profile with `--oauth-dcr true` at configuration time. New and legacy profiles default to disabled. The native `save_tunnel_profile` request accepts optional `oauth_dynamic_registration_enabled` and the observed `expected_revision`. Omitting the flag on edit retains its value. Read the saved selection from the profile snapshot (an absent flag means false). Apply the returned owner action, then connect Gemini using the public MCP URL. [Desktop Cloudflare setup and registration limits](MCP.md#desktop-cloudflare-setup)
+For Gemini, follow [Connect Gemini on the web](desktop-guide.md#connect-gemini-on-the-web), or enable DCR on this profile with `--oauth-dcr true` at configuration time. New and legacy profiles default to disabled. The native `save_tunnel_profile` request accepts optional `oauth_dynamic_registration_enabled` and the observed `expected_revision`. Omitting the flag on edit retains its value. Read the saved selection from the profile snapshot (an absent flag means false). Apply the returned owner action, then connect Gemini using the public MCP URL. [Desktop Cloudflare setup and registration limits](MCP.md#desktop-cloudflare-setup)
 
 For manual OAuth, copy the ready MCP address (`https://<origin>/mcp`) into ChatGPT's OAuth connection
 configuration. Register the **exact callback URL displayed by ChatGPT**:
@@ -140,8 +140,7 @@ unchanged files preserve their existing ACL. No broad root-directory ACL is adde
 cloudflared runs with an isolated home/config and a minimal environment. Both
 providers use `ManagedChild` process-tree ownership (Unix process groups and
 Windows Job Objects), including cancellation, timeout and shutdown. Named uses
-`--token-file`, requiring cloudflared 2025.4.0 or later; version/download resolution
-uses the existing verified binary path. See [Cloudflare run parameters](https://developers.cloudflare.com/tunnel/reference/run-parameters/).
+`--token-file`, requiring cloudflared 2025.4.0 or later; persistent services reuse an installed binary or a verified cached copy. Install cloudflared for the service account if it is missing. See [Cloudflare run parameters](https://developers.cloudflare.com/tunnel/reference/run-parameters/).
 
 ## Public boundary and Quick limits
 

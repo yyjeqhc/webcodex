@@ -49,6 +49,71 @@ fn mcp(access: &str, method: &str, params: Value) -> RequestBuilder {
 }
 
 #[tokio::test]
+async fn discovery_recovers_after_a_failed_read_and_discards_stale_results() {
+    let fixture = Fixture::new();
+    let control = &fixture.control;
+    enable_dcr(&fixture);
+    let (prepared, entry) = activate_quick_fixture(control, ORIGIN);
+    let now = Instant::now();
+    // Schedule without the public network, then deliver each metadata result
+    // through the same completion path used by the owner.
+    let schedule = |time| {
+        let mut guard = control.attempt.lock().unwrap();
+        let attempt = guard.as_mut().unwrap();
+        attempt.next_discovery_probe(time)?;
+        attempt.discovery_task = Some(OwnedTask(tokio::spawn(async {})));
+        Some(attempt.discovery_next_check)
+    };
+    let first = schedule(now).unwrap();
+    control.record_discovery(&entry, first, false);
+    assert_eq!(
+        control.status("quick").unwrap().reason_code.as_deref(),
+        Some("cloudflare_discovery_unavailable")
+    );
+    control
+        .attempt
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .discovery_task
+        .take();
+    assert!(schedule(now).is_none());
+    let retry = schedule(first).unwrap();
+    control.record_discovery(&entry, retry, true);
+    assert!(control.status("quick").unwrap().registration_available);
+    {
+        let mut guard = control.attempt.lock().unwrap();
+        let attempt = guard.as_mut().unwrap();
+        attempt.observe_forwarding(false);
+        attempt.observe_forwarding(true);
+    }
+    control.record_discovery(&entry, retry, true);
+    assert_eq!(
+        control.status("quick").unwrap().reason_code.as_deref(),
+        Some("cloudflare_discovery_pending")
+    );
+    let reconnect = schedule(retry).unwrap();
+    control.record_discovery(&entry, retry, true);
+    assert!(!control.status("quick").unwrap().registration_available);
+    control.record_discovery(&entry, reconnect, true);
+    assert!(control.status("quick").unwrap().registration_available);
+
+    control
+        .stop(
+            "quick",
+            &control.instance_id,
+            prepared.process_generation,
+            None,
+        )
+        .unwrap();
+    activate_quick_fixture(control, ORIGIN);
+    let current = schedule(retry).unwrap();
+    control.record_discovery(&entry, current, true);
+    assert!(!control.status("quick").unwrap().registration_available);
+}
+
+#[tokio::test]
 async fn cloudflare_dcr_metadata_and_registration_require_admission_policy_owner_and_authority() {
     let fixture = Fixture::new();
     let db = &fixture.control.db;
@@ -63,6 +128,13 @@ async fn cloudflare_dcr_metadata_and_registration_require_admission_policy_owner
         Some(StatusCode::SERVICE_UNAVAILABLE)
     );
     let (prepared, _) = activate_quick_fixture(&fixture.control, ORIGIN);
+    assert!(
+        !fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .registration_available
+    );
     let metadata = json_response(discovery(), &service, StatusCode::OK).await;
     assert!(metadata.get("registration_endpoint").is_none());
     assert_eq!(
@@ -80,6 +152,28 @@ async fn cloudflare_dcr_metadata_and_registration_require_admission_policy_owner
         .unwrap();
     enable_dcr(&fixture);
     let (_, entry) = activate_quick_fixture(&fixture.control, ORIGIN);
+    assert!(
+        !fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .registration_available
+    );
+    fixture
+        .control
+        .attempt
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .discovery_verified = Some(true);
+    assert!(
+        fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .registration_available
+    );
     for (header, value) in [
         ("host", "private.example"),
         ("origin", "https://other.example"),
@@ -136,6 +230,13 @@ async fn cloudflare_dcr_metadata_and_registration_require_admission_policy_owner
     assert_eq!(limited["error"], "temporarily_unavailable");
     db.set_user_disabled(&entry.owner_user_id, true, chrono::Utc::now().timestamp())
         .unwrap();
+    assert!(
+        !fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .registration_available
+    );
     let metadata = json_response(discovery(), &service, StatusCode::OK).await;
     assert!(metadata.get("registration_endpoint").is_none());
     assert_eq!(
@@ -167,6 +268,17 @@ async fn gemini_cloudflare_dcr_browser_consent_pkce_mcp_call_refresh_and_revocat
         StatusCode::OK,
     )
     .await;
+    assert!(discovery_matches(ORIGIN, &resource, &metadata));
+    assert!(!discovery_matches(
+        "https://other.example",
+        &resource,
+        &metadata
+    ));
+    assert!(!discovery_matches(
+        ORIGIN,
+        &resource,
+        &json!({"issuer": ORIGIN})
+    ));
     assert_eq!(metadata["issuer"], ORIGIN);
     let endpoint = |name: &str| metadata[name].as_str().unwrap();
     let reg = json_response(TestClient::post(endpoint("registration_endpoint")).json(&json!({
@@ -271,6 +383,14 @@ async fn gemini_cloudflare_dcr_browser_consent_pkce_mcp_call_refresh_and_revocat
     )
     .await;
     assert!(!listing["result"]["tools"].as_array().unwrap().is_empty());
+    assert!(
+        fixture
+            .control
+            .status("quick")
+            .unwrap()
+            .observed_authorization
+    );
+    assert!(!fixture.control.status("quick").unwrap().observed_tool_call);
     let result = json_response(
         mcp(
             access,
@@ -282,6 +402,7 @@ async fn gemini_cloudflare_dcr_browser_consent_pkce_mcp_call_refresh_and_revocat
     )
     .await;
     assert_eq!(result["result"]["structuredContent"]["success"], true);
+    assert!(fixture.control.status("quick").unwrap().observed_tool_call);
     assert_eq!(
         serde_json::from_str::<Value>(result["result"]["content"][0]["text"].as_str().unwrap())
             .unwrap(),

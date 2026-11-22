@@ -105,7 +105,10 @@ export const desktopApi = {
     invoke<DesktopState>("configure_local_setup", {
       request: { projectPath: projectPath ?? null },
     }),
+  inspectLocalMigration: () => invoke<{ fingerprint: string; resuming: boolean }>("inspect_local_migration"),
+  resetLocalMigration: () => invoke<DesktopState>("reset_local_migration"),
   configureEnvironment: (request: {
+    expectedLocalTarget?: { kind: "fresh" } | { kind: "pending"; environment_id: string } | { kind: "legacy"; fingerprint: string };
     serviceScope?: "user" | "system";
     mode: "create" | "join";
     serverUrl?: string | null;

@@ -6,6 +6,8 @@ Desktop 负责启动和维护本机 WebCodex Runtime；用户只需要在 ChatGP
 
 贡献者如果要做 frontend/Tauri 开发、从源码加载 runtime、构建 NSIS/DMG 或运行原生安装 smoke，请看 [Desktop 开发与打包](DESKTOP_DEVELOPMENT.zh-CN.md)。
 
+全新安装后点击**开始使用**。Desktop 在当前用户下准备本机服务，观察到两个服务就绪后打开连接页。稍后可在**项目**中添加文件夹。其他角色、自定义程序和服务控制位于**设置 → Runtime 与服务**。 [Windows 实机验收清单](desktop-windows-acceptance.zh-CN.md)
+
 ## Runtime 项目清单
 
 **项目**页显示当前 Runner 已观察到的 Runtime Project，包括 Git 分支、活跃 Session 和最近活动。**添加本机文件夹**是显式授权并注册本机其他目录的可选入口，不是模型开始工作的前置步骤。Runtime Project identity 仍然承担授权、路由、持久化、审计和 Session 边界，但它不是用户需要在 Desktop 中维护的前置资源。
@@ -76,9 +78,9 @@ Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runn
 ChatGPT 在不同工作目录之间切换时，不需要先停止 Runtime 或 OpenAI Secure Tunnel。Runtime 会根据当前 Runner policy 解析兼容路径，并按需注册 Project。
 ## 连接 Gemini 网页版
 
-打开**连接 → 连接 Gemini**。ChatGPT（OpenAI Secure Tunnel）与 Gemini（Cloudflare + OAuth）可以同时连接到同一个本机 WebCodex Server，互不冲突。如果检测到本机已有 WebCodex，点击**检查并继续**。Desktop 会先核对进程归属、项目清单、原有配置和运行中的作业，再记录迁移。阅读服务切换的影响后，再点击**确认保存并切换服务**。中断的迁移沿用原恢复记录；若上次失败的迁移未留下已安装的后台服务，可选择**清理未完成记录并重新检查**。新电脑选择**准备这台电脑 → 开始配置**。两种流程完成后都会回到 Gemini。如果本机连接的是远程 Server，请在运行该 Server 的电脑上配置 Gemini，或向管理员索取 MCP 地址。
+打开**连接 → 连接 Gemini**。ChatGPT（OpenAI Secure Tunnel）与 Gemini（Cloudflare + OAuth）可以同时连接到同一个本机 WebCodex Server，互不冲突。如果检测到本机已有 WebCodex，点击**检查并继续**。Desktop 会先核对进程归属、项目清单、原有配置和运行中的作业，再记录迁移。阅读服务切换的影响后，再点击**确认保存并切换服务**。中断的迁移沿用原恢复记录；若上次失败的迁移未留下已安装的后台服务，可选择**清理未完成记录并重新检查**。新电脑选择**准备这台电脑 → 开始使用**。两种流程完成后都会回到 Gemini。如果本机连接的是远程 Server，请在运行该 Server 的电脑上配置 Gemini，或向管理员索取 MCP 地址。
 
-1. 点击**连接 Gemini**创建临时 Cloudflare 连接；已有连接可直接选择，未启用应用注册时按提示启用。随后点击**启动公网连接**，等待 **MCP 入口已就绪**。若需要 **重启 Server** 才能应用新配置，请先确认当前工作可以中断；没有 `cloudflared` 时，启动会按既有受信流程下载并校验客户端。**“尚无可用于 Gemini 的公网 MCP 地址”表示连接还没就绪，不应该继续在 Gemini 中试填网址；请查看卡片上的具体原因。**
+1. 点击**连接 Gemini**。Desktop 复用选定的 Cloudflare 连接，或创建 Quick 连接，启用应用注册并启动。首次交互式启动可下载固定版本的组件并校验 SHA-256。等待卡片显示已验证的地址。旧版 Server 首次加载专用入口时可能需要明确确认一次重启。
 2. 只有卡片显示 **Gemini MCP 地址（复制完整网址）** 后，才点击 **复制 MCP 地址** 和 **打开 Gemini**。Quick 地址形如 `https://实际随机域名.trycloudflare.com/mcp`，Named 地址形如 `https://你的固定域名/mcp`。**不要填写高级设置中的 `http://127.0.0.1:端口` 本机转发目标，也不能直接填写另一台 Server 的首页地址。**在 Gemini 网页的 **Settings → Connected Apps → Custom apps** 中添加地址并点击 **Next**。部分界面将 Connected Apps 放在 Personal Intelligence 下。浏览器跳转到 WebCodex 后，核对地址，在该页使用连接所有者的用户 PAT 登录，查看请求的权限并授权。Gemini 的表单只需 MCP 地址。
 3. 在 Gemini 对话中输入 `@` 并选择刚添加的应用，试着说“查看 WebCodex Runtime 状态”。Desktop 会分别显示已观察到的 OAuth 使用和本次连接中成功的 MCP 工具调用。之后直接在对话中使用工具；Gemini 可能要求确认写入操作。[Google 的自定义应用指南](https://support.google.com/gemini/answer/17209137)
 

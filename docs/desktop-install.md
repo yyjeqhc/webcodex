@@ -45,11 +45,7 @@ issues, and shared logs.
    matching your machine's architecture from [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases).
    On macOS, use **System Settings → Privacy & Security → Open Anyway** if the
    current non-notarized build is blocked; do not disable Gatekeeper globally.
-2. **Create the main node.** Choose **Create main node** to configure separate
-   Server and local Runner services. The initial repository is optional; skipping
-   it keeps the Runner enabled. Wait for setup to finish and check both services.
-   **Join main node** adds this computer’s Runner to an existing Server; see the
-   [device instructions](desktop-guide.md#add-another-device).
+2. On a fresh installation, click **Get started**. Desktop prepares this computer under your signed-in account, observes both services and opens Connections. Add folders later in **Projects**. Open **Settings → Runtime and services** for alternate roles, custom binaries and service controls.
 3. **Create the OpenAI Tunnel credentials.** Create a Tunnel on the
    [OpenAI Tunnels page](https://platform.openai.com/settings/organization/tunnels),
    record its exact Tunnel ID, and create an API key on the
@@ -200,30 +196,7 @@ For screenshots, window observation, keyboard or pointer control, grant the rele
 
 ## 4. Start the local runtime and add your project
 
-On first use, choose **Create main node**. You can select an initial repository
-or skip it and add one later; the local Runner is enabled in either case. Runner
-filesystem policy remains the access boundary, and Project registration never
-grants access outside that policy. Advanced retains Server-only, viewer-only and
-Quick Share; reopening setup preserves saved roles.
-
-On Home, expand **View runtime diagnostics** and confirm:
-
-- Service: Running / Ready;
-- Runner: Connected / Ready;
-- Project: Ready with the selected directory, if you chose an initial Project.
-  An empty Project list does not stop Server or Runner.
-
-To add a repository later, open **Projects → Add local project**. The existing
-Runner identity and Server connection are reused.
-
-**Success looks like:** Server and local Runner are ready. When a Project has
-been registered, check its exact path and owning Runner. A real project read from
-ChatGPT still verifies the full connection separately.
-
-**If it fails:** use **Activate project again**. If it still fails, inspect the error and
-**Activity** details. Do not broaden project access to work around the error.
-
-**Next:** start the OpenAI Secure Tunnel only after these three are ready.
+On a fresh installation, click **Get started**. Desktop prepares this computer under your signed-in account, observes both services and opens Connections. Add folders later in **Projects**. Open **Settings → Runtime and services** for alternate roles, custom binaries and service controls. [Windows acceptance checklist](desktop-windows-acceptance.md)
 
 ## 5. Optional: configure Tunnel networking
 

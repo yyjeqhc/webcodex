@@ -244,7 +244,7 @@ function SettingsView({
         <section className="settings-section">
         <h2>{p("serviceControls")}</h2><p className="field-help">{p("serviceControlsHelp")}</p>
         {visited.includes("runtime") && <LocalServicesPanel state={state} onState={onState} />}
-        {onChangeSetup && !state.topology && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onChangeSetup}>{t("setup.prepareComputer")}</button>}
+        {onChangeSetup && !state.topology && <button type="button" className="secondary-button" data-webcodex-action="advanced-runtime-setup" disabled={operationBusy} onClick={onChangeSetup}>{t("setup.prepareComputer")}</button>}
         <details className="workspace-technical"><summary>{p("advanced")}</summary>
         <div className="connection-actions">
           {onChangeSetup && state.topology && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onChangeSetup}>{p("changeServer")}</button>}

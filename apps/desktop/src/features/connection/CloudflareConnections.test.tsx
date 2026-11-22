@@ -245,7 +245,7 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
       .mockResolvedValue({...status, lifecycle: "running", registration_available: true});
     render(card());
     expect(await screen.findByText("No verified public MCP address yet")).toBeInTheDocument();
-    expect(screen.getByText(/Cloudflare connection is stopped/)).toBeInTheDocument();
+    expect(screen.getByText(/Connect Gemini to prepare a public MCP address/)).toBeInTheDocument();
     expect(screen.queryByText("https://current.example/mcp")).toBeNull();
     expect(screen.queryByRole("button", {name: "Copy MCP address"})).toBeNull();
     fireEvent.click(screen.getByRole("button", {name: "Start public connection"}));

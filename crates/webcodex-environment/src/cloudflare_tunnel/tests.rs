@@ -71,6 +71,30 @@ fn bind(store: &EnvironmentStore, record: &TunnelRecord, token: Option<&str>) ->
 }
 
 #[test]
+fn fresh_user_ingress_persists_one_private_port_without_a_public_profile() {
+    let (_temp, store) = fixture();
+    prepare_user_ingress(&store).unwrap();
+    let first = cloudflare_ingress_port(&store).unwrap().unwrap();
+    assert_ne!(first, 62645);
+    assert_ne!(first, 0);
+    prepare_user_ingress(&store).unwrap();
+    assert_eq!(
+        load_cloudflare_server_ingress_port(&store.root().join("server")).unwrap(),
+        Some(first)
+    );
+    assert!(tunnel_profiles(&store).unwrap().is_empty());
+    assert!(!store.root().join("server/tunnels").exists());
+    let saved = read_secret(&store.root().join("server/webcodex.env")).unwrap();
+    assert_eq!(
+        saved
+            .expose()
+            .matches("WEBCODEX_TUNNEL_ENVIRONMENT=")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn old_records_default_to_openai_without_migration() {
     let record: TunnelRecord = serde_json::from_value(
         serde_json::json!({"profile_id":"old","installed":true,"started":false}),

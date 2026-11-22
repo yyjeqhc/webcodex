@@ -6,6 +6,7 @@ import type {
   RecoveryKind,
   SafeRecoveryAction,
 } from "../models/topology";
+import { cloudflarePreparationMessages } from "../i18n/cloudflare";
 import type { MessageKey } from "../i18n/locale";
 
 export type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
@@ -554,6 +555,11 @@ function classifyRule(error: DesktopError, diag: {
 }): CategoryRule {
   const code = error.code;
 
+  if (Object.hasOwn(cloudflarePreparationMessages, code)) {
+    return {titleKey: "error.tunnelTitle", actionKey: cloudflarePreparationMessages[code], component: "tunnel",
+      recoveryKind: "user_action", safeAction: code === "cloudflare_proxy_invalid" ? "open_network_settings" : "check_connection",
+      secondaryAction: "open_diagnostics", retryAllowed: ["cloudflare_network_unavailable", "cloudflare_download_failed", "cloudflare_start_failed"].includes(code)};
+  }
   // Tunnel config specialized messages (preserving existing contract)
   if (code === "tunnel_config_apply_failed" || code === "tunnel_apply_failed") {
     return { titleKey: "error.tunnelTitle", actionKey: "tunnelConfig.applyFailed", component: "tunnel", recoveryKind: "user_action", safeAction: "check_connection", secondaryAction: "open_diagnostics", retryAllowed: true };

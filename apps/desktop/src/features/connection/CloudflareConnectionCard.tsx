@@ -7,7 +7,8 @@ import { safeIdentifier } from "../../lib/desktop-errors";
 import { useCloudflareControl } from "./useCloudflareControl";
 import type { CloudflareConnectionStatus, CloudflareOAuthHandoff, TunnelConnection } from "../../models/connections-tools";
 import { useConnectionsTools } from "../../i18n/connections-tools";
-import { useLocale, type MessageKey } from "../../i18n/locale";
+import { cloudflarePreparationMessages } from "../../i18n/cloudflare";
+import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
@@ -78,21 +79,6 @@ export function CloudflareConnectionCard(props: CardProps) {
   return <CloudflareProfile key={JSON.stringify([profile.id, profile.configuration_id, profile.revision, canStart])} {...props} />;
 }
 
-const preparationMessages: Record<string, MessageKey> = {
-  cloudflare_component_check: "gemini.check",
-  cloudflare_component_download: "gemini.download",
-  cloudflare_component_verify: "gemini.verify",
-  cloudflare_transport_start: "gemini.start",
-  cloudflare_network_unavailable: "gemini.networkFailure",
-  cloudflare_download_failed: "gemini.downloadFailure",
-  cloudflare_proxy_invalid: "gemini.proxyFailure",
-  cloudflare_storage_unavailable: "gemini.storageFailure",
-  cloudflare_version_unsupported: "gemini.versionFailure",
-  cloudflare_platform_unsupported: "gemini.platformFailure",
-  cloudflare_verification_failed: "gemini.verifyFailure",
-  cloudflare_extraction_failed: "gemini.extractFailure",
-  cloudflare_start_failed: "gemini.startFailure",
-};
 function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair, onRestartServer, onEnableRegistration }: CardProps) {
   const c = useConnectionsTools(); const p = useProduct();
   const { t } = useLocale();
@@ -146,10 +132,13 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     </div>;
   const advanced = dcr || Boolean(onEnableRegistration);
   const awaitingGeminiUrl = Boolean(onEnableRegistration || dcr) && !origin;
-  const missingUrlReason = reason && preparationMessages[reason] ? t(preparationMessages[reason])
+  const missingUrlReason = reason && cloudflarePreparationMessages[reason] ? t(cloudflarePreparationMessages[reason])
+    : reason === "cloudflare_revision_conflict" ? t("gemini.applyConnection")
     : onEnableRegistration && !dcr ? c("publicUrlRegistration")
     : !canStart ? c("publicUrlServer")
     : ingressNotApplied || profile.server_restart_required ? c("serverRestartHelp")
+    : routeMismatch ? t("gemini.forwardFailure")
+    : reason === "cloudflare_runner_unavailable" ? t("gemini.runnerOffline")
     : identityRepair ? c("cloudflareIdentityRepair")
     : reason === "cloudflare_binary_unavailable" ? c("installCloudflared")
     : reason === "cloudflare_discovery_unavailable" || verifying || status?.lifecycle === "starting" || actionPending ? c("publicUrlPending")
@@ -168,7 +157,7 @@ function CloudflareProfile({ profile, canStart, busy, onEdit, onDelete, onRepair
     : status?.lifecycle === "stopped" ? p("stopped") : c("awaitingStatus");
   return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
     <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{quick ? c("cloudflareQuick") : c("cloudflareNamed")}</span></div><span role="status" className="connection-state">{stateText}</span></header>
-    {onEnableRegistration && !dcr && <div><p>{c("dcrHelp")}</p><button type="button" className="primary-button" disabled={disabled} onClick={onEnableRegistration}>{c("connectGemini")}</button></div>}
+    {onEnableRegistration && !dcr && <div><button type="button" className="primary-button" disabled={disabled} onClick={onEnableRegistration}>{c("connectGemini")}</button></div>}
     {onEnableRegistration && dcr && !active && !ingressNotApplied && !identityRepair && <button className="primary-button"
       disabled={disabled || unselectedService || (canStart && !status)} onClick={onEnableRegistration}>{c("connectGemini")}</button>}
     {(!onEnableRegistration || dcr) && address}

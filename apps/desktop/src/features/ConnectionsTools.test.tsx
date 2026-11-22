@@ -456,8 +456,10 @@ describe("Connections + Tools control surfaces", () => {
     render(<Harness mode="connections" initial={initial} />);
 
     expect(screen.queryByRole("button", { name: "Start Server" })).not.toBeInTheDocument();
-    expect(screen.getByText("Runs with WebCodex Server", { selector: ".workspace-observation" })).toBeVisible();
+    const owner = screen.getByText("Runs with WebCodex Server");
+    expect(owner.closest("details")).not.toHaveAttribute("open");
     fireEvent.click(screen.getByText("Details"));
+    expect(owner).toBeVisible();
     expect(screen.getByText("Disabled")).toBeInTheDocument();
   });
 

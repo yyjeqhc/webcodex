@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState } from "../../models/topology";
+import { isErrorStaleForState } from "../../lib/desktop-errors";
 import { normalizeDesktopError } from "../../i18n/presentation";
 import { DesktopErrorAlert } from "../../components/DesktopErrorAlert";
 import { useLocale } from "../../i18n/locale";
@@ -33,6 +34,9 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient }: {
   const [deleting, setDeleting] = useState<TunnelConnection | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [failed, setFailed] = useState<DesktopError | null>(null);
+  useEffect(() => {
+    setFailed(previous => previous && isErrorStaleForState(previous, state) ? null : previous);
+  }, [state]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showReadGuide, setShowReadGuide] = useState(false);
   const [localSetup, setLocalSetup] = useState(false);

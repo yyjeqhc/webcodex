@@ -30,9 +30,10 @@ export default function App() {
 function DesktopApp() {
   const { t } = useLocale();
   const [completionEnvironment, setCompletionEnvironment] = useState<string | null>(null);
+  const [connectionFocus, setConnectionFocus] = useState<"chatgpt" | "gemini">();
   const [extensionTab, setExtensionTab] = useState<ExtensionTab>();
   const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | "access" | undefined>();
-  const { state, activity, navigation, previousPage, setNavigation, refreshing, preserveWorkspacePollDeadline, error, setError, cancelSubmittingId, showSetup, setupOrigin, closeSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation } = useDesktopWorkspace();
+  const { state, activity, chatgptActivityQueryStatus, navigation, previousPage, setNavigation, refreshing, preserveWorkspacePollDeadline, error, setError, cancelSubmittingId, showSetup, setupOrigin, closeSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation } = useDesktopWorkspace();
   const updates = useRuntimeUpdates(Boolean(state && !state.current_operation && !state.configuration_issue));
   const openSettings = (section: "diagnostics" | "runtime" | "network" | "access") => { setSettingsSection(section); setNavigation("settings"); };
   if (!state) {
@@ -138,8 +139,8 @@ function DesktopApp() {
             className="app-error"
           />
         )}
-        {navigation !== "settings" && <ComputerPermissions welcome />}
-        {navigation === "home" && <UpdateBanner updates={updates} />}
+        {navigation !== "settings" && !needsSetup && <ComputerPermissions welcome />}
+        {navigation === "home" && !needsSetup && <UpdateBanner updates={updates} />}
         {navigation === "home" && (state.configuration_issue || (!needsSetup && !completionEnvironment && (state.topology || state.runtime_error))) && <ReadinessBanner state={state} onState={commitState} onDiagnostics={() => openSettings("diagnostics")} onRuntime={() => openSettings("runtime")} onConnection={() => setNavigation("connection")} onActivity={() => setNavigation("activity")} onProjects={() => setNavigation("projects")} onSetup={openSetup} onRefresh={() => void refresh()} onProviders={kind => { setExtensionTab(kind === "mcp" ? "mcpProviders" : "codingAgents"); setNavigation("extensions"); }} />}
         {navigation === "home" && !state.configuration_issue && (!needsSetup && completionEnvironment !== null && completionEnvironment === (state.environment_setup?.environment_id ?? state.persistent_environment) && state.topology?.experience === "full" ? (
           <FirstRunCompletion onComplete={() => setCompletionEnvironment(null)}
@@ -152,17 +153,19 @@ function DesktopApp() {
             onDiagnostics={() => openSettings("diagnostics")}
             chooseModeFirst={showSetup}
             onComplete={next => {
+              if (!setupOrigin && next?.readiness.runtime_ready) { setNavigation("connection"); return; }
               closeSetup();
-              setCompletionEnvironment(!setupOrigin || setupOrigin === "home" ? next?.environment_setup?.environment_id ?? next?.persistent_environment ?? null : null);
+              setCompletionEnvironment(next?.readiness.runtime_ready && (!setupOrigin || setupOrigin === "home") ? next?.environment_setup?.environment_id ?? next?.persistent_environment ?? null : null);
             }}
           />
         ) : (
           <Dashboard
             state={state}
+            chatgptActivityQueryStatus={chatgptActivityQueryStatus}
             refreshing={refreshing}
             onRefresh={refresh}
-            onResumeRuntime={() => void resumeRuntime()}
-            onChangeSetup={openSetup}
+            activity={activity}
+            onConnection={client => { setConnectionFocus(client); setNavigation("connection"); }}
             onNavigate={setNavigation}
             onStopQuickShare={() => void runStateOperation(desktopApi.stopQuickShare)}
           />
@@ -170,7 +173,7 @@ function DesktopApp() {
         {navigation === "projects" && (
           <ProjectsPanel onComputerSettings={() => openSettings("access")} onState={commitState} />
         )}
-        {navigation === "connection" && <ConnectionPanel key={state.persistent_environment} state={state} onState={commitState} onSettings={openSettings} />}
+        {navigation === "connection" && <ConnectionPanel initialClient={connectionFocus} key={state.persistent_environment} state={state} chatgptActivityQueryStatus={chatgptActivityQueryStatus} onState={commitState} onSettings={openSettings} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
         {navigation === "extensions" && <ExtensionsPanel state={state} onState={commitState} initialTab={extensionTab} />}
         {navigation === "console" && <RuntimeConsolePanel state={state} onSettings={() => openSettings("runtime")} />}

@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "checkpoint": "9f642542 installed macOS browser and lifecycle acceptance",
+  "time_basis": "UTC; screenshots show the mini system's UTC+8 local time",
+  "source": {
+    "git_commit": "9f6425428e72282a1f230f2c9f9d093281ebb000",
+    "git_dirty": false,
+    "version": "0.5.0",
+    "built_at": 1795365124,
+    "target": "aarch64-apple-darwin"
+  },
+  "package": {
+    "filename": "webcodex-desktop-local-9f6425428e72-v0.5.0-darwin-arm64.dmg",
+    "sha256": "01f3492c50e70a19a3af6b920419a8767ae1c42cb0fec0031495a12df95ac021",
+    "installed_app": "/Applications/WebCodex Desktop.app",
+    "official_helper_job": "wc_job_13vC6ie3VjF1TENH",
+    "helper_exit_code": 0,
+    "installed_four_binary_identity_and_hash_match": true,
+    "strict_codesign_passed": true,
+    "signing": "Existing persistent WebCodex Local Development certificate; local self-signed build, not an Apple-notarized release"
+  },
+  "runtime": {
+    "server_pid": 43418,
+    "server_instance_id": "8d2c9771-605b-4797-9b65-99ac249c39de",
+    "runner_pid": 43427,
+    "runner_client_id": "device-47cbdf021f154085",
+    "runner_instance_id": "7c6e73b6-9d40-41ae-857d-98a7d95d5f28",
+    "cloudflared_pid": 43467,
+    "project_id": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+    "project_root": "/Users/yyjeqhc/git/webcodex",
+    "one_desktop_server_runner_pair": true,
+    "registered_project_count": 7,
+    "original_control_runner_pid": 1578,
+    "original_control_runner_unchanged": true
+  },
+  "gemini_ingress": {
+    "profile_id": "gemini-quick",
+    "generation": 1,
+    "mcp_url": "https://combat-stands-valves-decorative.trycloudflare.com/mcp",
+    "native_start_attempts": 1,
+    "ready_elapsed_description": "Approximately 8.6 seconds in the production-only sampler",
+    "sampler_elapsed_seconds": 8.618,
+    "first_starting_sample_at": "2026-11-22T16:46:19.845Z",
+    "first_running_sample_at": "2026-11-22T16:46:28.383Z",
+    "registration_available_sample_at": "2026-11-22T16:46:30.808Z",
+    "timing_note": "Wall-clock row timestamps are captured at sample start; monotonic elapsed is recorded after the sample. They have different endpoints. This native run completed below 60 seconds; availability at 75 seconds is separate regression-test evidence.",
+    "external_dns_or_proxy_override": false,
+    "oauth_authorization_observed": true,
+    "mcp_tool_call_observed": true
+  },
+  "test": {
+    "file": "target/desktop-acceptance-20261122/connection-proof.txt",
+    "expected_file_text": "WebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n",
+    "executable": "/usr/bin/printf",
+    "args": [
+      "desktop-shared-runtime-ok"
+    ],
+    "expected_stdout_marker": "desktop-shared-runtime-ok",
+    "no_business_file_config_or_service_mutations": true,
+    "stdout_caveat": "Native browser response copy confirms the expected marker, not byte-exact newline behavior."
+  },
+  "chatgpt": {
+    "browser": "Microsoft Edge",
+    "app_name": "WebCodex Desktop mini",
+    "app_id": "asdk_app_6b0309961b34819181603639660b6417",
+    "workbench_url": "https://chatgpt.com/mcp-app/asdk_app_6b0309961b34819181603639660b6417/open_webcodex_workbench",
+    "fresh_runtime_file_and_command_calls": true,
+    "read_files": {
+      "trace_id": "281cb5ce-eff2-45b6-adcf-c92b60f83fbf",
+      "at": "2026-11-22T16:47:34.917Z",
+      "success": true
+    },
+    "run_process": {
+      "trace_id": "59031b87-acaa-4293-9be7-d54769961437",
+      "at": "2026-11-22T16:47:42.687Z",
+      "duration_ms": 171,
+      "success": true,
+      "numeric_exit_code": null,
+      "numeric_exit_note": "Not returned in browser or retained by this unlinked trace. Do not infer numeric zero."
+    },
+    "response_copied_from_native_browser": "WebCodex Desktop mini 本轮三项调用均返回成功。\n\n| 项目 | 本轮结果 |\n|---|---|\n| Server `git_commit` | `9f6425428e72282a1f230f2c9f9d093281ebb000` |\n| Server `git_dirty` | `false` |\n| Server PID | `43418` |\n| Runner `client_id` | `device-47cbdf021f154085`（在线） |\n| Runner `runner_instance_id` | `7c6e73b6-9d40-41ae-857d-98a7d95d5f28` |\n| 主仓库项目 ID | `agent:device-47cbdf021f154085:webcodex-2eeb7eae` |\n| 命令 stdout | `\"desktop-shared-runtime-ok\\n\"`（按工具返回值记录） |\n| 命令退出码 | 工具未返回 |\n\n`target/desktop-acceptance-20261122/connection-proof.txt` 的完整内容如下。\n\n```text\nWebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n```"
+  },
+  "gemini": {
+    "browser": "Google Chrome",
+    "app_name": "Webcodex",
+    "conversation_url": "https://gemini.google.com/app/f34f71b93b91b2f7",
+    "session_id": "wc_sess_xSz1Ya3LPSmACp2P",
+    "oauth_flow": "Google Custom apps consent; native Desktop credential-copy confirmation; password paste without clipboard secret inspection; Chrome password-save declined; WebCodex OAuth Allow; 30 tools synchronized; custom app saved.",
+    "work_on_project_approval": "Allow once, exact desktop client and main repository",
+    "run_process_approval": "Allow once, exact project, /usr/bin/printf and expected marker argument",
+    "fresh_runtime_file_and_command_calls": true,
+    "work_on_project_at": "2026-11-22T16:55:35.407Z",
+    "read_files_at": "2026-11-22T16:55:47.517Z",
+    "run_process": {
+      "trace_id": "413f64f4-954e-40df-ae02-de9644253f43",
+      "at": "2026-11-22T16:56:52.721Z",
+      "success": true,
+      "execution_state": "completed",
+      "duration_ms": 134,
+      "numeric_exit_code": 0,
+      "exit_source": "Independent structured activity in the exact Workflow Session. Browser response itself did not include numeric exit.",
+      "job_handoff": false
+    },
+    "response_copied_from_native_browser": "已完成 WebCodex Desktop 验收检查，结果如下：\n\n* **Server `git_commit**`：`9f6425428e72282a1f230f2c9f9d093281ebb000`\n* **Server `git_dirty**`：`false`\n* **Server `PID**`：`43418`\n* **Runner `client_id**`：`device-47cbdf021f154085`\n* **Runner `runner_instance_id**`：`7c6e73b6-9d40-41ae-857d-98a7d95d5f28`\n* **项目 ID**：`agent:device-47cbdf021f154085:webcodex-2eeb7eae`\n* **文件内容（`target/desktop-acceptance-20261122/connection-proof.txt`）**：\n```text\nWebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n\n```\n\n\n* **命令 `stdout**`：`desktop-shared-runtime-ok`\n* **退出码**：工具返回结果中未包含退出码字段（未返回）。"
+  },
+  "native_quit_reopen": {
+    "quit": "Native application menu Quit WebCodex Desktop",
+    "reopen": "Native Finder File > Open on installed application",
+    "gui_pid_before": 43253,
+    "gui_pid_after": 55228,
+    "after_observed_at": "2026-11-22T17:00:19Z",
+    "background_pids_creation_times_and_instances_unchanged": true,
+    "quick_generation_and_url_unchanged": true,
+    "oauth_and_tool_observation_unchanged": true,
+    "registered_projects": 7,
+    "running_jobs": 0,
+    "queued_jobs": 0,
+    "no_runtime_start_or_reconnect_clicked": true
+  },
+  "native_ui": {
+    "checked_locales_on_this_build": [
+      "zh-CN",
+      "de-DE"
+    ],
+    "restored_locale": "zh-CN",
+    "gemini_primary_button_white_text_verified": true,
+    "gemini_authorized_and_tool_success_labels_verified": true,
+    "chatgpt_activity_summary_defect": "Despite successful browser calls, Home and Connections still said no ChatGPT activity. Exact Desktop state and installed CLI query confirmed the correct project and readable fresh openai-session activity. A persistent-environment GUI activity-probe initialization defect was found after the successful browser/lifecycle checks; this checkpoint is not a claim that all UI status summaries are correct.",
+    "manual_refresh_probe": "At a later native Home observation, Refresh was disabled (can_press=false); no refresh click was attempted. This single observation does not establish a separate refresh-gating defect."
+  },
+  "verification": {
+    "focused_cloudflare_ingress_tests": {
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0
+    },
+    "ci": {
+      "url": "https://github.com/yyjeqhc/webcodex/actions/runs/45044395818",
+      "passed_jobs": 18,
+      "all_success": true
+    }
+  },
+  "screenshots": [
+    {
+      "path": "final-9f-chatgpt-browser-file-command-proof.jpg",
+      "sha256": "7572992a870a3d08bfdd9ab3fc103905d515d4f28639c006453baba9fc210f2f"
+    },
+    {
+      "path": "final-9f-chatgpt-browser-runtime-proof.jpg",
+      "sha256": "9c8c5ad2ca3327cbcbf6b6fad980fcb3d47953295dd13fff8c8908b60adc21cb"
+    },
+    {
+      "path": "final-9f-gemini-authorized-zh-CN.jpg",
+      "sha256": "b69e0c214f48506e0321d1f399519c3fc24a30b36dd3483e8079ff22f8a65c2a"
+    },
+    {
+      "path": "final-9f-gemini-authorized-de-DE.jpg",
+      "sha256": "023bbb88f52f8e3f8294502e80dffe7c72ecc70f6ab8d6098182bb9b7f1a273e"
+    },
+    {
+      "path": "final-9f-gemini-browser-runtime-proof.jpg",
+      "sha256": "098540a2004c317aee7a3d9034cbf0e69f4e9634c9e94080d4b6eb3a2329abc6"
+    },
+    {
+      "path": "final-9f-gemini-browser-file-command-proof.jpg",
+      "sha256": "d187b006d9432a86a8d6c58b766743055833c31e5dd1b5188eb7aa03bdf46f3c"
+    },
+    {
+      "path": "9f-home-activity-observation-defect-zh-CN.jpg",
+      "sha256": "07fe8c68b621dfda8ad95e9f1e04f1bd3d92f07eaa7f7af631d17ee11516b431"
+    }
+  ],
+  "scope_limits": [
+    "This is the 9f macOS checkpoint, including an explicitly recorded subsequent UI-summary defect.",
+    "Windows final native checkpoint remains clean 5c4 install and GUI launch. Its Runtime Start/Restart/Gemini were not performed because the user shut down the MSI test machine. No 9f package was installed there.",
+    "Seven-language native Windows coverage belongs to 7ef; this 9f macOS checkpoint covers Chinese and German.",
+    "Real-account Named Cloudflare Tunnel acceptance was not performed.",
+    "Quick URL survives GUI Quit/reopen with its background runtime, but recreating Quick Tunnel can change the URL and require Gemini reauthorization."
+  ]
+}

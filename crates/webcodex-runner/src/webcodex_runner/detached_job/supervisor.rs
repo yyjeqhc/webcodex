@@ -5,7 +5,7 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 #[cfg(windows)]
-use windows_sys::Win32::System::Threading::CREATE_BREAKAWAY_FROM_JOB;
+use windows_sys::Win32::System::Threading::{CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW};
 
 pub(crate) fn handoff_detached_job(
     store: &DetachedJobStore,
@@ -590,9 +590,14 @@ pub(super) fn detached_supervisor_command(
     #[cfg(unix)]
     make_new_session(&mut command);
     #[cfg(windows)]
-    if _windows_breakaway {
-        command.creation_flags(CREATE_BREAKAWAY_FROM_JOB);
-    }
+    command.creation_flags(
+        CREATE_NO_WINDOW
+            | if _windows_breakaway {
+                CREATE_BREAKAWAY_FROM_JOB
+            } else {
+                0
+            },
+    );
     Ok(command)
 }
 

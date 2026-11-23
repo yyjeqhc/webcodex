@@ -341,7 +341,7 @@ fn main() {
             std::process::exit(code);
         }
     };
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     let mut service_log = match webcodex_environment::service::ServiceLogGuard::from_managed_env(
         webcodex_environment::service::Component::Runner,
     ) {
@@ -354,7 +354,7 @@ fn main() {
     let cfg = match load_config_with_server_url(&config_path, server_url.as_deref()) {
         Ok(cfg) => cfg,
         Err(e) => {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             drop(service_log);
             eprintln!("{}", e);
             std::process::exit(2);
@@ -374,12 +374,12 @@ fn main() {
         #[cfg(windows)]
         None,
     ) {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         drop(service_log);
         eprintln!("webcodex-runner failed: {}", e);
         std::process::exit(webcodex_runner::transport::failure_exit_code(&e));
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     if let Some(log) = service_log.as_mut() {
         let _ = log.stopped();
     }

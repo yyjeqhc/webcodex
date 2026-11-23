@@ -50,7 +50,7 @@ pub(crate) fn run_bounded(
 
     // ManagedChild owns the whole validation process tree: a private process
     // group on Unix, a kill-on-close Job Object on Windows.
-    let mut child = match ManagedChild::spawn(&mut command) {
+    let mut child = match ManagedChild::spawn_background(&mut command) {
         Ok(child) => child,
         Err(error) => {
             return CapturedProcess {

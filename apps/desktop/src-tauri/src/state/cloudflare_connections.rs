@@ -4,6 +4,9 @@ use super::*;
 use serde::{Deserialize, Serialize, Serializer};
 use webcodex_environment::{Secret, TunnelProvider};
 
+mod gemini;
+pub use gemini::GeminiConnectionRequest;
+
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CloudflareConnectionRequest {
@@ -14,6 +17,8 @@ pub enum CloudflareConnectionRequest {
         profile_id: String,
         server_instance_id: String,
         expected_revision: u64,
+        expected_generation: u64,
+        expected_configuration_id: String,
     },
     Stop {
         profile_id: String,
@@ -52,6 +57,7 @@ impl CloudflareConnectionRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudflareConnectionStatus {
+    pub configuration_id: String,
     pub profile_id: String,
     pub server_instance_id: String,
     pub process_generation: u64,
@@ -168,6 +174,15 @@ impl AppState {
         }
         let profile = webcodex_environment::cloudflare_tunnel_profile(&store, request.profile_id())
             .map_err(environment::desktop_error)?;
+        if let CloudflareConnectionRequest::Start {
+            expected_configuration_id,
+            ..
+        } = &request
+        {
+            if *expected_configuration_id != profile.configuration_id {
+                return Err(stale_revision(request.stage(), &profile.profile_id));
+            }
+        }
         if profile.provider == TunnelProvider::Openai {
             return Err(unavailable());
         }
@@ -175,6 +190,7 @@ impl AppState {
         validate_control_origin(&profile.local_server_url)?;
         let client = reqwest::Client::builder()
             .no_proxy()
+            .retry(reqwest::retry::never())
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(5))
             .build()
@@ -189,12 +205,13 @@ impl AppState {
                     CloudflareConnectionRequest::Start {
                         server_instance_id,
                         expected_revision,
+                        expected_generation,
                         ..
                     } => Some((
                         webcodex_environment::ServiceOperation::Start,
                         server_instance_id.as_str(),
                         Some(*expected_revision),
-                        None,
+                        Some(*expected_generation),
                     )),
                     CloudflareConnectionRequest::Stop {
                         server_instance_id,
@@ -233,7 +250,8 @@ impl AppState {
                             Some("invalid_response"),
                         )
                     })?;
-                if observed.profile_id != profile.profile_id
+                if observed.configuration_id != profile.configuration_id
+                    || observed.profile_id != profile.profile_id
                     || observed.server_instance_id != expected_instance
                     || expected_revision.is_some_and(|revision| {
                         revision != observed.configured_revision || revision != profile.revision
@@ -298,6 +316,9 @@ impl AppState {
         {
             return Err(unavailable());
         }
+        if status.configuration_id != profile.configuration_id {
+            return Err(stale_revision(request.stage(), &profile.profile_id));
+        }
         status.check_materialized_revision(profile.revision);
         Ok(CloudflareConnectionResponse::Status(status))
     }
@@ -311,6 +332,17 @@ async fn control_response(
 ) -> DesktopResult<Vec<u8>> {
     let stage = request.stage();
     let profile_id = request.profile_id();
+    let uncertain_write = |error: DesktopError| {
+        if matches!(request, CloudflareConnectionRequest::Status { .. }) {
+            error
+        } else {
+            error.with_recovery(
+                crate::error::RecoveryKind::ManualCheck,
+                crate::error::SafeRecoveryAction::ObserveBeforeRetry,
+                false,
+            )
+        }
+    };
     let mut response = client
         .post(endpoint)
         .bearer_auth(token.expose())
@@ -323,31 +355,43 @@ async fn control_response(
             } else {
                 "server_unreachable"
             };
-            DesktopError::new(
-                "cloudflare_server_unreachable",
-                "Could not reach the local Server to control this Cloudflare connection",
-                "Check that the local Server is running, then refresh this connection.",
+            uncertain_write(
+                DesktopError::new(
+                    "cloudflare_server_unreachable",
+                    "Could not reach the local Server to control this Cloudflare connection",
+                    "Check that the local Server is running, then refresh this connection.",
+                )
+                .with_component(crate::error::ErrorComponent::Tunnel)
+                .with_stage(stage)
+                .with_reason_code(reason)
+                .with_operation_context(None, None, Some(profile_id), None),
             )
-            .with_component(crate::error::ErrorComponent::Tunnel)
-            .with_stage(stage)
-            .with_reason_code(reason)
-            .with_operation_context(None, None, Some(profile_id), None)
         })?;
     let status = response.status();
     if response
         .content_length()
         .is_some_and(|length| length > 32 * 1024)
     {
-        return Err(unavailable_for(stage, profile_id, Some("response_limit")));
+        return Err(uncertain_write(unavailable_for(
+            stage,
+            profile_id,
+            Some("response_limit"),
+        )));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| unavailable_for(stage, profile_id, Some("response_uncertain")))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|_| {
+        uncertain_write(unavailable_for(
+            stage,
+            profile_id,
+            Some("response_uncertain"),
+        ))
+    })? {
         if bytes.len().saturating_add(chunk.len()) > 32 * 1024 {
-            return Err(unavailable_for(stage, profile_id, Some("response_limit")));
+            return Err(uncertain_write(unavailable_for(
+                stage,
+                profile_id,
+                Some("response_limit"),
+            )));
         }
         bytes.extend_from_slice(&chunk);
     }

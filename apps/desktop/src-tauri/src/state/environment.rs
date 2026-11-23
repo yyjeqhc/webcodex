@@ -463,6 +463,52 @@ fn require_idle_runner(inventory: &Value) -> DesktopResult<()> {
     ))
 }
 
+pub(super) fn legacy_inventory_projects(
+    rows: &[Value],
+    client_id: &str,
+    selected_project: Option<&Path>,
+) -> DesktopResult<Vec<ProjectRecord>> {
+    let prefix = format!("agent:{client_id}:");
+    let mut projects = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id = row
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|value| value.strip_prefix(&prefix))
+            .filter(|value| !value.is_empty())
+            .ok_or_else(migration_target_conflict)?;
+        let path = Path::new(
+            row.get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(migration_target_conflict)?,
+        );
+        if !path.is_absolute() {
+            return Err(migration_target_conflict());
+        }
+        let path = match std::fs::canonicalize(path) {
+            Ok(path) => path,
+            // Runner retains registered projects when a directory is removed or
+            // temporarily unavailable. Preserve that absolute identity as well;
+            // migration still verifies every ID/path against the original
+            // registry and copies its bytes before starting the replacement.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+            Err(_) => return Err(migration_target_conflict()),
+        };
+        projects.push(ProjectRecord {
+            id: id.to_owned(),
+            path,
+        });
+    }
+    if selected_project.is_some()
+        && !projects
+            .iter()
+            .any(|project| Some(project.path.as_path()) == selected_project)
+    {
+        return Err(migration_target_conflict());
+    }
+    Ok(projects)
+}
+
 fn same_desktop_path(left: &Path, right: &Path) -> bool {
     if left == right {
         return true;
@@ -997,7 +1043,12 @@ impl DesktopCore {
         let store = store()?;
         let mut setup = EnvironmentSetup::new(NativeEnvironment::new().map_err(desktop_error)?);
         let result = setup
-            .resume(&store, &SetupSecrets::default(), self.setup_progress_sink())
+            .resume_if_current(
+                &store,
+                self.config.persistent_environment.as_deref(),
+                &SetupSecrets::default(),
+                self.setup_progress_sink(),
+            )
             .await
             .map_err(desktop_error)?;
         cancellation.check()?;
@@ -1141,31 +1192,7 @@ impl DesktopCore {
                 "Retry after the Server reports a complete inventory.",
             ));
         }
-        let prefix = format!("agent:{client_id}:");
-        let mut projects = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id = row
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|value| value.strip_prefix(&prefix))
-                .filter(|value| !value.is_empty())
-                .ok_or_else(migration_target_conflict)?;
-            let path = row
-                .get("path")
-                .and_then(Value::as_str)
-                .ok_or_else(migration_target_conflict)?;
-            projects.push(ProjectRecord {
-                id: id.to_owned(),
-                path: std::fs::canonicalize(path).map_err(|_| migration_target_conflict())?,
-            });
-        }
-        if selected_project.is_some()
-            && !projects
-                .iter()
-                .any(|project| Some(project.path.as_path()) == selected_project)
-        {
-            return Err(migration_target_conflict());
-        }
+        let projects = legacy_inventory_projects(rows, &client_id, selected_project)?;
         Ok(LegacyImport {
             server_env_file: if local_server {
                 runtime.server_env_file.clone()
@@ -1451,17 +1478,39 @@ impl DesktopCore {
         }
         self.snapshot.topology = self.config.topology.clone();
         self.snapshot.project = project;
+        let service_running = |component: &str| {
+            observation
+                .local
+                .as_ref()?
+                .components
+                .iter()
+                .find(|row| row.component == component)?
+                .service
+                .as_ref()
+                .filter(|service| {
+                    service.ownership == webcodex_environment::service::Ownership::Owned
+                })?
+                .running
+        };
         let server = if observation.server_reachable && observation.authenticated {
             ServerReadiness::Ready
         } else if observation.server_reachable {
             ServerReadiness::Error
+        } else if service_running("server") == Some(false) {
+            ServerReadiness::Stopped
         } else {
             ServerReadiness::Unknown
         };
-        let runner = match observation.runner_online {
-            Some(true) => RunnerReadiness::Ready,
-            Some(false) => RunnerReadiness::Connecting,
-            None => RunnerReadiness::Stopped,
+        let runner = if !local_runner || service_running("runner") == Some(false) {
+            RunnerReadiness::Stopped
+        } else if !observation.authenticated {
+            RunnerReadiness::Unknown
+        } else {
+            match observation.runner_online {
+                Some(true) => RunnerReadiness::Ready,
+                Some(false) => RunnerReadiness::Connecting,
+                None => RunnerReadiness::Unknown,
+            }
         };
         let project_readiness = if self.config.project.is_none() {
             ProjectReadiness::None

@@ -144,7 +144,7 @@ fn execute_configured_command_impl(
     // ManagedChild owns the whole process tree: a private process group on
     // Unix, a kill-on-close Job Object on Windows. `child_mut()` below only
     // accesses pipe handles; every termination still uses the managed tree.
-    let spawn = ManagedChild::spawn(&mut cmd);
+    let spawn = ManagedChild::spawn_background(&mut cmd);
     let mut child = match spawn {
         Ok(child) => child,
         Err(error) => {

@@ -1,7 +1,9 @@
 mod cloudflare_connections;
 mod coding_agents;
 mod connections;
-pub use cloudflare_connections::{CloudflareConnectionRequest, CloudflareConnectionResponse};
+pub use cloudflare_connections::{
+    CloudflareConnectionRequest, CloudflareConnectionResponse, GeminiConnectionRequest,
+};
 mod diagnostics;
 mod environment;
 mod environment_invitation;
@@ -81,10 +83,12 @@ static NEXT_STATE_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 type SharedSupervisor = Arc<Mutex<ProcessSupervisor>>;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct ChatGptActivityProbe {
     identity: ProjectRuntimeIdentity,
-    webcodex: PathBuf,
+    adapter: WebCodexAdapter,
+    runtime_source: crate::runtime_selection::RuntimeSource,
+    runtime_selection_revision: u64,
 }
 
 pub struct AppState {

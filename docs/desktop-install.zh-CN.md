@@ -42,9 +42,7 @@ WebCodex 可以在已注册的项目范围内读取和修改文件、执行命�
    下载与当前机器架构匹配的 Windows installer 或 DMG。当前 macOS 构建
    未经过 notarization；如果被拦截，进入**系统设置 → 隐私与安全 → 仍要打开**，
    不要全局关闭 Gatekeeper。
-2. **创建主节点。**选择**创建主节点**，配置独立的 Server 和本机 Runner。
-   初始项目可以跳过，Runner 仍保持启用。等待设置完成并检查两个服务。
-   **加入主节点**把本机 Runner 接入已有 Server；参见[添加设备说明](desktop-guide.zh-CN.md#添加其他设备)。
+2. 全新安装后点击**开始使用**。Desktop 在当前用户下准备本机服务，观察到两个服务就绪后打开连接页。稍后可在**项目**中添加文件夹。其他角色、自定义程序和服务控制位于**设置 → Runtime 与服务**。
 3. **创建 OpenAI Tunnel 凭据。**在 [OpenAI Tunnels 页面](https://platform.openai.com/settings/organization/tunnels)
    创建 Tunnel，记录完整且准确的 Tunnel ID；再到 [API keys 页面](https://platform.openai.com/settings/organization/api-keys)
    创建 API key。建议使用 Restricted key，只授予 Tunnel 所需权限，包括
@@ -180,26 +178,7 @@ Windows 用户可以设置当前用户的持久环境变量。macOS 从 Finder /
 
 ## 4. 启动本机运行环境并添加项目
 
-首次启动后选择**创建主节点**，初始代码仓库可以选择或跳过，之后再添加；
-两种情况都保持本机 Runner 启用。Runner 文件访问策略仍是权限边界，项目注册
-不会授予策略之外的目录访问权。**高级**保留 Server-only、viewer-only 和 Quick Share；
-重新打开设置保持已保存的角色。
-
-在首页展开**查看运行诊断**，确认：
-
-- Service：运行中 / Ready；
-- Runner：已连接 / Ready；
-- 如果选择了初始项目，Project：Ready，且目录准确。项目为空不会停止 Server 或 Runner。
-
-之后可在**项目**页面添加本机项目，复用已有 Runner 身份和 Server 连接。
-
-**成功时你应该看到：**Server 和本机 Runner 就绪。注册项目后核对准确的目录与所属
-Runner；ChatGPT 的真实项目读取仍用于单独确认整条连接。
-
-**失败时：**点击**重新激活项目**；仍然失败时再查看错误和**活动**详情。不要
-通过扩大项目访问范围来绕过错误。
-
-**下一步：**只有这三项都 Ready 后才启动 OpenAI Secure Tunnel。
+全新安装后点击**开始使用**。Desktop 在当前用户下准备本机服务，观察到两个服务就绪后打开连接页。稍后可在**项目**中添加文件夹。其他角色、自定义程序和服务控制位于**设置 → Runtime 与服务**。 [Windows 实机验收清单](desktop-windows-acceptance.zh-CN.md)
 
 ## 5. 可选：配置 Tunnel 网络
 

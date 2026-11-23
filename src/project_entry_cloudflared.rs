@@ -124,7 +124,10 @@ async fn query_npm_config_value(key: &str) -> Option<String> {
 }
 
 async fn query_npm_config_value_with(program: &OsStr, key: &str) -> Option<String> {
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    let mut child = command
         .args(["config", "get", key])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -320,27 +323,30 @@ pub(super) async fn installed_cloudflared() -> Result<PathBuf, ProductError> {
     if let Some(binary) = configured_cloudflared()? {
         return Ok(binary);
     }
-    let asset = cloudflared_asset_for(std::env::consts::OS, std::env::consts::ARCH)?;
+    let asset = current_cloudflared_asset()?;
     let path = managed_binary_path(&managed_cloudflared_root()?, asset);
     if managed_binary_is_valid(&path, asset).await {
         return Ok(path);
     }
     Err(ProductError::new(
-        "tunnel_unavailable",
+        "cloudflare_binary_unavailable",
         "cloudflared is unavailable",
         Some("Install cloudflared for the service owner and reconnect."),
     ))
 }
 
-pub(super) async fn resolve_cloudflared() -> Result<PathBuf, ProductError> {
+pub(super) async fn resolve_cloudflared(
+    progress: impl Fn(&'static str),
+) -> Result<PathBuf, ProductError> {
+    progress("cloudflare_component_check");
     if let Some(binary) = configured_cloudflared()? {
         return Ok(binary);
     }
 
-    let asset = cloudflared_asset_for(std::env::consts::OS, std::env::consts::ARCH)?;
+    let asset = current_cloudflared_asset()?;
     let root = managed_cloudflared_root()?;
     let url = format!("{CLOUDFLARED_RELEASE_BASE}/{}", asset.file_name);
-    ensure_managed_cloudflared_at(&root, asset, &url).await
+    ensure_managed_cloudflared_at(&root, asset, &url, progress).await
 }
 
 fn existing_cloudflared_from(
@@ -352,7 +358,7 @@ fn existing_cloudflared_from(
             return Ok(Some(binary.to_path_buf()));
         }
         return Err(ProductError::new(
-            "tunnel_unavailable",
+            "cloudflare_binary_unavailable",
             "WEBCODEX_CLOUDFLARED_BIN does not point to a cloudflared file",
             Some("Fix or unset WEBCODEX_CLOUDFLARED_BIN, then retry webcodex share."),
         ));
@@ -363,6 +369,40 @@ fn existing_cloudflared_from(
     Ok(std::env::split_paths(path)
         .map(|directory| directory.join(executable_name("cloudflared")))
         .find(|candidate| candidate.is_file()))
+}
+
+fn current_cloudflared_asset() -> Result<CloudflaredAsset, ProductError> {
+    #[cfg(all(windows, target_arch = "aarch64"))]
+    if windows_supports_x64_user_processes() {
+        return cloudflared_asset_for("windows", "x86_64");
+    }
+    cloudflared_asset_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+// The pinned upstream Windows release is x64. Only select that exact asset
+// on ARM64 when Windows itself confirms x64 user-mode support. Resolve the
+// API at runtime so older Windows can still use an explicit compatible binary.
+#[cfg(all(windows, target_arch = "aarch64"))]
+fn windows_supports_x64_user_processes() -> bool {
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+    const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
+    const USER_ENABLED: i32 = 1;
+    type GetAttributes = unsafe extern "system" fn(u16, *mut i32) -> i32;
+    // SAFETY: kernel32 remains loaded for the lifetime of this process. The
+    // export uses the documented GetMachineTypeAttributes ABI (Windows 11).
+    unsafe {
+        let kernel = GetModuleHandleA(c"kernel32.dll".as_ptr().cast());
+        if kernel.is_null() {
+            return false;
+        }
+        let Some(proc) = GetProcAddress(kernel, c"GetMachineTypeAttributes".as_ptr().cast()) else {
+            return false;
+        };
+        let get_attributes: GetAttributes = std::mem::transmute(proc);
+        let mut attributes = 0;
+        get_attributes(IMAGE_FILE_MACHINE_AMD64, &mut attributes) == 0
+            && attributes & USER_ENABLED != 0
+    }
 }
 
 fn cloudflared_asset_for(os: &str, arch: &str) -> Result<CloudflaredAsset, ProductError> {
@@ -404,14 +444,14 @@ fn cloudflared_asset_for(os: &str, arch: &str) -> Result<CloudflaredAsset, Produ
         },
         ("windows", "aarch64") => {
             return Err(ProductError::new(
-                "tunnel_unavailable",
+                "cloudflare_platform_unsupported",
                 format!("automatic cloudflared installation is unavailable on {os}/{arch}: Cloudflare {CLOUDFLARED_VERSION} publishes no Windows ARM64 artifact"),
                 Some("Set WEBCODEX_CLOUDFLARED_BIN to a trusted compatible cloudflared binary, or use webcodex share --tunnel openai / --tunnel none."),
             ))
         }
         _ => {
             return Err(ProductError::new(
-                "tunnel_unavailable",
+                "cloudflare_platform_unsupported",
                 format!("automatic cloudflared installation is unsupported on {os}/{arch}"),
                 Some("Install cloudflared and set WEBCODEX_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
             ))
@@ -458,7 +498,7 @@ fn managed_cloudflared_root_from(
         return Ok(path.join("WebCodex/tools/cloudflared"));
     }
     Err(ProductError::new(
-        "tunnel_unavailable",
+        "cloudflare_storage_unavailable",
         "WebCodex cannot choose a private user directory for managed cloudflared",
         Some("Set HOME/XDG_STATE_HOME, ensure LOCALAPPDATA is available on Windows, set WEBCODEX_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
     ))
@@ -474,6 +514,7 @@ async fn ensure_managed_cloudflared_at(
     root: &Path,
     asset: CloudflaredAsset,
     url: &str,
+    progress: impl Fn(&'static str),
 ) -> Result<PathBuf, ProductError> {
     let destination = managed_binary_path(root, asset);
     let install_dir = destination.parent().ok_or_else(managed_tool_path_error)?;
@@ -490,7 +531,9 @@ async fn ensure_managed_cloudflared_at(
 
     let result = async {
         let downloaded = temporary.join(asset.file_name);
+        progress("cloudflare_component_download");
         download_cloudflared_asset(url, &downloaded).await?;
+        progress("cloudflare_component_verify");
         verify_sha256(&downloaded, asset.archive_sha256, "downloaded cloudflared artifact")?;
 
         let candidate = if asset.gzip_archive {
@@ -507,14 +550,14 @@ async fn ensure_managed_cloudflared_at(
         verify_cloudflared_version(&candidate).await?;
         fs::rename(&candidate, &destination).map_err(|_| {
             ProductError::new(
-                "tunnel_unavailable",
+                "cloudflare_storage_unavailable",
                 "WebCodex could not install its managed cloudflared binary atomically",
                 Some("Check user-state filesystem permissions, then retry webcodex share."),
             )
         })?;
         if !managed_binary_is_valid(&destination, asset).await {
             return Err(ProductError::new(
-                "tunnel_unavailable",
+                "cloudflare_verification_failed",
                 "the installed cloudflared binary failed post-install verification",
                 Some("Remove the managed cloudflared file and retry webcodex share, or set WEBCODEX_CLOUDFLARED_BIN."),
             ));
@@ -548,7 +591,7 @@ async fn managed_binary_is_valid(path: &Path, asset: CloudflaredAsset) -> bool {
 fn create_private_tool_dir(path: &Path) -> Result<(), ProductError> {
     fs::create_dir_all(path).map_err(|_| {
         ProductError::new(
-            "tunnel_unavailable",
+            "cloudflare_storage_unavailable",
             "WebCodex could not create its managed cloudflared directory",
             Some("Check user-state filesystem permissions, then retry webcodex share."),
         )
@@ -558,7 +601,7 @@ fn create_private_tool_dir(path: &Path) -> Result<(), ProductError> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| {
             ProductError::new(
-                "tunnel_unavailable",
+                "cloudflare_storage_unavailable",
                 "WebCodex could not protect its managed cloudflared directory",
                 Some("Check user-state filesystem permissions, then retry webcodex share."),
             )
@@ -567,7 +610,7 @@ fn create_private_tool_dir(path: &Path) -> Result<(), ProductError> {
     #[cfg(windows)]
     super::windows_private_state::protect_private_directory(path).map_err(|_| {
         ProductError::new(
-            "tunnel_unavailable",
+            "cloudflare_storage_unavailable",
             "WebCodex could not protect its managed cloudflared directory on Windows",
             Some("Check user-state filesystem permissions and reparse points, then retry webcodex share."),
         )
@@ -595,7 +638,18 @@ async fn download_cloudflared_asset_with_network(
         )
         .send()
         .await
-        .map_err(|error| download_error(download_request_failure(&error)))?;
+        .map_err(|error| {
+            ProductError::new(
+                "cloudflare_network_unavailable",
+                download_request_failure(&error),
+                Some("Check the network connection and proxy, then reconnect."),
+            )
+        })?;
+    if response.status() == reqwest::StatusCode::PROXY_AUTHENTICATION_REQUIRED {
+        return Err(network_config_error(
+            "download proxy requires authentication",
+        ));
+    }
     if !response.status().is_success() {
         return Err(download_error(&format!(
             "server returned HTTP {}",
@@ -633,7 +687,7 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), ProductError> {
     {
         return super::windows_private_state::write_new_private_file(path, bytes).map_err(|_| {
             ProductError::new(
-                "tunnel_unavailable",
+                "cloudflare_storage_unavailable",
                 "WebCodex could not securely create the temporary cloudflared download on Windows",
                 Some("Check user-state filesystem permissions and reparse points, then retry webcodex share."),
             )
@@ -650,14 +704,14 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), ProductError> {
         }
         let mut file = options.open(path).map_err(|_| {
             ProductError::new(
-                "tunnel_unavailable",
+                "cloudflare_storage_unavailable",
                 "WebCodex could not create the temporary cloudflared download",
                 Some("Check user-state filesystem permissions, then retry webcodex share."),
             )
         })?;
         file.write_all(bytes).map_err(|_| {
             ProductError::new(
-                "tunnel_unavailable",
+                "cloudflare_storage_unavailable",
                 "WebCodex could not write the temporary cloudflared download",
                 Some("Check user-state filesystem permissions, then retry webcodex share."),
             )
@@ -704,7 +758,7 @@ fn verify_sha256(path: &Path, expected: &str, label: &str) -> Result<(), Product
     let actual = sha256_file(path)?;
     if actual != expected {
         return Err(ProductError::new(
-            "tunnel_unavailable",
+            "cloudflare_verification_failed",
             format!("{label} failed SHA-256 verification"),
             Some("Retry webcodex share; if the failure persists, set WEBCODEX_CLOUDFLARED_BIN to a trusted cloudflared binary."),
         ));
@@ -720,7 +774,7 @@ fn make_private_executable(path: &Path) -> Result<(), ProductError> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| {
             ProductError::new(
-                "tunnel_unavailable",
+                "cloudflare_storage_unavailable",
                 "WebCodex could not make managed cloudflared executable",
                 Some("Check user-state filesystem permissions, then retry webcodex share."),
             )
@@ -734,14 +788,18 @@ async fn verify_cloudflared_version(path: &Path) -> Result<(), ProductError> {
         .await
         .map_err(|_| verification_error())?;
     if format!("{}.{}.{}", version.0, version.1, version.2) != CLOUDFLARED_VERSION {
-        return Err(verification_error());
+        return Err(ProductError::new(
+            "cloudflare_version_unsupported",
+            "Unexpected managed cloudflared version",
+            Some("Check the installed component."),
+        ));
     }
     Ok(())
 }
 
 fn managed_user_root_error(name: &str) -> ProductError {
     ProductError::new(
-        "tunnel_unavailable",
+        "cloudflare_storage_unavailable",
         format!("{name} must be an absolute path for managed cloudflared"),
         Some("Fix the user-state environment, set WEBCODEX_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
     )
@@ -749,7 +807,7 @@ fn managed_user_root_error(name: &str) -> ProductError {
 
 fn managed_tool_path_error() -> ProductError {
     ProductError::new(
-        "tunnel_unavailable",
+        "cloudflare_storage_unavailable",
         "WebCodex could not resolve its managed cloudflared path",
         Some("Set WEBCODEX_CLOUDFLARED_BIN or use webcodex share --tunnel none."),
     )
@@ -767,7 +825,7 @@ fn download_request_failure(error: &reqwest::Error) -> &'static str {
 
 fn network_config_error(detail: &str) -> ProductError {
     ProductError::new(
-        "tunnel_unavailable",
+        "cloudflare_proxy_invalid",
         format!("WebCodex could not apply network settings for managed cloudflared: {detail}"),
         Some("Check npm/system proxy and CA configuration, then retry webcodex share; or set WEBCODEX_CLOUDFLARED_BIN / use --tunnel none."),
     )
@@ -775,7 +833,7 @@ fn network_config_error(detail: &str) -> ProductError {
 
 fn download_error(detail: &str) -> ProductError {
     ProductError::new(
-        "tunnel_unavailable",
+        "cloudflare_download_failed",
         format!("WebCodex could not download verified cloudflared: {detail}"),
         Some("Check network/proxy connectivity and retry webcodex share, set WEBCODEX_CLOUDFLARED_BIN, or use --tunnel none."),
     )
@@ -783,7 +841,7 @@ fn download_error(detail: &str) -> ProductError {
 
 fn extraction_error(detail: &str) -> ProductError {
     ProductError::new(
-        "tunnel_unavailable",
+        "cloudflare_extraction_failed",
         format!("WebCodex could not unpack verified cloudflared: {detail}"),
         Some("Ensure the system tar command is available, then retry webcodex share; or set WEBCODEX_CLOUDFLARED_BIN."),
     )
@@ -791,7 +849,7 @@ fn extraction_error(detail: &str) -> ProductError {
 
 fn verification_error() -> ProductError {
     ProductError::new(
-        "tunnel_unavailable",
+        "cloudflare_verification_failed",
         "managed cloudflared failed integrity or version verification",
         Some("Retry webcodex share, or set WEBCODEX_CLOUDFLARED_BIN to a trusted cloudflared binary."),
     )

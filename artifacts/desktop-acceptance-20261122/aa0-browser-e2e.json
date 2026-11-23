@@ -1,0 +1,1392 @@
+{
+  "schema_version": 1,
+  "checkpoint": "Final aa0 installed macOS dual-client acceptance, including one failed OAuth attempt and successful retry",
+  "recorded_at": "2026-11-22 18:25:08 UTC",
+  "time_basis": "Backend timestamps are UTC; native mini screenshots/process human-readable timestamps use UTC+8 (2026-11-23).",
+  "source": {
+    "project": "agent:mini:webcodex",
+    "branch": "feat/desktop-first-run-experience",
+    "pr": 1435,
+    "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+    "compiled_git_dirty": false,
+    "built_at": "1795369641",
+    "target": "aarch64-apple-darwin",
+    "evidence_only_commit_note": "The commit containing this report may be later than the tested source because evidence and README were written after native acceptance."
+  },
+  "package": {
+    "dmg": "/Users/yyjeqhc/git/webcodex/target/desktop-local-dist/webcodex-desktop-local-aa0b3add37b0-v0.5.0-darwin-arm64.dmg",
+    "dmg_sha256": "044535f1141530c8166126a2d428dc1c0234e3716c469d608e040cbdaf1f321b",
+    "dmg_size_bytes": 55889903,
+    "official_helper_job": {
+      "job_id": "wc_job_zfrNSpcx9nfhYXdc",
+      "exit_code": 0,
+      "duration_seconds": 486.645
+    },
+    "package_verification_job": {
+      "job_id": "wc_job_hh-vJV1xBvhK-Alt",
+      "exit_code": 0
+    },
+    "codesign": {
+      "all_four_strict_verified": true,
+      "app_deep_strict_verified": true,
+      "persistent_identity": "WebCodex Local Development",
+      "certificate_sha1": "83A1298E17883732268E21D0C98C004BAE81D5D8",
+      "persistent_identity_applies_to": [
+        "webcodex-desktop",
+        "webcodex-runner"
+      ],
+      "adhoc_linker_signed": [
+        "webcodex",
+        "webcodex-server"
+      ],
+      "apple_notarized": false
+    },
+    "binaries": {
+      "webcodex-desktop": {
+        "dmg_member": "WebCodex Desktop.app/Contents/MacOS/WebCodex",
+        "sha256": "43a76e9e8a847abbbaf930238c33b5db175b3627eb30a23e7a8fa0cd1a340428",
+        "size_bytes": 25439504,
+        "build_info": {
+          "schema_version": 1,
+          "binary": "webcodex-desktop",
+          "version": "0.5.0",
+          "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+          "git_dirty": false,
+          "built_at": "1795369641",
+          "target": "aarch64-apple-darwin",
+          "architecture": "aarch64",
+          "desktop_runtime_contract": {
+            "min_generation": 1,
+            "max_generation": 1
+          },
+          "agent_protocol_generation": null,
+          "environment_data_format": 1
+        },
+        "macho_architecture": "arm64",
+        "codesign_strict_verified": true
+      },
+      "webcodex": {
+        "dmg_member": "WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex",
+        "sha256": "a3a81809cebd023ac41b0816a10e672edea1c18d5ec785ee2101d7f6b76f97ba",
+        "size_bytes": 17039456,
+        "build_info": {
+          "schema_version": 1,
+          "binary": "webcodex",
+          "version": "0.5.0",
+          "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+          "git_dirty": false,
+          "built_at": "1795369641",
+          "target": "aarch64-apple-darwin",
+          "architecture": "aarch64",
+          "desktop_runtime_contract": {
+            "min_generation": 1,
+            "max_generation": 1
+          },
+          "agent_protocol_generation": null,
+          "environment_data_format": 1
+        },
+        "macho_architecture": "arm64",
+        "codesign_strict_verified": true
+      },
+      "webcodex-server": {
+        "dmg_member": "WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-server",
+        "sha256": "2b4f990ba5c759249b4186e72b1f7c91afcdab3d8a16d3db157b00bfbe34a3ee",
+        "size_bytes": 60349136,
+        "build_info": {
+          "schema_version": 1,
+          "binary": "webcodex-server",
+          "version": "0.5.0",
+          "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+          "git_dirty": false,
+          "built_at": "1795369641",
+          "target": "aarch64-apple-darwin",
+          "architecture": "aarch64",
+          "desktop_runtime_contract": {
+            "min_generation": 1,
+            "max_generation": 1
+          },
+          "agent_protocol_generation": 2,
+          "environment_data_format": 1
+        },
+        "macho_architecture": "arm64",
+        "codesign_strict_verified": true
+      },
+      "webcodex-runner": {
+        "dmg_member": "WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-runner",
+        "sha256": "fb26c648f616c96fc1b34615b5b1fd715560b1063f76cabb23a692155595ce7c",
+        "size_bytes": 19721680,
+        "build_info": {
+          "schema_version": 1,
+          "binary": "webcodex-runner",
+          "version": "0.5.0",
+          "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+          "git_dirty": false,
+          "built_at": "1795369641",
+          "target": "aarch64-apple-darwin",
+          "architecture": "aarch64",
+          "desktop_runtime_contract": {
+            "min_generation": 1,
+            "max_generation": 1
+          },
+          "agent_protocol_generation": 2,
+          "environment_data_format": 1
+        },
+        "macho_architecture": "arm64",
+        "codesign_strict_verified": true
+      }
+    },
+    "installation_job": {
+      "job_id": "wc_job_ikQGIP-qmrD-9fzA",
+      "exit_code": 0
+    },
+    "installation": {
+      "verified_at": "2026-11-22T18:01:14.356657+00:00",
+      "installed_app": "/Applications/WebCodex Desktop.app",
+      "source_sha": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+      "atomic_swap": true,
+      "four_binaries": {
+        "webcodex-desktop": {
+          "sha256": "43a76e9e8a847abbbaf930238c33b5db175b3627eb30a23e7a8fa0cd1a340428",
+          "build": {
+            "schema_version": 1,
+            "binary": "webcodex-desktop",
+            "version": "0.5.0",
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64",
+            "desktop_runtime_contract": {
+              "min_generation": 1,
+              "max_generation": 1
+            },
+            "agent_protocol_generation": null,
+            "environment_data_format": 1
+          }
+        },
+        "webcodex": {
+          "sha256": "a3a81809cebd023ac41b0816a10e672edea1c18d5ec785ee2101d7f6b76f97ba",
+          "build": {
+            "schema_version": 1,
+            "binary": "webcodex",
+            "version": "0.5.0",
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64",
+            "desktop_runtime_contract": {
+              "min_generation": 1,
+              "max_generation": 1
+            },
+            "agent_protocol_generation": null,
+            "environment_data_format": 1
+          }
+        },
+        "webcodex-server": {
+          "sha256": "2b4f990ba5c759249b4186e72b1f7c91afcdab3d8a16d3db157b00bfbe34a3ee",
+          "build": {
+            "schema_version": 1,
+            "binary": "webcodex-server",
+            "version": "0.5.0",
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64",
+            "desktop_runtime_contract": {
+              "min_generation": 1,
+              "max_generation": 1
+            },
+            "agent_protocol_generation": 2,
+            "environment_data_format": 1
+          }
+        },
+        "webcodex-runner": {
+          "sha256": "fb26c648f616c96fc1b34615b5b1fd715560b1063f76cabb23a692155595ce7c",
+          "build": {
+            "schema_version": 1,
+            "binary": "webcodex-runner",
+            "version": "0.5.0",
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64",
+            "desktop_runtime_contract": {
+              "min_generation": 1,
+              "max_generation": 1
+            },
+            "agent_protocol_generation": 2,
+            "environment_data_format": 1
+          }
+        }
+      },
+      "backup_app": "/Applications/.WebCodex-Desktop-2bb0297ee0a8-backup-20261122.app",
+      "previous_app_after_swap": "/Applications/.WebCodex-Desktop-aa0b3add37b0-staging.app",
+      "persistent_signing_identity_verified": true,
+      "credential_configuration_and_registry_bytes_unchanged": true,
+      "registry_files_protected": 7,
+      "projects_before": 7,
+      "control_1578_identity_preserved": true,
+      "desktop_processes_stopped": true,
+      "gui_started": false,
+      "source_worktree_clean": true
+    }
+  },
+  "runtime": {
+    "recorded_at": "2026-11-22T18:16:20.134951+00:00",
+    "runtime": {
+      "server_pid": 20203,
+      "server_build": {
+        "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+        "git_dirty": false,
+        "built_at": "1795369641",
+        "target": "aarch64-apple-darwin",
+        "architecture": "aarch64"
+      },
+      "runner_instance_id": "a6d9a69f-bdf4-44d7-82b8-899c21747aac",
+      "runner_build": {
+        "version": "0.5.0",
+        "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+        "git_dirty": false,
+        "built_at": "1795369641",
+        "target": "aarch64-apple-darwin",
+        "architecture": "aarch64"
+      },
+      "project_count": 7,
+      "job_concurrency": {
+        "limit": 32,
+        "running": 0,
+        "queued": 0
+      }
+    },
+    "cloudflare": {
+      "profile_id": "gemini-quick",
+      "server_instance_id": "65ac62d6-469f-4d3b-b0fd-7675a72be711",
+      "process_generation": 1,
+      "lifecycle": "running",
+      "public_origin": "https://reprints-too-hugh-argue.trycloudflare.com",
+      "registration_available": true,
+      "observed_authorization": true,
+      "observed_tool_call": true,
+      "reason_code": null
+    },
+    "processes": [
+      {
+        "pid": 1578,
+        "ppid": 1,
+        "started": "Tue Nov 10 08:54:48 2026",
+        "path": "/Users/yyjeqhc/.local/lib/webcodex-dev/webcodex-runner"
+      },
+      {
+        "pid": 20029,
+        "ppid": 1,
+        "started": "Mon Nov 23 02:02:05 2026",
+        "path": "/Applications/WebCodex Desktop.app/Contents/MacOS/WebCodex"
+      },
+      {
+        "pid": 20203,
+        "ppid": 1,
+        "started": "Mon Nov 23 02:02:21 2026",
+        "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-server"
+      },
+      {
+        "pid": 20210,
+        "ppid": 1,
+        "started": "Mon Nov 23 02:02:21 2026",
+        "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-runner"
+      },
+      {
+        "pid": 20246,
+        "ppid": 20203,
+        "started": "Mon Nov 23 02:02:21 2026",
+        "path": "/Users/yyjeqhc/.local/state/webcodex/tools/cloudflared/2026.7.3/darwin-arm64/cloudflared"
+      }
+    ]
+  },
+  "native_first_start": {
+    "native_button_pressed_once_at": "2026-11-22T18:02:21Z",
+    "observer_job": {
+      "job_id": "wc_job_EQdf7zxOqikkbJoG",
+      "exit_code": 0
+    },
+    "observer": "Read-only loopback production status; no public probe, DNS, system/browser proxy modification or reconnect",
+    "first_starting_observed_at": "2026-11-22T18:02:21.220795+00:00",
+    "first_running_observed_at": "2026-11-22T18:02:30.994918+00:00",
+    "seconds_starting_to_running": 9.774,
+    "registration_available_observed_at": "2026-11-22T18:02:33.466850+00:00",
+    "runtime": {
+      "server_pid": 20203,
+      "server_build": {
+        "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+        "git_dirty": false,
+        "built_at": "1795369641",
+        "target": "aarch64-apple-darwin",
+        "architecture": "aarch64"
+      },
+      "client_id": "device-47cbdf021f154085",
+      "runner_instance_id": "a6d9a69f-bdf4-44d7-82b8-899c21747aac",
+      "runner_build": {
+        "version": "0.5.0",
+        "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+        "git_dirty": false,
+        "built_at": "1795369641",
+        "target": "aarch64-apple-darwin",
+        "architecture": "aarch64"
+      },
+      "project_count": 7,
+      "job_concurrency": {
+        "limit": 32,
+        "running": 0,
+        "queued": 0
+      },
+      "build_alignment": "exact",
+      "compatibility_status": "compatible"
+    },
+    "processes": [
+      {
+        "pid": 1578,
+        "ppid": 1,
+        "started": "Tue Nov 10 08:54:48 2026",
+        "path": "/Users/yyjeqhc/.local/lib/webcodex-dev/webcodex-runner"
+      },
+      {
+        "pid": 20029,
+        "ppid": 1,
+        "started": "Mon Nov 23 02:02:05 2026",
+        "path": "/Applications/WebCodex Desktop.app/Contents/MacOS/WebCodex"
+      },
+      {
+        "pid": 20203,
+        "ppid": 1,
+        "started": "Mon Nov 23 02:02:21 2026",
+        "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-server"
+      },
+      {
+        "pid": 20210,
+        "ppid": 1,
+        "started": "Mon Nov 23 02:02:21 2026",
+        "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-runner"
+      },
+      {
+        "pid": 20246,
+        "ppid": 20203,
+        "started": "Mon Nov 23 02:02:21 2026",
+        "path": "/Users/yyjeqhc/.local/state/webcodex/tools/cloudflared/2026.7.3/darwin-arm64/cloudflared"
+      }
+    ],
+    "complete": true,
+    "ended_at": "2026-11-22T18:02:33.610816+00:00",
+    "last_cloudflare_status": {
+      "profile_id": "gemini-quick",
+      "server_instance_id": "65ac62d6-469f-4d3b-b0fd-7675a72be711",
+      "process_generation": 1,
+      "lifecycle": "running",
+      "public_origin": "https://reprints-too-hugh-argue.trycloudflare.com",
+      "registration_available": true,
+      "observed_authorization": false,
+      "observed_tool_call": false,
+      "reason_code": null,
+      "configured_revision": 1,
+      "applied_revision": 1
+    },
+    "timed_out": false,
+    "readiness_limit_note": "The actual run was approximately 9.8 seconds and did not exercise the portion beyond 60 seconds or prove the configuration lock was contended. Deadline/contention behavior is separately covered by deterministic tests."
+  },
+  "browser_task": {
+    "file": "target/desktop-acceptance-20261122/connection-proof.txt",
+    "expected_file_content": "WebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n",
+    "command": {
+      "executable": "/usr/bin/printf",
+      "args": [
+        "desktop-shared-runtime-ok"
+      ]
+    },
+    "limits": "The browser text and visible screenshots establish the marker, not byte-exact newline preservation. No business files, configuration or services were modified by the browser task."
+  },
+  "chatgpt": {
+    "app_id": "asdk_app_6b0309961b34819181603639660b6417",
+    "workbench_url": "https://chatgpt.com/mcp-app/asdk_app_6b0309961b34819181603639660b6417/open_webcodex_workbench",
+    "prompt_submitted_at": "2026-11-22 18:03:34 UTC",
+    "prompt": "请继续使用当前 WebCodex Desktop mini 应用验收刚升级的桌面环境。必须重新调用工具，不能沿用先前结果。只执行：1）get_runtime_status；2）读取 /Users/yyjeqhc/git/webcodex 项目内 target/desktop-acceptance-20261122/connection-proof.txt；3）run_process，executable=/usr/bin/printf，args=[\"desktop-shared-runtime-ok\"]。如需项目会话，仅用 work_on_project 绑定上述主仓库。不要修改任何文件、配置或服务，不安装软件，不发消息。最后简洁报告实际 Server git_commit/git_dirty/PID、Runner client_id/runner_instance_id、项目 ID、文件完整内容、命令 stdout；退出码若未返回请明确说明。",
+    "copied_browser_response": "WebCodex Desktop mini 本轮三项调用均返回成功。\n\n| 验收项 | 本轮结果 |\n|---|---|\n| Server `git_commit` | `aa0b3add37b0a6f6a87b16021d0c977ed09ce202` |\n| Server `git_dirty` | `false` |\n| Server PID | `20203` |\n| Runner `client_id` | `device-47cbdf021f154085`（在线） |\n| Runner `runner_instance_id` | `a6d9a69f-bdf4-44d7-82b8-899c21747aac` |\n| 项目 ID | `agent:device-47cbdf021f154085:webcodex-2eeb7eae` |\n| 命令 stdout | `\"desktop-shared-runtime-ok\\n\"`（按工具返回值记录） |\n| 命令退出码 | 工具未返回 |\n\n`target/desktop-acceptance-20261122/connection-proof.txt` 的完整内容如下。\n\n```text\nWebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n```",
+    "retained_trace_proof": {
+      "observed_at": "2026-11-22T18:04:44.727994+00:00",
+      "runtime": {
+        "server_pid": 20203,
+        "server_build": {
+          "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+          "git_dirty": false,
+          "built_at": "1795369641",
+          "target": "aarch64-apple-darwin",
+          "architecture": "aarch64"
+        },
+        "runner_client_id": "device-47cbdf021f154085",
+        "runner_instance_id": "a6d9a69f-bdf4-44d7-82b8-899c21747aac",
+        "runner_build": {
+          "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+          "git_dirty": false,
+          "built_at": "1795369641",
+          "target": "aarch64-apple-darwin",
+          "architecture": "aarch64"
+        },
+        "connected": true,
+        "project_count": 7
+      },
+      "scope": {
+        "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+        "window_key": "6c44eb524737bfa8a43ed6f3e161e0b8df67aee5090061312a7af69679ffc9c2",
+        "since_ms": 1795370614000,
+        "until_ms": 1795370684716,
+        "tools": [
+          "read_files",
+          "run_process"
+        ]
+      },
+      "complete": true,
+      "calls": [
+        {
+          "trace_ref": "daec8da7-126c-4af4-9e1d-c60189e4f843",
+          "window_key": "6c44eb524737bfa8a43ed6f3e161e0b8df67aee5090061312a7af69679ffc9c2",
+          "window_source": "openai-session",
+          "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+          "tool_name": "read_files",
+          "method": "toolsCall",
+          "observed_at_ms": 1795370630792,
+          "response_handed_at_ms": 1795370630798,
+          "duration_ms": 6,
+          "status": "success"
+        },
+        {
+          "trace_ref": "47045d0e-5b75-4613-843f-544531a0492c",
+          "window_key": "6c44eb524737bfa8a43ed6f3e161e0b8df67aee5090061312a7af69679ffc9c2",
+          "window_source": "openai-session",
+          "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+          "tool_name": "run_process",
+          "method": "toolsCall",
+          "observed_at_ms": 1795370639782,
+          "response_handed_at_ms": 1795370639947,
+          "duration_ms": 165,
+          "status": "success"
+        }
+      ],
+      "queries": [
+        {
+          "tool_name": "read_files",
+          "capture_mode": "off",
+          "returned_count": 1,
+          "next_offset": null,
+          "coverage": "retained_action_audit_only"
+        },
+        {
+          "tool_name": "run_process",
+          "capture_mode": "off",
+          "returned_count": 1,
+          "next_offset": null,
+          "coverage": "retained_action_audit_only"
+        }
+      ],
+      "observation_count": 1,
+      "observations": [
+        {
+          "observed_at": "2026-11-22T18:04:44.721216+00:00",
+          "success_present": {
+            "read_files": true,
+            "run_process": true
+          }
+        }
+      ],
+      "numeric_exit_code": "not provided by retained index; not reconstructed",
+      "payloads_read": false,
+      "source": "read-only retained action audit query; no replacement business calls"
+    },
+    "numeric_exit_code": null,
+    "numeric_exit_code_limit": "No numeric exit code in the browser reply or retained action-audit index; success is not converted into zero."
+  },
+  "gemini": {
+    "previous_app_cleanup": {
+      "observed_at": "2026-11-22T17:49:01Z",
+      "name": "Webcodex",
+      "old_mcp_url": "https://combat-stands-valves-decorative.trycloudflare.com/mcp",
+      "method": "Native Gemini Custom apps detail > Delete > Remove, normal UI",
+      "new_form_open": true
+    },
+    "mcp_url": "https://reprints-too-hugh-argue.trycloudflare.com/mcp",
+    "conversation_url": "https://gemini.google.com/app/e3459a447e01e2e5",
+    "custom_app_name": "Webcodex",
+    "tool_sync_count_observed": 30,
+    "oauth": {
+      "first_attempt": {
+        "ui_error": "必须关联账号才能使用此自定义应用。请重试。",
+        "ui_error_observed_at": "2026-11-22 18:08:51 UTC",
+        "status": {
+          "recorded_at": "2026-11-22T18:09:16.701663+00:00",
+          "server_pid": 20203,
+          "server_build": {
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64"
+          },
+          "runner_instance_id": "a6d9a69f-bdf4-44d7-82b8-899c21747aac",
+          "runner_online": true,
+          "job_concurrency": {
+            "limit": 32,
+            "running": 0,
+            "queued": 0
+          },
+          "cloudflare": {
+            "profile_id": "gemini-quick",
+            "server_instance_id": "65ac62d6-469f-4d3b-b0fd-7675a72be711",
+            "process_generation": 1,
+            "lifecycle": "running",
+            "public_origin": "https://reprints-too-hugh-argue.trycloudflare.com",
+            "registration_available": true,
+            "observed_authorization": false,
+            "observed_tool_call": false,
+            "reason_code": null,
+            "configured_revision": 1,
+            "applied_revision": 1
+          },
+          "server_files": [
+            {
+              "name": "service-events.log",
+              "directory": false,
+              "bytes": 1893
+            },
+            {
+              "name": "tunnels",
+              "directory": true,
+              "bytes": null
+            },
+            {
+              "name": "cloudflare-ingress.json",
+              "directory": false,
+              "bytes": 19
+            },
+            {
+              "name": "data",
+              "directory": true,
+              "bytes": null
+            }
+          ]
+        },
+        "metadata": {
+          "recorded_at": "2026-11-22T18:10:30.534193+00:00",
+          "window": {
+            "since": "2026-11-22T18:04:00Z",
+            "until": "2026-11-22T18:09:00Z"
+          },
+          "profile_id": "gemini-quick",
+          "server_instance_id": "65ac62d6-469f-4d3b-b0fd-7675a72be711",
+          "generation": 1,
+          "origin": "https://reprints-too-hugh-argue.trycloudflare.com",
+          "active": true,
+          "admission_open": true,
+          "auth_epoch": 13,
+          "runtime_revision": 7,
+          "clients": [
+            {
+              "created_at": "2026-11-22T18:04:32+00:00",
+              "revoked_at": null,
+              "auth_method": null,
+              "has_secret": 1,
+              "registration_epoch": 13,
+              "attempt_client_index": 1
+            }
+          ],
+          "codes": [
+            {
+              "created_at": "2026-11-22T18:07:43+00:00",
+              "expires_at": "2026-11-22T18:12:43+00:00",
+              "used_at": null,
+              "revoked_at": null,
+              "subject_kind": "managed_user",
+              "code_challenge_method": "S256",
+              "owner_matches": 1,
+              "epoch_matches": 1,
+              "attempt_client_index": 1
+            }
+          ],
+          "access": [],
+          "refresh": [],
+          "limits": "Read-only transaction; no code, token, hash, secret, redirect, or request payload selected. A consumed code alone does not prove successful exchange."
+        },
+        "outcome": "Authorization code issued, no completed exchange observed; exact failure cause unknown. Existing retained data cannot distinguish absent request, callback/network failure or token pre-validation rejection."
+      },
+      "retry": {
+        "started_at": "2026-11-22 18:09:39 UTC",
+        "allow_clicked_at": "2026-11-22 18:11:00 UTC",
+        "method": "One normal retry from Gemini's visible retry prompt using the same URL, generation, Server, Runner and Cloudflare process; reused the valid browser login session.",
+        "comparison": {
+          "recorded_at": "2026-11-22T18:11:51.895816+00:00",
+          "profile_id": "gemini-quick",
+          "server_instance_id": "65ac62d6-469f-4d3b-b0fd-7675a72be711",
+          "generation": 1,
+          "origin": "https://reprints-too-hugh-argue.trycloudflare.com",
+          "active": true,
+          "admission_open": true,
+          "auth_epoch": 13,
+          "clients": [
+            {
+              "created_at": "2026-11-22T18:04:32+00:00",
+              "revoked_at": null,
+              "registration_epoch": 13,
+              "attempt_client_index": 1
+            },
+            {
+              "created_at": "2026-11-22T18:10:07+00:00",
+              "revoked_at": null,
+              "registration_epoch": 13,
+              "attempt_client_index": 2
+            }
+          ],
+          "codes": [
+            {
+              "created_at": "2026-11-22T18:07:43+00:00",
+              "expires_at": "2026-11-22T18:12:43+00:00",
+              "used_at": null,
+              "revoked_at": null,
+              "subject_kind": "managed_user",
+              "code_challenge_method": "S256",
+              "owner_matches": 1,
+              "epoch_matches": 1,
+              "attempt_client_index": 1
+            },
+            {
+              "created_at": "2026-11-22T18:11:00+00:00",
+              "expires_at": "2026-11-22T18:16:00+00:00",
+              "used_at": "2026-11-22T18:11:04+00:00",
+              "revoked_at": null,
+              "subject_kind": "managed_user",
+              "code_challenge_method": "S256",
+              "owner_matches": 1,
+              "epoch_matches": 1,
+              "attempt_client_index": 2
+            }
+          ],
+          "access": [
+            {
+              "created_at": "2026-11-22T18:11:04+00:00",
+              "expires_at": "2026-11-22T19:11:04+00:00",
+              "revoked_at": null,
+              "last_used_at": "2026-11-22T18:11:04+00:00",
+              "owner_matches": 1,
+              "epoch_matches": 1,
+              "attempt_client_index": 2
+            }
+          ],
+          "refresh": [
+            {
+              "created_at": "2026-11-22T18:11:04+00:00",
+              "expires_at": "2026-12-22T18:11:04+00:00",
+              "revoked_at": null,
+              "last_used_at": null,
+              "owner_matches": 1,
+              "epoch_matches": 1,
+              "attempt_client_index": 2
+            }
+          ],
+          "limits": "Read-only metadata for this exact ingress; no code, token, hash, secret, redirect, or request payload selected."
+        },
+        "outcome": "Authorization code consumed and matching access/refresh records created at 18:11:04Z; 30 tools synced before the custom app was saved."
+      },
+      "credentials_handling": "Native Desktop sensitive-copy confirmation; paste into the WebCodex password field using Chrome's native menu; no credential clipboard read or credential in these artifacts. Clipboard cleared and Chrome password-save declined."
+    },
+    "prompt_submitted_at": "2026-11-22 18:12:54 UTC",
+    "prompt": "@Webcodex 请验收刚升级的 WebCodex Desktop。必须实际调用工具，不能沿用此前聊天的结果。只执行：1）get_runtime_status；2）必要时 work_on_project，client_id 使用当前在线桌面 Runner，path=/Users/yyjeqhc/git/webcodex；3）读取项目内 target/desktop-acceptance-20261122/connection-proof.txt；4）run_process，executable=/usr/bin/printf，args=[\"desktop-shared-runtime-ok\"]。不要修改任何文件、配置或服务，不安装软件，不发消息。最后简洁报告实际 Server git_commit/git_dirty/PID、Runner client_id/runner_instance_id、项目 ID、文件完整内容、命令 stdout；退出码若未返回请明确说明。",
+    "command_approval": {
+      "at": "2026-11-22 18:14:44 UTC",
+      "choice": "Allow once",
+      "arguments_visually_checked": true
+    },
+    "copied_browser_response": "已完成对 WebCodex Desktop 的实际工具验收：\n\n* **Server `git_commit` / `git_dirty` / `PID**`：`aa0b3add37b0a6f6a87b16021d0c977ed09ce202` / `false` / `20203`\n* **Runner `client_id` / `runner_instance_id**`：`device-47cbdf021f154085` / `a6d9a69f-bdf4-44d7-82b8-899c21747aac`\n* **项目 ID**：`agent:device-47cbdf021f154085:webcodex-2eeb7eae`\n* **`target/desktop-acceptance-20261122/connection-proof.txt` 完整内容**：\n\n```text\nWebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n\n```\n\n* **命令 `stdout**`：`desktop-shared-runtime-ok`\n* **退出码**：工具返回结果中未包含退出码字段。",
+    "exact_session": {
+      "recorded_at": "2026-11-22T18:16:20.134853+00:00",
+      "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+      "session_id": "wc_sess_LhuFbVo8341Rg1zj",
+      "window_key": "57201fec389b8cd181f9911949e3dec99469c99f53a17042e61d036878107b85",
+      "activity": [
+        {
+          "kind": "Read",
+          "tool": "read_files",
+          "state": "succeeded",
+          "job_handoff": false,
+          "started_at": 1795371224,
+          "finished_at": 1795371224,
+          "duration_ms": 1,
+          "started_at_utc": "2026-11-22T18:13:44+00:00",
+          "finished_at_utc": "2026-11-22T18:13:44+00:00"
+        },
+        {
+          "kind": "Ran",
+          "tool": "run_process",
+          "state": "succeeded",
+          "execution_state": "completed",
+          "job_handoff": false,
+          "started_at": 1795371287,
+          "finished_at": 1795371287,
+          "duration_ms": 107,
+          "exit_code": 0,
+          "started_at_utc": "2026-11-22T18:14:47+00:00",
+          "finished_at_utc": "2026-11-22T18:14:47+00:00"
+        }
+      ],
+      "limits": "Only metadata retained; no session messages, summaries, tool payload, command stdout, or credentials read out."
+    },
+    "retained_traces": {
+      "recorded_at": "2026-11-22T18:16:20.134941+00:00",
+      "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+      "session_id": "wc_sess_LhuFbVo8341Rg1zj",
+      "window_key": "57201fec389b8cd181f9911949e3dec99469c99f53a17042e61d036878107b85",
+      "capture_mode": "off",
+      "calls": [
+        {
+          "trace_ref": "0823956d-7cfd-470c-8ea6-ea8cbb8da8d0",
+          "window_key": "57201fec389b8cd181f9911949e3dec99469c99f53a17042e61d036878107b85",
+          "window_source": "mcp",
+          "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+          "tool_name": "work_on_project",
+          "method": "toolsCall",
+          "observed_at_ms": 1795371219427,
+          "response_handed_at_ms": 1795371220486,
+          "duration_ms": 1059,
+          "status": "success",
+          "observed_at_utc": "2026-11-22T18:13:39.427000+00:00"
+        },
+        {
+          "trace_ref": "9c9950ce-87a5-45a3-b391-adccb31391d6",
+          "window_key": "57201fec389b8cd181f9911949e3dec99469c99f53a17042e61d036878107b85",
+          "window_source": "mcp",
+          "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+          "tool_name": "read_files",
+          "method": "toolsCall",
+          "observed_at_ms": 1795371224982,
+          "response_handed_at_ms": 1795371224986,
+          "duration_ms": 4,
+          "status": "success",
+          "observed_at_utc": "2026-11-22T18:13:44.982000+00:00"
+        },
+        {
+          "trace_ref": "6c9d7e31-1637-42a0-9cd6-28fc49810a36",
+          "window_key": "57201fec389b8cd181f9911949e3dec99469c99f53a17042e61d036878107b85",
+          "window_source": "mcp",
+          "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+          "tool_name": "run_process",
+          "method": "toolsCall",
+          "observed_at_ms": 1795371287150,
+          "response_handed_at_ms": 1795371287260,
+          "duration_ms": 110,
+          "status": "success",
+          "observed_at_utc": "2026-11-22T18:14:47.150000+00:00"
+        }
+      ]
+    },
+    "numeric_exit_code": 0,
+    "numeric_exit_code_source": "Exact Workflow Session execution metadata (completed/succeeded, 107 ms, no Job handoff); browser reply itself omitted exit code."
+  },
+  "native_ui": {
+    "connection_locales_observed": [
+      "zh-CN",
+      "en-US",
+      "de-DE",
+      "fr-FR",
+      "ja-JP",
+      "ko-KR",
+      "zh-TW"
+    ],
+    "viewport": {
+      "width": 1180,
+      "height": 760
+    },
+    "checks": [
+      "Shared Server/Runner explanation",
+      "Complete public MCP address with copy control",
+      "Readable white primary-button text",
+      "OAuth authorization observation distinct from current-connection tool success",
+      "Quick address-change/re-authorization guidance",
+      "Long translated labels and URL wrapping remain in their containers"
+    ],
+    "independent_visual_review": "A second agent inspected all seven saved connection screenshots. No visible text overlap, horizontal overflow or clipped controls; German URL wraps to four lines and other locales to approximately two. French full labels independently confirmed.",
+    "home_locales_observed": [
+      "zh-CN",
+      "de-DE"
+    ],
+    "home": {
+      "chatgpt_real_activity": true,
+      "projects": 7,
+      "desktop_events_label_scope": "Current GUI session only"
+    },
+    "reopen": {
+      "native_quit_at": "2026-11-22 18:21:13 UTC",
+      "native_finder_open_at": "2026-11-22 18:22:12 UTC",
+      "before": {
+        "recorded_at": "2026-11-22T18:16:20.134951+00:00",
+        "runtime": {
+          "server_pid": 20203,
+          "server_build": {
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64"
+          },
+          "runner_instance_id": "a6d9a69f-bdf4-44d7-82b8-899c21747aac",
+          "runner_build": {
+            "version": "0.5.0",
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64"
+          },
+          "project_count": 7,
+          "job_concurrency": {
+            "limit": 32,
+            "running": 0,
+            "queued": 0
+          }
+        },
+        "cloudflare": {
+          "profile_id": "gemini-quick",
+          "server_instance_id": "65ac62d6-469f-4d3b-b0fd-7675a72be711",
+          "process_generation": 1,
+          "lifecycle": "running",
+          "public_origin": "https://reprints-too-hugh-argue.trycloudflare.com",
+          "registration_available": true,
+          "observed_authorization": true,
+          "observed_tool_call": true,
+          "reason_code": null
+        },
+        "processes": [
+          {
+            "pid": 1578,
+            "ppid": 1,
+            "started": "Tue Nov 10 08:54:48 2026",
+            "path": "/Users/yyjeqhc/.local/lib/webcodex-dev/webcodex-runner"
+          },
+          {
+            "pid": 20029,
+            "ppid": 1,
+            "started": "Mon Nov 23 02:02:05 2026",
+            "path": "/Applications/WebCodex Desktop.app/Contents/MacOS/WebCodex"
+          },
+          {
+            "pid": 20203,
+            "ppid": 1,
+            "started": "Mon Nov 23 02:02:21 2026",
+            "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-server"
+          },
+          {
+            "pid": 20210,
+            "ppid": 1,
+            "started": "Mon Nov 23 02:02:21 2026",
+            "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-runner"
+          },
+          {
+            "pid": 20246,
+            "ppid": 20203,
+            "started": "Mon Nov 23 02:02:21 2026",
+            "path": "/Users/yyjeqhc/.local/state/webcodex/tools/cloudflared/2026.7.3/darwin-arm64/cloudflared"
+          }
+        ]
+      },
+      "during_quit": {
+        "recorded_at": "2026-11-22T18:21:54.391016+00:00",
+        "observation": "native-quit",
+        "old_gui_exited": true,
+        "gui_pids": [],
+        "same_background_pid_birth_parent_path": true,
+        "runtime": {
+          "server_pid": 20203,
+          "server_build": {
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64"
+          },
+          "runner_instance_id": "a6d9a69f-bdf4-44d7-82b8-899c21747aac",
+          "runner_build": {
+            "version": "0.5.0",
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64"
+          },
+          "project_count": 7,
+          "job_concurrency": {
+            "limit": 32,
+            "running": 0,
+            "queued": 0
+          }
+        },
+        "cloudflare": {
+          "profile_id": "gemini-quick",
+          "server_instance_id": "65ac62d6-469f-4d3b-b0fd-7675a72be711",
+          "process_generation": 1,
+          "lifecycle": "running",
+          "public_origin": "https://reprints-too-hugh-argue.trycloudflare.com",
+          "registration_available": true,
+          "observed_authorization": true,
+          "observed_tool_call": true,
+          "reason_code": null
+        },
+        "processes": [
+          {
+            "pid": 1578,
+            "ppid": 1,
+            "started": "Tue Nov 10 08:54:48 2026",
+            "path": "/Users/yyjeqhc/.local/lib/webcodex-dev/webcodex-runner"
+          },
+          {
+            "pid": 20203,
+            "ppid": 1,
+            "started": "Mon Nov 23 02:02:21 2026",
+            "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-server"
+          },
+          {
+            "pid": 20210,
+            "ppid": 1,
+            "started": "Mon Nov 23 02:02:21 2026",
+            "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-runner"
+          },
+          {
+            "pid": 20246,
+            "ppid": 20203,
+            "started": "Mon Nov 23 02:02:21 2026",
+            "path": "/Users/yyjeqhc/.local/state/webcodex/tools/cloudflared/2026.7.3/darwin-arm64/cloudflared"
+          }
+        ]
+      },
+      "after_reopen": {
+        "recorded_at": "2026-11-22T18:22:32.855183+00:00",
+        "observation": "native-reopen",
+        "old_gui_exited": true,
+        "gui_pids": [
+          36628
+        ],
+        "same_background_pid_birth_parent_path": true,
+        "runtime": {
+          "server_pid": 20203,
+          "server_build": {
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64"
+          },
+          "runner_instance_id": "a6d9a69f-bdf4-44d7-82b8-899c21747aac",
+          "runner_build": {
+            "version": "0.5.0",
+            "git_commit": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+            "git_dirty": false,
+            "built_at": "1795369641",
+            "target": "aarch64-apple-darwin",
+            "architecture": "aarch64"
+          },
+          "project_count": 7,
+          "job_concurrency": {
+            "limit": 32,
+            "running": 0,
+            "queued": 0
+          }
+        },
+        "cloudflare": {
+          "profile_id": "gemini-quick",
+          "server_instance_id": "65ac62d6-469f-4d3b-b0fd-7675a72be711",
+          "process_generation": 1,
+          "lifecycle": "running",
+          "public_origin": "https://reprints-too-hugh-argue.trycloudflare.com",
+          "registration_available": true,
+          "observed_authorization": true,
+          "observed_tool_call": true,
+          "reason_code": null
+        },
+        "processes": [
+          {
+            "pid": 1578,
+            "ppid": 1,
+            "started": "Tue Nov 10 08:54:48 2026",
+            "path": "/Users/yyjeqhc/.local/lib/webcodex-dev/webcodex-runner"
+          },
+          {
+            "pid": 20203,
+            "ppid": 1,
+            "started": "Mon Nov 23 02:02:21 2026",
+            "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-server"
+          },
+          {
+            "pid": 20210,
+            "ppid": 1,
+            "started": "Mon Nov 23 02:02:21 2026",
+            "path": "/Applications/WebCodex Desktop.app/Contents/Resources/webcodex-runtime/webcodex-runner"
+          },
+          {
+            "pid": 20246,
+            "ppid": 20203,
+            "started": "Mon Nov 23 02:02:21 2026",
+            "path": "/Users/yyjeqhc/.local/state/webcodex/tools/cloudflared/2026.7.3/darwin-arm64/cloudflared"
+          },
+          {
+            "pid": 36628,
+            "ppid": 1,
+            "started": "Mon Nov 23 02:22:12 2026",
+            "path": "/Applications/WebCodex Desktop.app/Contents/MacOS/WebCodex"
+          }
+        ]
+      },
+      "old_gui_pid": 20029,
+      "new_gui_pid": 36628,
+      "background_pids_and_births_unchanged": true,
+      "server_and_runner_instances_unchanged": true,
+      "cloudflare_generation_and_url_unchanged": true,
+      "start_or_reconnect_clicked": false,
+      "cold_binary_cache_activity_restored": true,
+      "final_locale": "zh-CN",
+      "final_page": "Home"
+    }
+  },
+  "verification": {
+    "ingress": {
+      "job_id": "wc_job_PGv0Xeoz0kL-P6aF",
+      "passed": 22,
+      "failed": 0,
+      "ignored": 0,
+      "new_lock_regressions": 6,
+      "scope": "Real file-lock tests at the explicit post-forwarding commit boundary; deadline tests use paused time; no claim of simulated TLS/OAuth."
+    },
+    "frontend_copy": {
+      "job_id": "wc_job_AT6QINKiUOWwA7B5",
+      "cloudflare_tests_passed": 35,
+      "locale_integrity_tests_passed": 1,
+      "exit_code": 0
+    },
+    "ci": {
+      "recorded_at": "2026-11-22T18:13:24.279405+00:00",
+      "run_id": 45051418815,
+      "head_sha": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+      "watch_exit_code": 0,
+      "jobs": [
+        {
+          "name": "changes",
+          "id": 137297150503,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-linux-rust (workspace-crates, --workspace --exclude webcodex --exclude webcodex-runner --exc...",
+          "id": 137297150760,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-linux-rust (runner, -p webcodex-runner -p webcodex-lsp --features runner-real-process-tests)",
+          "id": 137297150762,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-linux-rust (server, -p webcodex)",
+          "id": 137297150819,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-linux-tooling",
+          "id": 137297150846,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-macos-desktop (darwin-arm64, macos-15, arm64, aarch64-apple-darwin)",
+          "id": 137297201228,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-windows-runner",
+          "id": 137297201233,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-macos-core (darwin-arm64, macos-15, arm64, aarch64-apple-darwin)",
+          "id": 137297201241,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "contract",
+          "id": 137297201247,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-windows-core",
+          "id": 137297201251,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-docker-server",
+          "id": 137297201263,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-windows-package",
+          "id": 137297201273,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-windows-desktop",
+          "id": 137297201299,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "mcp-conformance",
+          "id": 137299135992,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test",
+          "id": 137300133234,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-macos",
+          "id": 137302319239,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-windows",
+          "id": 137304356247,
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "test-native",
+          "id": 137304375341,
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "windows_desktop_ci_steps": {
+      "recorded_at": "2026-11-22T18:14:09.000250+00:00",
+      "run_id": 45051418815,
+      "job_id": 137297201299,
+      "head_sha": "aa0b3add37b0a6f6a87b16021d0c977ed09ce202",
+      "name": "test-windows-desktop",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-22T17:47:49Z",
+      "completed_at": "2026-11-22T18:12:37Z",
+      "steps": [
+        {
+          "name": "Check Desktop frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-11-22T17:49:16Z",
+          "completed_at": "2026-11-22T17:51:02Z"
+        },
+        {
+          "name": "Check Desktop Rust",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-11-22T17:51:02Z",
+          "completed_at": "2026-11-22T17:58:11Z"
+        },
+        {
+          "name": "Build exact local WebCodex runtime",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-11-22T17:58:11Z",
+          "completed_at": "2026-11-22T18:05:56Z"
+        },
+        {
+          "name": "Stage exact runtime for Desktop bundle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-11-22T18:05:56Z",
+          "completed_at": "2026-11-22T18:05:57Z"
+        },
+        {
+          "name": "Build unsigned NSIS installer",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-11-22T18:05:57Z",
+          "completed_at": "2026-11-22T18:12:18Z"
+        },
+        {
+          "name": "Smoke newly-built Desktop installer",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-11-22T18:12:18Z",
+          "completed_at": "2026-11-22T18:12:32Z"
+        }
+      ],
+      "scope": "GitHub CI source/build/package smoke evidence; no MSI-machine interaction"
+    }
+  },
+  "screenshots": [
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-first-start-ready-zh-CN.jpg",
+      "sha256": "3c8aa0f273e65a0c3f95d2bbccee9db1a89851b7d6c06def8f379ef3dd0ca5b5",
+      "bytes": 78214,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-oauth-consent.jpg",
+      "sha256": "f5862af0e70b1bd5a629d953d7596be9103735eaab9fa0c505e2166f2eadecd1",
+      "bytes": 57077,
+      "width": 1300,
+      "height": 460
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-first-oauth-link-error.jpg",
+      "sha256": "59f6c7e56c67ed63b5afe7a9dbcb4082e2e0a36ba93c0e4fd0be3878e03d6397",
+      "bytes": 35822,
+      "width": 530,
+      "height": 445
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-oauth-tools-synced.jpg",
+      "sha256": "5174dd3d4e27a274739bc1ca68ee45b7537d68984875dba34a2cc9226e78f8eb",
+      "bytes": 33752,
+      "width": 850,
+      "height": 370
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-chatgpt-browser-file-command-proof.jpg",
+      "sha256": "c4e87e74f1566cab909e298714ce0a51d835b244015ff342b541eece9517c8b0",
+      "bytes": 47799,
+      "width": 575,
+      "height": 645
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-chatgpt-browser-runtime-proof.jpg",
+      "sha256": "decadfd5ab8f7472e0518cb733cab3a600cbda93a594e3a019844e5510bdea82",
+      "bytes": 48825,
+      "width": 575,
+      "height": 645
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-browser-runtime-proof.jpg",
+      "sha256": "d3fa4f0f4d271ecb7dcfed85152b32f336757491a8a99f5a6540d656a85edb36",
+      "bytes": 62021,
+      "width": 820,
+      "height": 600
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-browser-file-command-proof.jpg",
+      "sha256": "d68c8fcb6283daec19e154143ea8c7925e9ac7336fdfc3f2553ddf447f26f1d9",
+      "bytes": 63510,
+      "width": 820,
+      "height": 590
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-home-activity-zh-CN.jpg",
+      "sha256": "203e86627314e4d9301035f8ae0252b78c7ed44730df771f7728a48bb8ed9f7e",
+      "bytes": 55460,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-home-activity-de-DE.jpg",
+      "sha256": "1421261f837546b234c41644660b3b0d8e835cf13dd7ffa4868cc833b677d386",
+      "bytes": 62231,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-ready-zh-CN.jpg",
+      "sha256": "bbbc67c50bb4ee824b35056f6c0f5a05a5b97457ab552d489b91ec07456f4b1f",
+      "bytes": 76580,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-ready-de-DE.jpg",
+      "sha256": "692f441e6cd112052a16f264ad931f94fefbf49847d3e4b486712dbc57a9d08d",
+      "bytes": 88391,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-ready-en-US.jpg",
+      "sha256": "66e1c63e6a070c3906ce835d5143507f8c42902525ff1b9851d67bc16498a0ed",
+      "bytes": 84568,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-ready-fr-FR.jpg",
+      "sha256": "7b1103b672a138ed8d822f7a6f7cf926f70a53b651730fc64440e64c458a272a",
+      "bytes": 87371,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-ready-ja-JP.jpg",
+      "sha256": "f7dc2841b986d9cc7916e3f95cb8ccf25ede09a894b4b6e97a54cd093f664c51",
+      "bytes": 79671,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-ready-ko-KR.jpg",
+      "sha256": "ce629e41c7c5ce1842d0f2699786b68640aaa9e776932c681d398f30c212b2cc",
+      "bytes": 74303,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-gemini-ready-zh-TW.jpg",
+      "sha256": "55dac203df2b94d236a9e78d2623c7168a2567d3ee6f26aa7c26fb340a2a5eec",
+      "bytes": 77459,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-reopened-home-activity-de-DE.jpg",
+      "sha256": "d8dd5e70512083fefdc86e531c38a02bf93a6191797b536128b24e31babaa58c",
+      "bytes": 61839,
+      "width": 1180,
+      "height": 760
+    },
+    {
+      "path": "artifacts/desktop-acceptance-20261122/aa0-reopened-home-activity-zh-CN.jpg",
+      "sha256": "9f780a5e50f9098ee4a1f07133b28732ecea3c36ea51153b244041374e27fc42",
+      "bytes": 54408,
+      "width": 1180,
+      "height": 760
+    }
+  ],
+  "scope_limits": [
+    "All subsequent actions used mini after the user's MSI shutdown request; no final aa0 install or runtime acceptance on MSI.",
+    "Latest actual MSI installer checkpoint is 5c4acefe; its final Start/Restart/Gemini/GUI reopen remained unperformed when the user shut it down.",
+    "Windows CI source/build/package smoke success is separate from MSI-machine runtime acceptance.",
+    "The first aa0 OAuth attempt failed to complete exchange; the ordinary same-URL second attempt succeeded. The first cause remains unknown.",
+    "Quick Tunnel URLs are temporary; normal GUI Quit/reopen keeping the background connector was tested, whereas stopping/recreating the runtime may change the URL.",
+    "No real Named Tunnel account acceptance in this run.",
+    "Seven final installed connection-page locales were checked; this is not a claim of exhaustive translation review of every application page.",
+    "Local self-signed development package, not an Apple-notarized release. No merge, tag or release performed."
+  ]
+}

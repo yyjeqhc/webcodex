@@ -47,6 +47,26 @@ pub use unix::ManagedChild;
 #[cfg(windows)]
 pub use windows::ManagedChild;
 
+impl ManagedChild {
+    /// Spawn a noninteractive background process with the usual tree ownership.
+    ///
+    /// Windows console executables receive `CREATE_NO_WINDOW`, so a GUI-owned
+    /// Runner cannot open console windows for inventory probes, tools or stdio
+    /// providers. This does not change the caller's stdin/stdout/stderr handles,
+    /// Job Object assignment, cancellation or cleanup. Unix spawning is unchanged.
+    /// Use `spawn` for a child that should inherit an interactive terminal.
+    pub fn spawn_background(command: &mut std::process::Command) -> std::io::Result<Self> {
+        #[cfg(windows)]
+        let options = SpawnOptions {
+            windows_creation_flags: windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
+            ..SpawnOptions::default()
+        };
+        #[cfg(not(windows))]
+        let options = SpawnOptions::default();
+        Self::spawn_with_options(command, options)
+    }
+}
+
 /// Outcome of a graceful tree-termination request
 /// ([`ManagedChild::request_terminate_tree`]).
 ///

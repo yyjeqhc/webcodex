@@ -18,6 +18,8 @@ pub mod runtime;
 mod windows_user;
 pub use log::{ServiceLog, ServiceLogEvent, ServiceLogGuard, SERVICE_LOG_NAME};
 #[cfg(windows)]
+pub use windows_user::run_desktop_user_task;
+#[cfg(windows)]
 mod windows;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -179,7 +179,7 @@ pub(crate) fn validation_module_available(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let Ok(child) = ManagedChild::spawn(&mut command) else {
+    let Ok(child) = ManagedChild::spawn_background(&mut command) else {
         return false;
     };
     let child = Arc::new(Mutex::new(child));

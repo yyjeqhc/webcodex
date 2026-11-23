@@ -126,19 +126,35 @@ impl DesktopCore {
             return None;
         }
         let identity = identity_from_config(&self.config)?;
-        let webcodex = self.adapter.binaries().ok()?.webcodex.clone();
-        Some(ChatGptActivityProbe { identity, webcodex })
+        // A reopened persistent Environment can be ready before this Desktop
+        // process has resolved its CLI. Resolve on the captured adapter outside
+        // the core lock instead of treating an empty binary cache as no activity.
+        Some(ChatGptActivityProbe {
+            identity,
+            adapter: self.adapter.clone(),
+            runtime_source: self.config.runtime_binary_source.clone(),
+            runtime_selection_revision: self.config.runtime_selection_revision,
+        })
     }
 
     fn apply_chatgpt_activity_observation(
         &mut self,
-        expected_identity: &ProjectRuntimeIdentity,
-        last_meaningful_activity_at_ms: Option<i64>,
+        probe: &ChatGptActivityProbe,
+        observation: DesktopResult<Option<i64>>,
     ) -> DesktopResult<DesktopStateSnapshot> {
         if !self.snapshot.readiness.runtime_ready
-            || identity_from_config(&self.config).as_ref() != Some(expected_identity)
+            || identity_from_config(&self.config).as_ref() != Some(&probe.identity)
+            || self.config.runtime_binary_source != probe.runtime_source
+            || self.config.runtime_selection_revision != probe.runtime_selection_revision
         {
             return Ok(self.publish_snapshot());
+        }
+        // Only publish a checked observation. In particular, a failed query is
+        // not evidence that the current Project has never been used by ChatGPT.
+        let last_meaningful_activity_at_ms = observation?;
+        self.adapter = probe.adapter.clone();
+        if let Ok(binaries) = self.adapter.binaries() {
+            self.snapshot.binaries = Some(binaries.info());
         }
         let last_meaningful_activity_at_ms = last_meaningful_activity_at_ms.max(
             self.snapshot

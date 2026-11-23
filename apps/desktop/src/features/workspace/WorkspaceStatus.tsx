@@ -2,6 +2,7 @@ import { useLocale } from "../../i18n/locale";
 import { productText, useProduct, type ProductKey } from "../../i18n/product";
 import type { DesktopState, ExposureReadiness } from "../../models/topology";
 import type { ConnectionsSnapshot } from "../../models/connections-tools";
+import type { ChatgptActivityQueryStatus } from "../../lib/desktop-observation";
 
 export function observationTime(timestamp: number | null | undefined, locale: string, now = Date.now()): string {
   if (!timestamp) return productText(locale, "noActivity");
@@ -63,8 +64,18 @@ export function WorkspaceStatus({ state }: { state: DesktopState }) {
     {state.topology?.experience !== "quick_share" && <div><dt>{presentation.connectionLabel}</dt><dd><i className={`status-dot ${presentation.connectionReady ? "ready" : "unknown"}`} aria-hidden="true" />{presentation.connectionText}</dd></div>}
   </dl>;
 }
-export function ChatgptObservation({ state }: { state: DesktopState }) {
+interface ChatgptObservationProps {
+  state: DesktopState;
+  queryStatus?: ChatgptActivityQueryStatus;
+}
+export function ChatgptObservationText({ state, queryStatus = "idle" }: ChatgptObservationProps) {
   const p = useProduct(); const { locale } = useLocale();
   const at = state.chatgpt_activity?.last_meaningful_activity_at_ms;
-  return <p className="workspace-observation">{at ? <>{p("lastChatgpt")} · <time dateTime={new Date(at).toISOString()}>{observationTime(at, locale)}</time></> : p("noChatgpt")}</p>;
+  if (at) return <>{p("lastChatgpt")} · <time dateTime={new Date(at).toISOString()}>{observationTime(at, locale)}</time>{queryStatus === "failed" && <> · {p("chatgptCheckFailed")}</>}</>;
+  if (queryStatus === "pending") return <>{p("chatgptChecking")}</>;
+  if (queryStatus === "failed") return <>{p("chatgptCheckFailed")}</>;
+  return <>{p(state.chatgpt_activity?.observed === false ? "noChatgpt" : "chatgptNotChecked")}</>;
+}
+export function ChatgptObservation(props: ChatgptObservationProps) {
+  return <p className="workspace-observation"><ChatgptObservationText {...props} /></p>;
 }

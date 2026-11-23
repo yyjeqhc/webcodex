@@ -228,7 +228,7 @@ impl LspCommand {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        webcodex_process::ManagedChild::spawn(&mut command)
+        webcodex_process::ManagedChild::spawn_background(&mut command)
             .map_err(|error| LspError::SpawnFailed(error.to_string()))
     }
 

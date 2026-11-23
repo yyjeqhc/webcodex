@@ -32,7 +32,7 @@ If the same behavior remains after recreation, add the steps to [issue #955](htt
 
 ## ChatGPT: temporary `share`
 
-Explicit `share` is supported on Linux, macOS, and Windows and owns a temporary single-project environment for that foreground run. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 needs a trusted explicit/PATH `cloudflared` because the pinned Cloudflare release publishes no official ARM64 artifact. Native OpenAI Tunnel supports both Windows x64 and arm64.
+Explicit `share` is supported on Linux, macOS, and Windows and owns a temporary single-project environment for that foreground run. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 uses the same verified x64 asset when Windows reports x64 user-mode support. Other ARM64 systems need a compatible trusted explicit/PATH `cloudflared`. Native OpenAI Tunnel supports both Windows x64 and arm64.
 
 For the default temporary public path, WebCodex reuses an explicit/PATH `cloudflared` or downloads its pinned verified managed copy automatically, then run:
 

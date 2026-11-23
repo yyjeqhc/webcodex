@@ -245,7 +245,7 @@ async fn run_profile(
         tokio::select! {
             biased;
             _ = stopped(&mut stop) => break None,
-            result = tunnel.wait_for_exit() => break Some(result.err().map(|error| error.code).unwrap_or_else(|| "tunnel_unexpected_exit".into())),
+            result = tunnel.wait_for_exit() => break Some(result.err().map(|error| error.code.to_owned()).unwrap_or_else(|| "tunnel_unexpected_exit".into())),
             _ = tokio::time::sleep_until(deadline), if !reached_ready => break Some("tunnel_startup_timeout".into()),
             _ = tick.tick() => {
                 let local = tokio::select! {

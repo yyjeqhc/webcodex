@@ -1,0 +1,334 @@
+{
+  "candidate_commit": "7ef86017942eb3d2cd012d22e1bac044cc9cf0f8",
+  "build_source_clean": true,
+  "os": {
+    "caption": "Windows 11 Pro",
+    "version": "10.0.26100",
+    "build": "26100"
+  },
+  "window": {
+    "physical_width": 1774,
+    "physical_height": 1187,
+    "scale_percent": 150,
+    "maximized": false
+  },
+  "installer_sha256": "16f17805a8321f36c4e34165441609e84102f96d47cef723798fc853bd6440d7",
+  "installed_hashes": {
+    "WebCodex.exe": "1bbe61ecee648fb75dc488db745021400f3def726a1773c6e3479ae02dfb31c2",
+    "webcodex-runtime/webcodex.exe": "e18620251ff8ecb05157219d4f3e061bd2c0aacae6b21ad234a26433b0713c31",
+    "webcodex-runtime/webcodex-server.exe": "ba686ade3388eed4caecc888a067927658716483e0c9c3515b8756e00d6feff0",
+    "webcodex-runtime/webcodex-runner.exe": "631021afdb4f4bccbff37636565a5554c5971d208299046f030187b75374fde9"
+  },
+  "install_job": {
+    "job_id": "wc_job_KUwVuLygOE35w2qC",
+    "exit_code": 0
+  },
+  "ui": {
+    "launch": "normal Explorer Desktop shortcut, observed UIA Invoke",
+    "languages": [
+      "zh-CN",
+      "en-US",
+      "de-DE",
+      "fr-FR",
+      "ja-JP",
+      "ko-KR",
+      "zh-TW"
+    ],
+    "restored_locale": "zh-CN",
+    "layout_result": "No clipped primary actions, overlapping instructions or missing glyphs observed in these connection views at the default window size.",
+    "git_inventory": "test/windows-desktop-acceptance-7ef8601; no uncommitted changes; original non-Git project preserved",
+    "screenshots": [
+      {
+        "path": "connections.zh-CN.jpg",
+        "locale": "zh-CN",
+        "kind": "connections",
+        "sha256": "c192e85bb74e140b9f2969a9432dc56ded0b1b0949aa60f6330f5c4d43ee35cf"
+      },
+      {
+        "path": "chatgpt.zh-CN.jpg",
+        "locale": "zh-CN",
+        "kind": "chatgpt",
+        "sha256": "b26b95f80a9733da76fc76950d6d1d5ec4feb6f20c554b3e7d7658cde6cc5f90"
+      },
+      {
+        "path": "connections.en-US.jpg",
+        "locale": "en-US",
+        "kind": "connections",
+        "sha256": "3323f7948e8853f9657a0b45ac211d857ba34e7c10601a51424a553c5325ae97"
+      },
+      {
+        "path": "chatgpt.en-US.jpg",
+        "locale": "en-US",
+        "kind": "chatgpt",
+        "sha256": "96974fd2ebaa91b1013f4dbc570e6377a144a6fc50fd07600c3f362f6f4f0949"
+      },
+      {
+        "path": "connections.de-DE.jpg",
+        "locale": "de-DE",
+        "kind": "connections",
+        "sha256": "486d1fc6e85d8c47929969f3d0fe79c57756e6e15e33835e1b0fb885ef7b2abd"
+      },
+      {
+        "path": "chatgpt.de-DE.jpg",
+        "locale": "de-DE",
+        "kind": "chatgpt",
+        "sha256": "dba2bb89d24101b40d7506257bdaab2685ec31cf05f4099f6f199177cfd7a9fb"
+      },
+      {
+        "path": "connections.fr-FR.jpg",
+        "locale": "fr-FR",
+        "kind": "connections",
+        "sha256": "46d218aa0208f18e60517ac0d5fe73a75cd667f2336f1cf2a07581412e97564a"
+      },
+      {
+        "path": "chatgpt.fr-FR.jpg",
+        "locale": "fr-FR",
+        "kind": "chatgpt",
+        "sha256": "b8fa5ca941f5eb156f08109c90aef1c2db4fcb1485726442201d5055fc7572cb"
+      },
+      {
+        "path": "connections.ja-JP.jpg",
+        "locale": "ja-JP",
+        "kind": "connections",
+        "sha256": "fe18f4b689cd33aa6403f7375b3e3c0392ff5dba8588b674431b56085cb40758"
+      },
+      {
+        "path": "chatgpt.ja-JP.jpg",
+        "locale": "ja-JP",
+        "kind": "chatgpt",
+        "sha256": "5d2ffcbc953f0ef7ae16cd27e20a989f0cc1d9df5f1cbab611407a5429ce15f4"
+      },
+      {
+        "path": "connections.ko-KR.jpg",
+        "locale": "ko-KR",
+        "kind": "connections",
+        "sha256": "457d44fc42af12c85e611b17f9052c4436702ec7323957a9631a816fef53cf9b"
+      },
+      {
+        "path": "chatgpt.ko-KR.jpg",
+        "locale": "ko-KR",
+        "kind": "chatgpt",
+        "sha256": "332d6030bd7112982f1b0c408fe5deca360c16662320491e6a546dbab6940c5b"
+      },
+      {
+        "path": "connections.zh-TW.jpg",
+        "locale": "zh-TW",
+        "kind": "connections",
+        "sha256": "72b63f85ad29bc7cfc670a9e1ada7f51557dfeeeba6f64a2b6ea0e916029cf90"
+      },
+      {
+        "path": "chatgpt.zh-TW.jpg",
+        "locale": "zh-TW",
+        "kind": "chatgpt",
+        "sha256": "dfd0566e9be54e6713654c30e8ec54a6a17b5dd35eed9b0c30851f440d8077d4"
+      }
+    ],
+    "chatgpt_capture_note": "Top 700 physical pixels of the same default window after scrolling the ChatGPT entry into view; excludes existing profile identifiers.",
+    "close_reopen": {
+      "method": "UIA Invoke native Close button, then UIA Invoke observed Explorer Desktop shortcut",
+      "result": "Window hides and reappears; exact same main GUI, Server and Runner processes; no duplicate runtime",
+      "observed_utc": "2026-11-22T14:30:34.1979442Z",
+      "gui_pid": 51496,
+      "server_pid": 50496,
+      "runner_pid": 55292,
+      "server_count": 1,
+      "runner_count": 1,
+      "controller_untouched": true
+    }
+  },
+  "console_monitors": [
+    {
+      "started": "2026-11-22T13:39:35.1703513Z",
+      "ended": "2026-11-22T13:54:35.1912131Z",
+      "finishedBySignal": false,
+      "samples": 57542,
+      "newVisibleConsoleCount": 0,
+      "observations": [
+        {
+          "Hwnd": 1902644,
+          "ProcessId": 15168,
+          "ClassName": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "ElapsedMs": 2,
+          "Baseline": true
+        }
+      ]
+    },
+    {
+      "started": "2026-11-22T13:58:16.8026505Z",
+      "ended": "2026-11-22T14:13:16.8160758Z",
+      "finishedBySignal": false,
+      "samples": 80997,
+      "newVisibleConsoleCount": 0,
+      "observations": [
+        {
+          "Hwnd": 1902644,
+          "ProcessId": 15168,
+          "ClassName": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "ElapsedMs": 1,
+          "Baseline": true
+        }
+      ]
+    },
+    {
+      "started": "2026-11-22T14:20:03.4691984Z",
+      "ended": "2026-11-22T14:25:03.4769838Z",
+      "finishedBySignal": false,
+      "samples": 26860,
+      "newVisibleConsoleCount": 0,
+      "observations": [
+        {
+          "Hwnd": 1902644,
+          "ProcessId": 15168,
+          "ClassName": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "ElapsedMs": 2,
+          "Baseline": true
+        }
+      ],
+      "job_id": "wc_job_ZSIQ7ytndMGUBjaN",
+      "scope": "One Gemini Connect attempt"
+    }
+  ],
+  "restart": {
+    "result": "Defect reproduced twice; candidate not accepted for Runner restart. Standalone UI Start restored service.",
+    "timing_job": "wc_job_zxPUKxd_JUkM357R",
+    "timing": {
+      "started_utc": "2026-11-22T14:11:37.7799905Z",
+      "ended_utc": "2026-11-22T14:12:14.3665781Z",
+      "samples": 1295,
+      "task_states": [
+        {
+          "utc": "2026-11-22T14:11:37.7875843Z",
+          "state": 4,
+          "last_result": 267009
+        },
+        {
+          "utc": "2026-11-22T14:12:01.3289862Z",
+          "state": 3,
+          "last_result": 267014
+        },
+        {
+          "utc": "2026-11-22T14:12:01.3664857Z",
+          "state": 4,
+          "last_result": 267009
+        },
+        {
+          "utc": "2026-11-22T14:12:01.6192281Z",
+          "state": 3,
+          "last_result": 1
+        }
+      ],
+      "old_host": {
+        "pid": 48752,
+        "created_utc": "2026-11-22T14:01:19.8315599Z",
+        "exited": true,
+        "exit_utc": "2026-11-22T14:12:02.3288723Z"
+      },
+      "old_worker": {
+        "pid": 52928,
+        "created_utc": "2026-11-22T14:01:19.8772713Z",
+        "exited": true,
+        "exit_utc": "2026-11-22T14:12:02.3307999Z"
+      },
+      "process_times": [
+        {
+          "Pid": 52488,
+          "ParentPid": 3308,
+          "Name": "WebCodex.exe",
+          "CreatedUtc": "2026-11-22T13:52:50.0099719Z",
+          "SeenUtc": "2026-11-22T14:11:37.7774853Z",
+          "ExitedUtc": null,
+          "ExitCode": null,
+          "Baseline": true
+        },
+        {
+          "Pid": 51496,
+          "ParentPid": 17208,
+          "Name": "WebCodex.exe",
+          "CreatedUtc": "2026-11-22T13:58:24.4313394Z",
+          "SeenUtc": "2026-11-22T14:11:37.7774853Z",
+          "ExitedUtc": null,
+          "ExitCode": null,
+          "Baseline": true
+        },
+        {
+          "Pid": 48752,
+          "ParentPid": 3308,
+          "Name": "WebCodex.exe",
+          "CreatedUtc": "2026-11-22T14:01:19.8315599Z",
+          "SeenUtc": "2026-11-22T14:11:37.7774853Z",
+          "ExitedUtc": "2026-11-22T14:12:02.3288723Z",
+          "ExitCode": 1067,
+          "Baseline": true
+        },
+        {
+          "Pid": 52928,
+          "ParentPid": 48752,
+          "Name": "webcodex-runner.exe",
+          "CreatedUtc": "2026-11-22T14:01:19.8772713Z",
+          "SeenUtc": "2026-11-22T14:11:37.7774853Z",
+          "ExitedUtc": "2026-11-22T14:12:02.3307999Z",
+          "ExitCode": 0,
+          "Baseline": true
+        },
+        {
+          "Pid": 51456,
+          "ParentPid": 3308,
+          "Name": "WebCodex.exe",
+          "CreatedUtc": "2026-11-22T14:12:01.3526821Z",
+          "SeenUtc": "2026-11-22T14:12:01.3831944Z",
+          "ExitedUtc": "2026-11-22T14:12:01.6097608Z",
+          "ExitCode": 1,
+          "Baseline": false
+        },
+        {
+          "Pid": 51712,
+          "ParentPid": 51456,
+          "Name": "webcodex-runner.exe",
+          "CreatedUtc": "2026-11-22T14:12:01.3989421Z",
+          "SeenUtc": "2026-11-22T14:12:01.4192804Z",
+          "ExitedUtc": "2026-11-22T14:12:01.5916324Z",
+          "ExitCode": 1,
+          "Baseline": false
+        }
+      ]
+    },
+    "scope": "Only Desktop-owned Runner restarted. Existing Server and the separate controlling Runner were not stopped.",
+    "root_cause_evidence": "Task Ready preceded actual old host/worker exit. New worker started and exited with code 1 before old worker exit. Concrete resource-conflict diagnostic was not captured."
+  },
+  "ci_fixture": {
+    "test_command": "py -3.12 -m unittest discover -s scripts/tests -p test_desktop_frontend_build.py -v",
+    "isolated_test_copy": true,
+    "tests": 3,
+    "seconds": 3.569,
+    "result": "OK",
+    "product_source": "7ef86017942eb3d2cd012d22e1bac044cc9cf0f8",
+    "checks": [
+      "GUI subsystem 2 with and without debug assertions",
+      "redirected build-info JSON",
+      "exact user-task argv and worker exit 37",
+      "redacted user-task error exit 78",
+      "production frontend rebuild and fatal failed build",
+      "native frontend hook cwd"
+    ]
+  },
+  "remaining": [
+    "Install backend restart fix candidate and verify native Runner restart",
+    "Remove only temporary acceptance project registration",
+    "Install the HTTP2 transport fix and verify a public Gemini connection"
+  ],
+  "gemini": {
+    "attempts": 1,
+    "result": "Unavailable; no public MCP endpoint admitted",
+    "ui_status": "连接不可用",
+    "ui_reason": "公网地址未能转发到 WebCodex。请检查网络；固定地址还需核对转发目标。",
+    "reason_code": "Not captured independently",
+    "screenshot": {
+      "path": "gemini-unavailable.7ef8601.zh-CN.jpg",
+      "sha256": "d7d07ea827386f102a4bb67def3dc851fd6418f63767316adfe5825e109a687e"
+    },
+    "cloudflared_processes_remaining": 0,
+    "server_pid_preserved": 50496,
+    "runner_pid_preserved": 55292,
+    "note": "Old 7ef8601 product, before the explicit HTTP2 transport fix."
+  }
+}

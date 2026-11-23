@@ -245,6 +245,19 @@ impl ErrorDiagnostic {
             "cloudflare_ingress_not_applied" => {
                 (Tunnel, ConfirmationRequired, RestartServer, false)
             }
+            "cloudflare_proxy_invalid" => (Tunnel, UserAction, OpenNetworkSettings, false),
+            "cloudflare_storage_unavailable"
+            | "cloudflare_verification_failed"
+            | "cloudflare_version_unsupported"
+            | "cloudflare_platform_unsupported"
+            | "cloudflare_extraction_failed" => (Tunnel, UserAction, OpenDiagnostics, false),
+            "cloudflare_download_failed"
+            | "cloudflare_network_unavailable"
+            | "cloudflare_start_failed"
+            | "cloudflare_binary_unavailable"
+            | "cloudflare_discovery_unavailable"
+            | "cloudflare_forwarding_timeout"
+            | "cloudflare_forwarding_mismatch" => (Tunnel, UserAction, CheckConnection, true),
             "cloudflare_environment_required" => (Tunnel, UserAction, OpenSetup, false),
             "cloudflare_revision_stale" | "tunnel_revision_stale" => {
                 (Tunnel, ConfirmationRequired, CheckConnection, false)

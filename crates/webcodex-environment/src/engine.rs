@@ -211,6 +211,17 @@ impl<B: EnvironmentBackend> EnvironmentSetup<B> {
         secrets: &SetupSecrets,
         progress: impl FnMut(SetupProgress),
     ) -> SetupResultValue<SetupResult> {
+        self.resume_if_current(store, None, secrets, progress).await
+    }
+
+    pub async fn resume_if_current(
+        &mut self,
+        store: &EnvironmentStore,
+        expected_id: Option<&str>,
+        secrets: &SetupSecrets,
+        progress: impl FnMut(SetupProgress),
+    ) -> SetupResultValue<SetupResult> {
+        let lock = store.lock()?;
         let journal = store.load_journal()?.ok_or_else(|| {
             SetupDiagnostic::new(
                 "setup_not_found",
@@ -218,7 +229,21 @@ impl<B: EnvironmentBackend> EnvironmentSetup<B> {
                 "Configure this environment first",
             )
         })?;
-        self.configure(store, journal.environment.request, secrets, progress)
+        if let Some(id) = expected_id {
+            if journal.environment.environment_id != id
+                || store
+                    .load_environment()?
+                    .as_ref()
+                    .is_none_or(|record| record.environment_id != id)
+            {
+                return Err(SetupDiagnostic::new(
+                    "environment_changed",
+                    "The saved computer setup changed",
+                    "Refresh before continuing.",
+                ));
+            }
+        }
+        self.configure_under_lock(store, &lock, journal.environment.request, secrets, progress)
             .await
     }
 }

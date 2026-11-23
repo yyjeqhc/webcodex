@@ -60,8 +60,20 @@ pub(crate) async fn prepare_cloudflared() -> Result<PathBuf, ProductError> {
 /// Interactive user-initiated connection start may download the pinned,
 /// SHA256-verified managed cloudflared binary when no local binary is present.
 /// Unattended boot autostart keeps using `prepare_cloudflared()`.
-pub(crate) async fn prepare_cloudflared_interactive() -> Result<PathBuf, ProductError> {
-    super::cloudflared_service::resolve_cloudflared().await
+pub(crate) async fn prepare_cloudflared_interactive(
+    progress: impl Fn(&'static str),
+) -> Result<PathBuf, ProductError> {
+    super::cloudflared_service::resolve_cloudflared(progress).await
+}
+
+/// Prepare the signed-in user's component for a separately hosted connection.
+pub async fn prepare_user_cloudflare_component() -> Result<(), &'static str> {
+    let binary = prepare_cloudflared_interactive(|_| {})
+        .await
+        .map_err(|error| error.code)?;
+    verify_supported_binary(&binary, Instant::now() + VERSION_TIMEOUT)
+        .await
+        .map_err(|error| error.code)
 }
 
 pub(crate) fn valid_quick_origin(origin: &str) -> bool {
@@ -126,7 +138,14 @@ impl CloudflareTransport {
             .arg(&config)
             .arg("--no-autoupdate");
         if let Some(ingress) = ingress {
-            command.arg("--url").arg(ingress);
+            // Quick MCP onboarding uses TLS over TCP so networks that block
+            // QUIC do not consume its startup window in UDP retry backoff.
+            // Named deployments retain cloudflared's existing auto policy.
+            command
+                .arg("--protocol")
+                .arg("http2")
+                .arg("--url")
+                .arg(ingress);
         } else {
             let token_file = token_file
                 .ok_or_else(|| transport_error("Cloudflare tunnel token file is missing"))?;
@@ -166,7 +185,7 @@ impl CloudflareTransport {
                 if named {
                     facts.connected
                 } else {
-                    facts.quick_url.is_some()
+                    facts.quick_url.is_some() && facts.connected
                 }
             });
             if ready {
@@ -254,8 +273,15 @@ fn isolated_command_with(
 }
 
 fn spawn_drained(command: &mut Command) -> Result<(ManagedChild, Arc<OutputState>), ProductError> {
-    let mut child = ManagedChild::spawn(command)
-        .map_err(|_| transport_error("Could not start the Cloudflare executable"))?;
+    let mut child = ManagedChild::spawn_with_options(
+        command,
+        webcodex_process::SpawnOptions {
+            #[cfg(windows)]
+            windows_creation_flags: windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
+            ..Default::default()
+        },
+    )
+    .map_err(|_| transport_error("Could not start the Cloudflare executable"))?;
     let stdout = child
         .child_mut()
         .stdout
@@ -409,14 +435,22 @@ async fn cloudflared_binary_version_until(
         .lock()
         .ok()
         .and_then(|facts| facts.version)
-        .ok_or_else(|| transport_error("Cloudflare executable did not report a supported version"))
+        .ok_or_else(|| {
+            ProductError::new(
+                "cloudflare_version_unsupported",
+                "Cloudflare executable did not report a supported version",
+                Some("Update cloudflared and reconnect."),
+            )
+        })
 }
 
 async fn verify_supported_binary(binary: &Path, deadline: Instant) -> Result<(), ProductError> {
     let deadline = deadline.min(Instant::now() + VERSION_TIMEOUT);
     if cloudflared_binary_version_until(binary, deadline).await? < MIN_VERSION {
-        return Err(transport_error(
+        return Err(ProductError::new(
+            "cloudflare_version_unsupported",
             "Cloudflare requires cloudflared 2025.4.0 or later",
+            Some("Update cloudflared and reconnect."),
         ));
     }
     Ok(())

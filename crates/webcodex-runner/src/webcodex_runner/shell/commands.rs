@@ -284,7 +284,7 @@ pub(crate) fn configured_python_build_job_command(
     if Instant::now() >= deadline {
         return Err("build_timeout".into());
     }
-    let mut child = ManagedChild::spawn(&mut probe).map_err(|_| unavailable())?;
+    let mut child = ManagedChild::spawn_background(&mut probe).map_err(|_| unavailable())?;
     let probe_deadline = deadline.min(Instant::now() + Duration::from_secs(5));
     let available = loop {
         match child.try_wait() {
@@ -364,7 +364,8 @@ pub(crate) fn probe_ruff_formatter(
     if stop_requested.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
         return Err("format_cancelled");
     }
-    let mut child = ManagedChild::spawn(&mut probe).map_err(|_| "format_tool_unavailable")?;
+    let mut child =
+        ManagedChild::spawn_background(&mut probe).map_err(|_| "format_tool_unavailable")?;
     let available = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.success(),
@@ -433,7 +434,7 @@ fn configured_python_module_job_command(
     if stop_requested.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
         return Err(unavailable());
     }
-    let mut child = ManagedChild::spawn(&mut probe).map_err(|_| unavailable())?;
+    let mut child = ManagedChild::spawn_background(&mut probe).map_err(|_| unavailable())?;
     let deadline = Instant::now() + Duration::from_secs(5);
     let available = loop {
         match child.try_wait() {

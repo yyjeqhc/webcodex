@@ -277,6 +277,7 @@ impl AppState {
                 };
                 if self.operations.current().is_some()
                     || self.operations.generation() != start_op_generation
+                    || observed.environment.environment_id != environment_id
                     || core.config.persistent_environment.as_deref()
                         != Some(environment_id.as_str())
                 {
@@ -418,7 +419,8 @@ impl AppState {
         }
         let cancellation =
             CancellationContext::new(CancellationSignal::new(), self.shutdown_signal.clone());
-        let probe = {
+        let start_op_generation = self.operations.generation();
+        let mut probe = {
             let slot = self.core.lock().await;
             let Some(core) = slot.as_ref() else {
                 return Ok(self.get_state());
@@ -428,24 +430,21 @@ impl AppState {
             };
             probe
         };
-        let observation = WebCodexAdapter::chatgpt_activity_with_binary(
-            &probe.webcodex,
-            &probe.identity,
-            &cancellation,
-        )
-        .await;
+        let observation = probe
+            .adapter
+            .chatgpt_activity(&probe.identity, &cancellation)
+            .await;
         cancellation.check()?;
-        let Ok(last_meaningful_activity_at_ms) = observation else {
-            return Ok(self.get_state());
-        };
-        if self.operations.current().is_some() {
-            return Ok(self.get_state());
-        }
         let mut slot = self.core.lock().await;
         let Some(core) = slot.as_mut() else {
             return Ok(self.get_state());
         };
-        core.apply_chatgpt_activity_observation(&probe.identity, last_meaningful_activity_at_ms)
+        if self.operations.current().is_some()
+            || self.operations.generation() != start_op_generation
+        {
+            return Ok(self.get_state());
+        }
+        core.apply_chatgpt_activity_observation(&probe, observation)
     }
 
     pub async fn resume_saved_runtime(&self) -> DesktopResult<DesktopStateSnapshot> {

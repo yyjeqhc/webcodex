@@ -36,6 +36,19 @@ beforeEach(() => {
 });
 
 describe("explicit environment setup", () => {
+  it("starts one projectless user environment from the welcome screen", async () => {
+    const {container} = mount(state, false);
+    const start = screen.getByRole("button", {name: "Get started"});
+    expect(container.querySelectorAll("button")).toHaveLength(1);
+    fireEvent.click(start);
+    fireEvent.click(start);
+    await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledTimes(1));
+    expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "create", expectedLocalTarget: {kind: "fresh"}, serviceScope: "user", runner: true, projectPath: null,
+    }));
+    expect(picker.open).not.toHaveBeenCalled();
+  });
+
   it("passes an optional Runner name without changing identity or enabling a project", async () => {
     const {container}=mount(); action(container,"choose-local-setup");
     fireEvent.change(screen.getByLabelText("Runner name (optional)"), {target:{value:" My laptop "}});

@@ -113,7 +113,7 @@ impl RemoteShellTransport {
             )
         })?;
         #[cfg(windows)]
-        let mut child = ManagedChild::spawn(&mut command).map_err(|error| {
+        let mut child = ManagedChild::spawn_background(&mut command).map_err(|error| {
             ShellError::new(
                 "ssh_persistent_shell_spawn_failed",
                 format!("failed to spawn managed remote persistent shell: {error}"),

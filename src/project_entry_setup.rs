@@ -1026,7 +1026,7 @@ pub(super) fn read_project_agent_token(path: &Path) -> Result<String, ProductErr
     Ok(value)
 }
 
-fn read_private_value_with_code(path: &Path, code: &str) -> Result<String, ProductError> {
+fn read_private_value_with_code(path: &Path, code: &'static str) -> Result<String, ProductError> {
     #[cfg(windows)]
     let protected = super::windows_private_state::read_private_bytes(path).and_then(|bytes| {
         String::from_utf8(bytes)

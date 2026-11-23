@@ -22,6 +22,20 @@ mod webcodex_desktop_lib {
     pub fn desktop_build_info() {}
     pub fn run() {}
 }
+mod webcodex_environment {
+    pub mod service {
+        pub fn run_desktop_user_task(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+            match args {
+                [worker, argument, flag]
+                    if worker == "fixture-worker"
+                        && argument == "argument with spaces"
+                        && flag == "--fixture-flag" => Ok(37),
+                _ => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput, "private fixture diagnostic").into()),
+            }
+        }
+    }
+}
 mod serde_json {
     pub fn to_string(_: &()) -> Result<String, ()> { Ok("{}".into()) }
 }
@@ -48,6 +62,26 @@ mod serde_json {
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
                     self.assertEqual(result.returncode, 0)
                     self.assertEqual(json.loads(result.stdout), {})
+                    # The same GUI entry point hosts user-session services.
+                    # Verify exact argv forwarding and retain the worker exit
+                    # code instead of falling through to the Desktop window.
+                    worker = subprocess.run(
+                        [str(program), "--user-task", "fixture-worker",
+                         "argument with spaces", "--fixture-flag"],
+                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, timeout=10)
+                    self.assertEqual(worker.returncode, 37)
+                    self.assertEqual(worker.stdout, b"")
+                    self.assertEqual(worker.stderr, b"")
+                    rejected = subprocess.run(
+                        [str(program), "--user-task", "private fixture argument"],
+                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, timeout=10)
+                    self.assertEqual(rejected.returncode, 78)
+                    self.assertEqual(rejected.stdout, b"")
+                    self.assertEqual(
+                        rejected.stderr.strip(),
+                        b"WebCodex could not validate or start its user task")
 
     @unittest.skipUnless(shutil.which("npm") and shutil.which("rustc"), "npm and rustc are required")
     def test_direct_production_cargo_build_rebuilds_dist_and_failed_build_is_fatal(self):

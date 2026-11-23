@@ -156,7 +156,10 @@ fn stopped(path: &Path) -> SetupResultValue<()> {
 async fn probe_installed(path: &Path, name: &str) -> SetupResultValue<MachineBuildInfo> {
     use tokio::io::AsyncReadExt;
     let probe = async {
-        let mut child = tokio::process::Command::new(path)
+        let mut command = tokio::process::Command::new(path);
+        #[cfg(windows)]
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+        let mut child = command
             .arg("--build-info-json")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())

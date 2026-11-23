@@ -32,7 +32,7 @@ ChatGPT Dot 目前是 best-effort，取决于 ChatGPT 为该 Dot 提供的插件
 
 ## ChatGPT：临时 `share`
 
-显式 `share` 支持 Linux、macOS 与 Windows，并由当前前台进程持有临时单项目环境。Windows x64 可直接使用 managed 默认 Cloudflare Quick Tunnel；固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 需要受信任的显式/`PATH` `cloudflared`。原生 OpenAI Tunnel 支持 Windows x64/arm64。
+显式 `share` 支持 Linux、macOS 与 Windows，并由当前前台进程持有临时单项目环境。Windows x64 可直接使用 managed 默认 Cloudflare Quick Tunnel；Windows ARM64 在系统确认支持 x64 用户程序时使用相同的已验证 x64 组件。其他 ARM64 系统需要受信任的兼容 `cloudflared`。原生 OpenAI Tunnel 支持 Windows x64/arm64。
 
 默认临时公网路径会复用显式指定/`PATH` 中的 `cloudflared`，否则由 WebCodex 自动下载并校验固定的 managed 副本，然后执行：
 

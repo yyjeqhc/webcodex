@@ -87,7 +87,7 @@ pub async fn run_cloudflare_tunnel_with_stop(
     let lifecycle = async {
         let binary = prepare_cloudflared()
             .await
-            .map_err(|_| "cloudflare_binary_unavailable".to_owned())?;
+            .map_err(|error| error.code.to_owned())?;
         let deadline = Instant::now() + Duration::from_secs(60);
         let (origin, mut transport) = match &profile.provider {
             TunnelProvider::CloudflareNamed { public_origin, .. } => (

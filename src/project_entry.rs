@@ -99,7 +99,7 @@ impl ProjectCommandOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct ProductError {
-    pub code: String,
+    pub code: &'static str,
     pub message: String,
     pub retryable: bool,
     pub user_action_required: bool,
@@ -107,9 +107,9 @@ pub(crate) struct ProductError {
 }
 
 impl ProductError {
-    fn new(code: &str, message: impl Into<String>, next_action: Option<&str>) -> Self {
+    fn new(code: &'static str, message: impl Into<String>, next_action: Option<&str>) -> Self {
         Self {
-            code: code.to_string(),
+            code,
             message: message.into(),
             retryable: matches!(code, "server_unreachable" | "agent_offline"),
             user_action_required: true,

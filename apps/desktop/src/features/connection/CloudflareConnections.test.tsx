@@ -12,7 +12,7 @@ const clipboard=vi.hoisted(()=>({writeText:vi.fn()}));
 vi.mock("../../lib/desktop-api",()=>({desktopApi:api}));
 vi.mock("@tauri-apps/plugin-clipboard-manager",()=>clipboard);
 function wrap(content:React.ReactNode) { return <DesktopMantineProvider><LocaleProvider>{content}</LocaleProvider></DesktopMantineProvider>; }
-const status:CloudflareConnectionStatus={profile_id:"cf",server_instance_id:"server-selected",process_generation:7,lifecycle:"running",public_origin:"https://current.example",oauth_configured:false,observed_authorization:false,configured_revision:4,applied_revision:4,local_target:"http://127.0.0.1:8900",reason_code:null};
+const status:CloudflareConnectionStatus={profile_id:"cf",configuration_id:"cf-version",server_instance_id:"server-selected",process_generation:7,lifecycle:"running",public_origin:"https://current.example",oauth_configured:false,observed_authorization:false,configured_revision:4,applied_revision:4,local_target:"http://127.0.0.1:8900",reason_code:null};
 beforeEach(()=>{vi.resetAllMocks();localStorage.setItem("webcodex.desktop.locale","en-US");api.saveTunnelProfile.mockResolvedValue({});api.cloudflareConnection.mockResolvedValue(status);clipboard.writeText.mockResolvedValue(undefined);});
 
 describe("Cloudflare connection configuration",()=>{
@@ -25,7 +25,7 @@ describe("Cloudflare connection configuration",()=>{
     fireEvent.change(screen.getByLabelText("Tunnel ID"),{target:{value:"named-id"}});
     fireEvent.change(screen.getByLabelText("Fixed HTTPS origin"),{target:{value:"https://mcp.example/"}});
     fireEvent.change(screen.getByLabelText("Tunnel token"),{target:{value:"private-named-token"}});
-    fireEvent.click(screen.getByRole("button",{name:"Save and apply"}));
+    fireEvent.click(screen.getByRole("button",{name:"Save"}));
     await waitFor(()=>expect(saved?.provider).toEqual({kind:"cloudflare_named",public_origin:"https://mcp.example",tunnel_id:"named-id"}));
     expect(saved).toMatchObject({cloudflare_token:"private-named-token",api_key:null,host_mode:"embedded",expected_revision:null});
     expect(screen.getByLabelText("Tunnel token")).toHaveValue("");
@@ -39,7 +39,7 @@ describe("Cloudflare connection configuration",()=>{
     expect(screen.queryByLabelText("API key")).toBeNull();expect(screen.queryByLabelText("Tunnel ID")).toBeNull();expect(screen.queryByLabelText("Tunnel token")).toBeNull();
     expect(screen.getByText(/addresses change on reconnect/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"),{target:{value:"Quick"}});
-    fireEvent.click(screen.getByRole("button",{name:"Save and apply"}));
+    fireEvent.click(screen.getByRole("button",{name:"Save"}));
     await waitFor(()=>expect(saved?.provider).toEqual({kind:"cloudflare_quick"}));
     expect(saved).toMatchObject({cloudflare_token:null,api_key:null,tunnel_id:"",oauth_dynamic_registration_enabled:false});
   });
@@ -47,7 +47,7 @@ describe("Cloudflare connection configuration",()=>{
     const onSetup=vi.fn(),onClose=vi.fn();
     render(wrap(<ConnectionEditor profile={null} persistentLocal={false} onState={vi.fn()} onClose={onClose} onSetup={onSetup} />));
     selectOption(screen.getByRole("combobox", { name: "Connection provider" }), "cloudflare_quick");
-    expect(screen.getByRole("button",{name:"Save and apply"})).toBeDisabled();
+    expect(screen.getByRole("button",{name:"Save"})).toBeDisabled();
     fireEvent.click(screen.getByRole("button",{name:"Connect Gemini"}));
     expect(onSetup).toHaveBeenCalledOnce();expect(onClose).toHaveBeenCalledOnce();expect(api.saveTunnelProfile).not.toHaveBeenCalled();
   });
@@ -57,7 +57,7 @@ describe("Cloudflare connection configuration",()=>{
     api.saveTunnelProfile.mockImplementation(async request=>{saved=structuredClone(request);return {};});
     render(wrap(<ConnectionEditor profile={profile} persistentLocal onState={vi.fn()} onClose={vi.fn()} />));
     expect(screen.getByLabelText("Tunnel token")).toHaveValue("");expect(screen.getByRole("combobox", { name: "Connection provider" })).toBeDisabled();expect(screen.getByLabelText("Tunnel ID")).toBeDisabled();
-    fireEvent.click(screen.getByRole("button",{name:"Save and apply"}));
+    fireEvent.click(screen.getByRole("button",{name:"Save"}));
     await waitFor(()=>expect(saved).toMatchObject({id:"cf",expected_revision:4,cloudflare_token:null}));
   });
   it("omits an untouched DCR policy on edit and explains explicit revocation", async () => {
@@ -65,12 +65,12 @@ describe("Cloudflare connection configuration",()=>{
     render(wrap(<ConnectionEditor profile={profile} persistentLocal onState={vi.fn()} onClose={vi.fn()} />));
     const policy = screen.getByRole("checkbox", {name: "Allow automatic OAuth client registration"});
     expect(policy).toBeChecked();
-    fireEvent.click(screen.getByRole("button", {name: "Save and apply"}));
+    fireEvent.click(screen.getByRole("button", {name: "Save"}));
     await waitFor(() => expect(policy).toBeEnabled());
     expect(api.saveTunnelProfile.mock.calls[0][0]).not.toHaveProperty("oauth_dynamic_registration_enabled");
     fireEvent.click(policy);
     expect(screen.getByText(/revokes dynamically registered clients/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", {name: "Save and apply"}));
+    fireEvent.click(screen.getByRole("button", {name: "Save"}));
     await waitFor(() => expect(api.saveTunnelProfile.mock.lastCall?.[0]).toMatchObject({oauth_dynamic_registration_enabled:false,expected_revision:profile.revision}));
   });
 });
@@ -161,7 +161,7 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     api.cloudflareConnection.mockImplementation(async request => request.action === "stop" ? {...status,lifecycle:"stopped",public_origin:null} : status);
     mount();
     fireEvent.click(await screen.findByRole("button",{name:"Reconnect"}));
-    await waitFor(()=>expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"start",profile_id:"cf",server_instance_id:"server-selected",expected_revision:4}));
+    await waitFor(()=>expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"start",profile_id:"cf",server_instance_id:"server-selected",expected_revision:4,expected_generation:7,expected_configuration_id:"cf-version"}));
     expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"stop",profile_id:"cf",server_instance_id:"server-selected",process_generation:7});
   });
   it("clears the old Quick address and authorization observation before reconnect completes",async()=>{
@@ -175,7 +175,7 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     expect(screen.queryByText("https://current.example/mcp")).toBeNull();
     expect(screen.queryByText("OAuth authorization observed")).toBeNull();
     completeStop({...status,lifecycle:"stopped",public_origin:null});
-    await waitFor(()=>expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"start",profile_id:"cf",server_instance_id:"server-selected",expected_revision:4}));
+    await waitFor(()=>expect(api.cloudflareConnection).toHaveBeenCalledWith({action:"start",profile_id:"cf",server_instance_id:"server-selected",expected_revision:4,expected_generation:7,expected_configuration_id:"cf-version"}));
   });
   it("withdraws the address and retains fenced Stop/Reconnect controls while forwarding is disconnected",async()=>{
     api.cloudflareConnection.mockResolvedValue({...status,lifecycle:"disconnected",reason_code:"network_disconnected",oauth_configured:true,observed_authorization:true});
@@ -241,12 +241,11 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     expect(screen.queryByText("MCP endpoint ready")).toBeNull();
   });
   it("explains where the Gemini URL comes from and reveals it only after starting and verifying Cloudflare", async () => {
-    api.cloudflareConnection.mockImplementation(async request => request.action === "status"
-      ? {...status, lifecycle: "stopped", public_origin: null, registration_available: false}
-      : {...status, lifecycle: "running", registration_available: true});
+    api.cloudflareConnection.mockResolvedValueOnce({...status, lifecycle: "stopped", public_origin: null, registration_available: false})
+      .mockResolvedValue({...status, lifecycle: "running", registration_available: true});
     render(card());
     expect(await screen.findByText("No verified public MCP address yet")).toBeInTheDocument();
-    expect(screen.getByText(/Cloudflare connection is stopped/)).toBeInTheDocument();
+    expect(await screen.findByText(/Connect Gemini to prepare a public MCP address/)).toBeInTheDocument();
     expect(screen.queryByText("https://current.example/mcp")).toBeNull();
     expect(screen.queryByRole("button", {name: "Copy MCP address"})).toBeNull();
     fireEvent.click(screen.getByRole("button", {name: "Start public connection"}));
@@ -255,16 +254,24 @@ describe("Cloudflare private native controls and OAuth handoff",()=>{
     fireEvent.click(screen.getByRole("button", {name: "Copy MCP address"}));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("https://current.example/mcp"));
     expect(api.cloudflareConnection).toHaveBeenCalledWith({
-      action: "start", profile_id: "cf", server_instance_id: "server-selected", expected_revision: 4,
+      action: "start", profile_id: "cf", server_instance_id: "server-selected", expected_revision: 4, expected_generation: 7, expected_configuration_id: "cf-version",
     });
   });
-  it("shows unverified Cloudflare origins only as candidates, never as a ready Gemini handoff", async () => {
+  it("withholds the observed address until public discovery verifies it", async () => {
     api.cloudflareConnection.mockResolvedValue({...status, registration_available: false, reason_code: "cloudflare_discovery_pending"});
     render(card());
     expect(await screen.findByText("No verified public MCP address yet")).toBeInTheDocument();
-    expect(screen.getByText(/Cloudflare reported an address, but the HTTPS\/OAuth checks have not passed/)).toBeInTheDocument();
+    expect(screen.queryByText("https://current.example/mcp")).toBeNull();
     expect(screen.queryByRole("button", {name: "Copy MCP address"})).toBeNull();
     expect(screen.queryByRole("button", {name: "Open Gemini"})).toBeNull();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+  });
+  it("rechecks the generation at clipboard handoff", async () => {
+    api.cloudflareConnection.mockResolvedValueOnce({...status, registration_available:true})
+      .mockResolvedValue({...status, process_generation:8, public_origin:null, registration_available:false});
+    render(card());
+    fireEvent.click(await screen.findByRole("button", {name:"Copy MCP address"}));
+    await waitFor(() => expect(screen.queryByText("https://current.example/mcp")).toBeNull());
     expect(clipboard.writeText).not.toHaveBeenCalled();
   });
   it("provides a concrete Runtime owner-repair reason instead of implying that a public URL exists", async () => {

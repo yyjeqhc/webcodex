@@ -265,13 +265,7 @@ impl SshConnectionPool {
         if !cfg!(any(unix, windows)) {
             return false;
         }
-        ssh_shell_probe_available(
-            Command::new(ssh_executable())
-                .arg("-V")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status(),
-        )
+        ssh_shell_probe_available(probe_ssh_version(std::ffi::OsStr::new(ssh_executable())))
     }
 
     /// Whether this host can open a named SSH persistent shell. This is separate
@@ -281,11 +275,7 @@ impl SshConnectionPool {
         if !cfg!(any(unix, windows)) {
             return false;
         }
-        Command::new(ssh_executable())
-            .arg("-V")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
+        probe_ssh_version(std::ffi::OsStr::new(ssh_executable()))
             .is_ok_and(|status| status.success())
     }
 
@@ -1039,6 +1029,26 @@ fn ssh_executable() -> &'static str {
     }
 }
 
+/// Both startup capability checks share the same noninteractive launch path.
+/// The program argument also lets the native inventory regression observe its
+/// console without depending on a particular OpenSSH installation.
+pub(super) fn probe_ssh_version(program: &std::ffi::OsStr) -> std::io::Result<ExitStatus> {
+    let mut command = Command::new(program);
+    command
+        .arg("-V")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        ManagedChild::spawn_background(&mut command)?.wait()
+    }
+    #[cfg(not(windows))]
+    {
+        command.status()
+    }
+}
+
 fn ssh_shell_probe_available(status: std::io::Result<ExitStatus>) -> bool {
     #[cfg(unix)]
     {
@@ -1160,7 +1170,7 @@ fn spawn_piped_ssh_child(command: &mut Command) -> std::io::Result<PipedSshChild
     }
     #[cfg(windows)]
     {
-        ManagedChild::spawn(command)
+        ManagedChild::spawn_background(command)
     }
 }
 

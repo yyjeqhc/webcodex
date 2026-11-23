@@ -1,0 +1,237 @@
+{
+    "Candidate":  "5c4acefe36947adcb6150fa28b816f9c6233bbb3",
+    "Outcome":  "installed_verified_runtime_acceptance_deferred_by_user_shutdown",
+    "ObservedUtc":  "2026-11-22T16:07:50.2703026Z",
+    "BuildJob":  "wc_job_eNv_OOv7nW62iOZw",
+    "InstallJob":  "wc_job_JgnHmY_JtMo9q39I",
+    "InstallExitCode":  0,
+    "InstallFlow":  "Normal NSIS Add/Reinstall into existing directory; Run option unchecked; normal Explorer shortcut launch after completion",
+    "Package":  {
+                    "Candidate":  "5c4acefe36947adcb6150fa28b816f9c6233bbb3",
+                    "SourceClean":  true,
+                    "Installer":  "E:\\git\\webcodex\\target\\desktop-local-dist\\webcodex-desktop-local-5c4acefe3694-v0.5.0-win32-x64-setup.exe",
+                    "InstallerSha256":  "5adcf2c63657fea9975a6f3a2f55f11851e49d5a6c85d403486af294868b86a9",
+                    "Payload":  "E:\\git\\webcodex\\target\\desktop-acceptance-20261122\\payload-5c4acefe3694",
+                    "Components":  [
+                                       {
+                                           "Binary":  "WebCodex.exe",
+                                           "Sha256":  "3a2df567b3fb28337221411b1503c6b8142a7b23ec979b8853d62acddd046ff9",
+                                           "PeSubsystem":  2,
+                                           "BuildInfo":  {
+                                                             "schema_version":  1,
+                                                             "binary":  "webcodex-desktop",
+                                                             "version":  "0.5.0",
+                                                             "git_commit":  "5c4acefe36947adcb6150fa28b816f9c6233bbb3",
+                                                             "git_dirty":  false,
+                                                             "built_at":  "1795362946",
+                                                             "target":  "x86_64-pc-windows-msvc",
+                                                             "architecture":  "x86_64",
+                                                             "desktop_runtime_contract":  {
+                                                                                              "min_generation":  1,
+                                                                                              "max_generation":  1
+                                                                                          },
+                                                             "agent_protocol_generation":  null,
+                                                             "environment_data_format":  1
+                                                         }
+                                       },
+                                       {
+                                           "Binary":  "webcodex-runtime\\webcodex.exe",
+                                           "Sha256":  "61474270684d85544887bd1241c7beef4c6ca79061341fefa04157ee7d7b9a03",
+                                           "PeSubsystem":  3,
+                                           "BuildInfo":  {
+                                                             "schema_version":  1,
+                                                             "binary":  "webcodex",
+                                                             "version":  "0.5.0",
+                                                             "git_commit":  "5c4acefe36947adcb6150fa28b816f9c6233bbb3",
+                                                             "git_dirty":  false,
+                                                             "built_at":  "1795362946",
+                                                             "target":  "x86_64-pc-windows-msvc",
+                                                             "architecture":  "x86_64",
+                                                             "desktop_runtime_contract":  {
+                                                                                              "min_generation":  1,
+                                                                                              "max_generation":  1
+                                                                                          },
+                                                             "agent_protocol_generation":  null,
+                                                             "environment_data_format":  1,
+                                                             "windows_guarded_bootstrap_contract":  1
+                                                         }
+                                       },
+                                       {
+                                           "Binary":  "webcodex-runtime\\webcodex-server.exe",
+                                           "Sha256":  "a505f5f0f1f3011345afad675f8f35905f78503184038823ee9f80850060f603",
+                                           "PeSubsystem":  3,
+                                           "BuildInfo":  {
+                                                             "schema_version":  1,
+                                                             "binary":  "webcodex-server",
+                                                             "version":  "0.5.0",
+                                                             "git_commit":  "5c4acefe36947adcb6150fa28b816f9c6233bbb3",
+                                                             "git_dirty":  false,
+                                                             "built_at":  "1795362946",
+                                                             "target":  "x86_64-pc-windows-msvc",
+                                                             "architecture":  "x86_64",
+                                                             "desktop_runtime_contract":  {
+                                                                                              "min_generation":  1,
+                                                                                              "max_generation":  1
+                                                                                          },
+                                                             "agent_protocol_generation":  2,
+                                                             "environment_data_format":  1
+                                                         }
+                                       },
+                                       {
+                                           "Binary":  "webcodex-runtime\\webcodex-runner.exe",
+                                           "Sha256":  "e8b748126fbd4e2bb4e5e6ba1a4210822387e9f53ff532dd408ca22bef241a41",
+                                           "PeSubsystem":  3,
+                                           "BuildInfo":  {
+                                                             "schema_version":  1,
+                                                             "binary":  "webcodex-runner",
+                                                             "version":  "0.5.0",
+                                                             "git_commit":  "5c4acefe36947adcb6150fa28b816f9c6233bbb3",
+                                                             "git_dirty":  false,
+                                                             "built_at":  "1795362946",
+                                                             "target":  "x86_64-pc-windows-msvc",
+                                                             "architecture":  "x86_64",
+                                                             "desktop_runtime_contract":  {
+                                                                                              "min_generation":  1,
+                                                                                              "max_generation":  1
+                                                                                          },
+                                                             "agent_protocol_generation":  2,
+                                                             "environment_data_format":  1
+                                                         }
+                                       }
+                                   ],
+                    "ObservedUtc":  "2026-11-22T16:03:42.0046823Z"
+                },
+    "Installed":  {
+                      "Candidate":  "5c4acefe36947adcb6150fa28b816f9c6233bbb3",
+                      "InstalledMatchesActualPackage":  true,
+                      "Components":  [
+                                         {
+                                             "Binary":  "WebCodex.exe",
+                                             "Sha256":  "3a2df567b3fb28337221411b1503c6b8142a7b23ec979b8853d62acddd046ff9"
+                                         },
+                                         {
+                                             "Binary":  "webcodex-runtime\\webcodex.exe",
+                                             "Sha256":  "61474270684d85544887bd1241c7beef4c6ca79061341fefa04157ee7d7b9a03"
+                                         },
+                                         {
+                                             "Binary":  "webcodex-runtime\\webcodex-server.exe",
+                                             "Sha256":  "a505f5f0f1f3011345afad675f8f35905f78503184038823ee9f80850060f603"
+                                         },
+                                         {
+                                             "Binary":  "webcodex-runtime\\webcodex-runner.exe",
+                                             "Sha256":  "e8b748126fbd4e2bb4e5e6ba1a4210822387e9f53ff532dd408ca22bef241a41"
+                                         }
+                                     ],
+                      "ControllerPreserved":  true,
+                      "ObservedUtc":  "2026-11-22T16:06:14.7235127Z"
+                  },
+    "MainDirtyCount":  23,
+    "MainDirtyAggregateSha256":  "737de75f1df128700e45f6bf8971e415a9fc612dd427aa8b790d7811ee54f3d4",
+    "OriginalSourceChangesPreserved":  true,
+    "ControllerPreserved":  true,
+    "InstalledProcesses":  [
+                               {
+                                   "Pid":  46564,
+                                   "Parent":  17208,
+                                   "Image":  "WebCodex.exe",
+                                   "CreatedUtc":  "2026-11-22T16:06:51.1948180Z"
+                               }
+                           ],
+    "RuntimeStartClicked":  false,
+    "FinalRuntimeRestartTested":  false,
+    "FinalGeminiQuickForwardingTested":  false,
+    "FinalGeminiDiscoveryTested":  false,
+    "FinalCloseReopenTested":  false,
+    "D24Installed":  false,
+    "InitialD24Stop":  {
+                           "ExitCode":  1,
+                           "Cause":  "unproven_original_output_not_preserved",
+                           "OldOwnedInstanceRemainedRunning":  true
+                       },
+    "ReconciledD24Stop":  {
+                              "Candidate":  "d24ca981cbf2772fbd21f3e0b8f24a3f0de7036c",
+                              "StartedUtc":  "2026-11-22T15:55:02.3837128Z",
+                              "EndedUtc":  "2026-11-22T15:55:11.0170033Z",
+                              "CliSha256":  "b471c362891db6ec1484ffbc06322955a5e50d219a8652dc3fc8e9367c85149c",
+                              "CliExitCode":  0,
+                              "SafeReasonCodes":  [
+
+                                                  ],
+                              "PrivateOutputPreserved":  true,
+                              "CaptureBytes":  {
+                                                   "Stdout":  244,
+                                                   "Stderr":  0
+                                               },
+                              "Failure":  null,
+                              "Processes":  [
+                                                {
+                                                    "Pid":  56348,
+                                                    "CreatedUtc":  "2026-11-22T15:10:59.4951118Z",
+                                                    "Exited":  true,
+                                                    "ExitTimeUtc":  "2026-11-22T15:55:10.5770275Z",
+                                                    "ExitCode":  1067
+                                                },
+                                                {
+                                                    "Pid":  53276,
+                                                    "CreatedUtc":  "2026-11-22T15:10:59.5442846Z",
+                                                    "Exited":  true,
+                                                    "ExitTimeUtc":  "2026-11-22T15:55:10.5882751Z",
+                                                    "ExitCode":  0
+                                                }
+                                            ],
+                              "TaskState":  3,
+                              "Instances":  0,
+                              "ControllerPreserved":  true,
+                              "Method":  "New package CLI environment stop server; original record unmodified; original exact host/worker kernel handles retained until exit"
+                          },
+    "ReconciledStopExecutable":  "E:\\git\\webcodex\\target\\desktop-acceptance-20261122\\payload-d24ca981cbf2\\webcodex-runtime\\webcodex.exe",
+    "ReconciledStopArgv":  [
+                               "environment",
+                               "stop",
+                               "server",
+                               "--environment-dir",
+                               "C:\\Users\\yyjeqhc\\AppData\\Roaming\\webcodex\\environment",
+                               "--json"
+                           ],
+    "ConsoleMonitorJob":  "wc_job_g9brS9BQ9peAL8kO",
+    "ConsoleMonitor":  {
+                           "started":  "2026-11-22T16:03:33.0842065Z",
+                           "ended":  "2026-11-22T16:07:49.1341479Z",
+                           "finishedBySignal":  true,
+                           "samples":  22100,
+                           "newVisibleConsoleCount":  0,
+                           "observations":  [
+                                                {
+                                                    "Hwnd":  1902644,
+                                                    "ProcessId":  15168,
+                                                    "ClassName":  "CASCADIA_HOSTING_WINDOW_CLASS",
+                                                    "ElapsedMs":  1,
+                                                    "Baseline":  true
+                                                }
+                                            ]
+                       },
+    "PreviousD24ConsoleMonitor":  {
+                                      "started":  "2026-11-22T15:44:59.5183417Z",
+                                      "ended":  "2026-11-22T15:57:02.9628051Z",
+                                      "finishedBySignal":  true,
+                                      "samples":  65427,
+                                      "newVisibleConsoleCount":  0,
+                                      "observations":  [
+                                                           {
+                                                               "Hwnd":  1902644,
+                                                               "ProcessId":  15168,
+                                                               "ClassName":  "CASCADIA_HOSTING_WINDOW_CLASS",
+                                                               "ElapsedMs":  2,
+                                                               "Baseline":  true
+                                                           }
+                                                       ]
+                                  },
+    "NativePathFixtureCases":  54,
+    "NativeLifecycleFixtureCases":  15,
+    "PendingCleanup":  {
+                           "TemporaryProjectId":  "webcodex-acceptance-7ef86017942e-1f6c62a9",
+                           "TemporaryProjectPath":  "E:\\git\\webcodex-acceptance-7ef86017942e",
+                           "Reason":  "User requested imminent shutdown before cleanup; original tunnel-smoke project remains preserved"
+                       },
+    "Scope":  "No credentials, environment configuration, raw private CLI output, or user logs included"
+}

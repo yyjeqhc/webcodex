@@ -52,7 +52,7 @@ try {
       if (width === 1280 || width === 390) await page.locator('#desktop-settings-locale').selectOption('zh-CN');
       await page.locator('[data-webcodex-action="navigate-home"]').click();
       assert.equal(await page.locator('.readiness-banner').count(), 0, 'healthy Home avoids duplicate readiness facts');
-      assert(await page.locator('.dashboard-handoff').isVisible());
+      for (const client of ['ChatGPT', 'Gemini']) assert(await page.locator('.dashboard-shortcuts').getByRole('button', {name:new RegExp(client)}).isVisible());
       assert.equal(await page.locator('.dashboard-activity-link, .workspace-project-table').count(), 0, 'Home leaves inventories to Projects and Activity');
       await bounded(page, `Home ${width} ${theme}`);
       await capture(page, `home-${width}-${theme}`);
@@ -115,7 +115,7 @@ try {
           await capture(page, `activity-${width}-${theme}`);
         }
         if (destination === 'connection') {
-          await page.locator('[data-webcodex-page="connection"] .page-heading-row .primary-button').click();
+          await page.locator('.chatgpt-connection .workspace-section-heading button').click();
           const dialog = page.getByRole('dialog');
           await dialog.locator('#connection-profile-api-key').fill('fixture-only-write-only-key');
           const bounds = await dialog.boundingBox();

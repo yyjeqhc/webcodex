@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "checkpoint": "2bb0297e installed macOS activity repair and Cloudflare admission-lock discovery",
+  "time_basis": "UTC in receipts; native screenshots show UTC+8 local time.",
+  "source": {
+    "git_commit": "2bb0297ee0a8e7c33378b413c7774ce8e45f5758",
+    "git_dirty": false,
+    "version": "0.5.0",
+    "built_at": 1795367784,
+    "target": "aarch64-apple-darwin",
+    "identity_note": "These are compiled source identities. Subsequent acceptance screenshots and the admission-lock repair make the working tree different without changing installed binary build information."
+  },
+  "package": {
+    "filename": "webcodex-desktop-local-2bb0297ee0a8-v0.5.0-darwin-arm64.dmg",
+    "sha256": "a581c8c4d23289ec8e61aeca3100ac71a1423947c7ca580f60c3e6615543c98b",
+    "bytes": 55835569,
+    "official_helper_job": "wc_job_qylJkGBqhwmAQ9JC",
+    "helper_exit_code": 0,
+    "helper_duration_seconds": 394.97,
+    "verification_job": "wc_job_yrIGwpHJGRGgrHmQ",
+    "install_job": "wc_job_GYXFK1PmTk4Y5Q5U",
+    "installed_four_binary_identity_and_hash_match": true,
+    "strict_codesign_passed": true,
+    "signing": "Existing persistent local development identity for App and Runner; CLI and Server retain their valid ad-hoc/linker signatures. This is a local self-signed build, not an Apple-notarized release.",
+    "binary_sha256": {
+      "webcodex-desktop": "e3e989cee3605fcedef9d3070b8d528c734d6f4451730feb6531aacf983c9580",
+      "webcodex": "fe49f0146e64b564c2a59bf21ca60304bd34d46cf9138417b16f0bc6a77ddf03",
+      "webcodex-server": "90c243e9ef4b318ef74a0032e6c8da2c29475fb779662152ef297ff240b9ed81",
+      "webcodex-runner": "fa038888b59d409de12f2de0eae8aff72e3be94b30b0afbc99e134626fa52fd6"
+    }
+  },
+  "runtime": {
+    "server_pid": 89977,
+    "server_instance_id": "88b2cef2-6291-4447-8b3e-82db67388f96",
+    "runner_pid": 89984,
+    "runner_client_id": "device-47cbdf021f154085",
+    "runner_instance_id": "2858d893-05ad-4ff7-924e-c0af1a329aad",
+    "project_id": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+    "registered_projects": 7,
+    "one_desktop_server_runner_pair": true,
+    "original_control_runner_pid": 1578,
+    "original_control_runner_unchanged": true,
+    "seven_static_credential_config_files_unchanged": true,
+    "seven_project_registry_files_unchanged": true
+  },
+  "native_start": {
+    "action": "Native Finder File > Open; one press of Start WebCodex",
+    "at": "2026-11-22T17:30:27Z",
+    "start_attempts": 1
+  },
+  "chatgpt": {
+    "browser": "Microsoft Edge",
+    "app_name": "WebCodex Desktop mini",
+    "app_id": "asdk_app_6b0309961b34819181603639660b6417",
+    "prompt_sent_at": "2026-11-22T17:31:39Z",
+    "fresh_runtime_file_and_command_calls": true,
+    "test_file": "target/desktop-acceptance-20261122/connection-proof.txt",
+    "executable": "/usr/bin/printf",
+    "args": [
+      "desktop-shared-runtime-ok"
+    ],
+    "numeric_exit_code": null,
+    "numeric_exit_note": "Browser did not return a numeric exit code; do not infer zero.",
+    "response_copied_from_native_browser": "WebCodex Desktop mini 本轮三项调用均返回成功。\n\n| 验收项 | 本轮结果 |\n|---|---|\n| Server `git_commit` | `2bb0297ee0a8e7c33378b413c7774ce8e45f5758` |\n| Server `git_dirty` | `false` |\n| Server PID | `89977` |\n| Runner `client_id` | `device-47cbdf021f154085`（在线） |\n| Runner `runner_instance_id` | `2858d893-05ad-4ff7-924e-c0af1a329aad` |\n| 主仓库项目 ID | `agent:device-47cbdf021f154085:webcodex-2eeb7eae` |\n| 命令 stdout | `\"desktop-shared-runtime-ok\\n\"`（按工具返回值记录） |\n| 命令退出码 | 工具未返回 |\n\n`target/desktop-acceptance-20261122/connection-proof.txt` 的完整内容如下。\n\n```text\nWebCodex Desktop acceptance 2026-11-22\nExpected marker: desktop-shared-runtime-ok\nThis file exists only for read-only ChatGPT and Gemini connection checks.\n```",
+    "stdout_caveat": "Copied response confirms the marker, not byte-exact newline behavior.",
+    "retained_action_traces": [
+      {
+        "trace_ref": "a489c725-f973-43f7-9b6f-3ac084df4519",
+        "window_key": "6c44eb524737bfa8a43ed6f3e161e0b8df67aee5090061312a7af69679ffc9c2",
+        "window_source": "openai-session",
+        "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+        "tool_name": "read_files",
+        "method": "toolsCall",
+        "observed_at_ms": 1795368724735,
+        "response_handed_at_ms": 1795368724751,
+        "duration_ms": 16,
+        "status": "success"
+      },
+      {
+        "trace_ref": "ead5995c-d306-4d75-bb87-c8343b7eefeb",
+        "window_key": "6c44eb524737bfa8a43ed6f3e161e0b8df67aee5090061312a7af69679ffc9c2",
+        "window_source": "openai-session",
+        "project": "agent:device-47cbdf021f154085:webcodex-2eeb7eae",
+        "tool_name": "run_process",
+        "method": "toolsCall",
+        "observed_at_ms": 1795368733668,
+        "response_handed_at_ms": 1795368733840,
+        "duration_ms": 172,
+        "status": "success"
+      }
+    ],
+    "trace_scope_note": "Exact main-repository and openai-session window, since the fresh prompt and before GUI reopen; capture_mode off, no private payload read."
+  },
+  "gemini_generation1": {
+    "profile_id": "gemini-quick",
+    "generation": 1,
+    "first_starting_sample_at": "2026-11-22T17:30:27.976Z",
+    "error_sample_at": "2026-11-22T17:31:51.624Z",
+    "starting_to_error_seconds": 83.648,
+    "lifecycle": "error",
+    "reason_code": "cloudflare_configuration_busy",
+    "published_public_origin": null,
+    "registration_available": false,
+    "observed_authorization": false,
+    "observed_tool_call": false,
+    "production_sampler_job": "wc_job_7-07r6cXJ671oOEm",
+    "sampler_exit_code": 0,
+    "sampler_success_note": "The sampler completed successfully while recording an actual connection failure.",
+    "external_public_probe_or_dns_proxy_override": false,
+    "forwarding_probe_success": "Inferred from the exact production code path: activation reaches EnvironmentStore.lock only after verify_forwarding succeeds.",
+    "failure_stage": "Post-forwarding final admission could not acquire the Environment configuration lock.",
+    "timing_limit": "Total startup duration does not separate transport and forwarding stages; it does not prove forwarding alone took more than 60 seconds.",
+    "lock_owner_at_failure": "Not retained. Eight later read-only lsof observations at 17:33:51–17:33:55 found no holder.",
+    "raw_lock_error": "Not retained by the old mapping; cloudflare_configuration_busy could include non-busy storage errors.",
+    "subsequent_process_observation": "No cloudflared process remained; Desktop Server and Runner remained healthy.",
+    "normal_contention_path": "Existing Desktop status projection calls NativeEnvironment::tunnel_status, which holds the same exclusive setup lock while inspecting services. A single try-lock can therefore fail under ordinary reads. This proves a normal contention path, not the exact holder at the recorded failure.",
+    "retries_or_reconnects": 0,
+    "gemini_browser_acceptance_on_this_build": false,
+    "existing_gemini_custom_app": "The prior 9f combat-* custom app was left unchanged; no new 2bb app/OAuth attempt was made on this failed generation."
+  },
+  "native_activity": {
+    "before_start": "Never-checked state shown instead of false empty history.",
+    "after_start": "Home showed a real ChatGPT activity time and seven projects.",
+    "initial_recent_activity_source": "Read-only backend traces confirmed fresh read_workbench_state success in the existing openai-session window at 17:30:28–17:30:33. The CLI ops-windows query was not counted as an OpenAI window.",
+    "project_list": "Missing session summaries displayed Not checked rather than No activity.",
+    "locales_observed": [
+      "zh-CN",
+      "de-DE"
+    ],
+    "restored_locale": "zh-CN",
+    "layout": "Chinese and German Home layouts and project-list unknown-state presentation were visually inspected.",
+    "cold_gui_reopen": {
+      "quit": "Native Quit WebCodex Desktop; subsequent window inventory confirmed GUI absence.",
+      "reopen": "Native Finder File > Open at approximately 17:39:56Z, without a Runtime Start or reconnect.",
+      "gui_pid_before": 89774,
+      "gui_pid_after": 99704,
+      "german_observed_at": "2026-11-22T17:40:08Z",
+      "chinese_restored_at": "2026-11-22T17:40:32Z",
+      "chatgpt_activity_observed_after_reopen": true,
+      "desktop_events_empty_state_correct": true,
+      "registered_projects": 7,
+      "background_identity_confirmation": {
+        "observed_at": "2026-11-22T17:43:26.486781+00:00",
+        "server_pid": 89977,
+        "runner_pid": 89984,
+        "server_instance_unchanged": true,
+        "runner_instance_unchanged": true,
+        "process_start_times_unchanged": true,
+        "control_runner_unchanged": true,
+        "cloudflare_generation": 1,
+        "cloudflare_lifecycle": "error",
+        "cloudflare_reason": "cloudflare_configuration_busy",
+        "implicit_reconnect": false,
+        "running_jobs": 0,
+        "queued_jobs": 0
+      },
+      "gui_started_at": "2026-11-22T17:39:59Z"
+    }
+  },
+  "verification": {
+    "rust_activity_tests": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0
+    },
+    "ci": {
+      "url": "https://github.com/yyjeqhc/webcodex/actions/runs/45048521136",
+      "passed_jobs": 18,
+      "all_success": true,
+      "watch_job": "wc_job_qUDq0VZsSY_uu_tk",
+      "watch_exit_code": 0
+    }
+  },
+  "screenshots": [
+    {
+      "path": "2bb-gemini-first-start-configuration-busy-zh-CN.jpg",
+      "sha256": "f57c63edeec01f2ba4e5a08eee4a81bafc4701fca4844c1d11c9f6d970b71bf9"
+    },
+    {
+      "path": "2bb-chatgpt-browser-file-command-proof.jpg",
+      "sha256": "6db29167213edf20807d5a3cabc1bb5be5055b47a44618214f11a7b3165f3936"
+    },
+    {
+      "path": "2bb-chatgpt-browser-runtime-proof.jpg",
+      "sha256": "290fc0b9de20e1067abb31e593500518e5f99a413d5c44706a2878c9554e1bf6"
+    },
+    {
+      "path": "2bb-home-activity-observed-zh-CN.jpg",
+      "sha256": "6e8ebc3e5e1324d26480a23d4fc6921f26711dfed289ecaa3bf8f6653801be44"
+    },
+    {
+      "path": "2bb-home-activity-observed-de-DE.jpg",
+      "sha256": "4eeb6d8f7c78b1e57cbcd9ac758d6197ff192f7fa2d582030f30cc3ddca6e3c9"
+    },
+    {
+      "path": "2bb-projects-not-checked-zh-CN.jpg",
+      "sha256": "2e01d94e12398f730e6911491f17938d1db5cfdd541d4b2cc6968a443ba54f10"
+    },
+    {
+      "path": "2bb-reopened-home-activity-de-DE.jpg",
+      "sha256": "6870b01ea482695d1f234f65e9e4f417b9e1d150d117605e6b3ccc6686556f40"
+    },
+    {
+      "path": "2bb-reopened-home-activity-zh-CN.jpg",
+      "sha256": "d593a5b8530b9bddc167166e704329f4518af886c3a9216eda6359c6b2bbaebb"
+    }
+  ],
+  "scope_limits": [
+    "This checkpoint verifies the installed activity repair and real ChatGPT calls, while explicitly recording a failed Gemini generation.",
+    "The subsequent admission-lock repair is not part of the installed 2bb binaries.",
+    "No further work used MSI; the final Windows installed checkpoint remains 5c4."
+  ]
+}

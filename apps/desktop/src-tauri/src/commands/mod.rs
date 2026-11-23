@@ -166,6 +166,15 @@ pub async fn tunnel_profile_action(
 }
 
 #[tauri::command]
+pub async fn connect_gemini(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::state::GeminiConnectionRequest,
+) -> DesktopResult<DesktopStateSnapshot> {
+    project_state_result(&app, state.connect_gemini(request).await)
+}
+
+#[tauri::command]
 pub async fn cloudflare_connection(
     state: State<'_, AppState>,
     request: crate::state::CloudflareConnectionRequest,

@@ -66,6 +66,39 @@ describe("Connection advanced details", () => {
     expect(details?.querySelector("dd.connection-meta-path code:last-child")).toBeTruthy();
   });
 
+  it.each(PRODUCT_LOCALES)("explains binding changes without suggesting an MCP restart in %s", (locale) => {
+    localStorage.setItem("webcodex.desktop.locale", locale);
+    for (const reason_code of [
+      "tunnel_protected_history_binding_changed",
+      "tunnel_receipts_binding_changed",
+      "tunnel_archive_binding_changed",
+    ]) {
+      const profile = connectionFixture({
+        host_mode: "embedded",
+        lifecycle: "error",
+        ready: false,
+        last_error: "local_mcp_unavailable",
+        reason_code,
+        tunnel_ready: false,
+        local_mcp_ready: false,
+      });
+      const { container, unmount } = render(
+        <LocaleProvider>
+          <ConnectionCard profile={profile} canStart={true} busy={false} copied={false}
+            onAction={() => undefined} onEdit={() => undefined} onDelete={() => undefined}
+            onCopy={() => undefined} onSettings={() => undefined} />
+        </LocaleProvider>,
+      );
+      const recovery = container.querySelector(".connection-recovery")!;
+      expect(recovery.textContent).toContain(connectionsToolsText(locale, "tunnelBindingChanged"));
+      expect(recovery.textContent).toContain(connectionsToolsText(locale, "tunnelBindingRecovery"));
+      expect(recovery.textContent).not.toContain(connectionsToolsText(locale, "localMcpRecovery"));
+      expect(recovery.textContent).not.toContain(connectionsToolsText(locale, "restartUncertainRecovery"));
+      expect(container.querySelector(".connection-actions .primary-button")).toBeNull();
+      unmount();
+    }
+  });
+
   it("omits unavailable optional diagnostics without creating empty labels", () => {
     const profile = connectionFixture({ startup_timings_ms: null, local_mcp_ready: null, runtime_directory: null });
     const { container } = render(

@@ -210,22 +210,38 @@ mod tests {
             runtime_project_id: Some("agent:desktop:project-b".to_string()),
         });
 
-        let current_identity =
-            identity_from_config(&core.config).expect("current project identity");
-        let mut stale_identity = current_identity.clone();
-        stale_identity.project_id = "project-a".to_string();
-        stale_identity.runtime_project_id = "agent:desktop:project-a".to_string();
+        let current_probe = core
+            .chatgpt_activity_probe()
+            .expect("current project probe");
+        let mut stale_probe = current_probe.clone();
+        stale_probe.identity.project_id = "project-a".to_string();
+        stale_probe.identity.runtime_project_id = "agent:desktop:project-a".to_string();
 
         let stale = core
-            .apply_chatgpt_activity_observation(&stale_identity, Some(1234))
+            .apply_chatgpt_activity_observation(&stale_probe, Ok(Some(1234)))
             .unwrap();
         assert!(
             stale.chatgpt_activity.is_none(),
             "an observation captured for the old Project must not cross a Project switch"
         );
 
+        core.config.runtime_selection_revision += 1;
+        let stale_source = core
+            .apply_chatgpt_activity_observation(&current_probe, Ok(Some(2345)))
+            .unwrap();
+        assert!(stale_source.chatgpt_activity.is_none());
+        core.config.runtime_selection_revision -= 1;
+        core.config.runtime_binary_source = crate::runtime_selection::RuntimeSource::Custom {
+            directory: data_dir.join("different-runtime"),
+        };
+        let changed_source = core
+            .apply_chatgpt_activity_observation(&current_probe, Ok(Some(3456)))
+            .unwrap();
+        assert!(changed_source.chatgpt_activity.is_none());
+        core.config.runtime_binary_source = current_probe.runtime_source.clone();
+
         let current = core
-            .apply_chatgpt_activity_observation(&current_identity, Some(5678))
+            .apply_chatgpt_activity_observation(&current_probe, Ok(Some(5678)))
             .unwrap();
         assert_eq!(
             current
@@ -235,7 +251,158 @@ mod tests {
             Some(5678)
         );
         assert!(current.chatgpt_activity.unwrap().observed);
+        assert!(core
+            .apply_chatgpt_activity_observation(
+                &current_probe,
+                Err(DesktopError::new(
+                    "fixture_query_failed",
+                    "fixture",
+                    "fixture"
+                )),
+            )
+            .is_err());
+        assert_eq!(
+            core.snapshot
+                .chatgpt_activity
+                .as_ref()
+                .unwrap()
+                .last_meaningful_activity_at_ms,
+            Some(5678),
+            "a failed refresh must preserve prior checked evidence",
+        );
         std::fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn activity_cli_fixture(directory: &Path, windows: &str, failure: bool) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(directory).unwrap();
+        for name in ["webcodex", "webcodex-server", "webcodex-runner"] {
+            let info =
+                serde_json::to_string(&webcodex_build_info::machine_build_info(name)).unwrap();
+            let command = if name == "webcodex" {
+                format!(
+                    r#"
+[ "$1" = ops ] && [ "$2" = windows ] || exit 17
+shift 2
+project=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --project) project="$2"; shift 2 ;;
+        --server-url|--token-file|--limit) shift 2 ;;
+        --json|--no-system-proxy) shift ;;
+        *) exit 18 ;;
+    esac
+done
+[ "$project" = agent:desktop:project ] || exit 19
+if [ "{failure}" = true ]; then exit 23; fi
+cat <<'WEBCODEX_WINDOWS'
+{{"summary":{{"windows":{windows}}}}}
+WEBCODEX_WINDOWS
+"#
+                )
+            } else {
+                "exit 17\n".to_owned()
+            };
+            let script = format!(
+                "#!/bin/sh\nif [ \"$1\" = --build-info-json ]; then\ncat <<'WEBCODEX_BUILD_INFO'\n{info}\nWEBCODEX_BUILD_INFO\nexit 0\nfi\n{command}"
+            );
+            let path = directory.join(name);
+            std::fs::write(&path, script).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    async fn reopened_activity_fixture(
+        windows: &str,
+        failure: bool,
+    ) -> (tempfile::TempDir, AppState) {
+        let data = tempfile::tempdir().unwrap();
+        let binaries = data.path().join("binaries");
+        activity_cli_fixture(&binaries, windows, failure);
+        let runner_config = data.path().join("runner.toml");
+        let user_token_file = data.path().join("user-token");
+        std::fs::write(&runner_config, "fixture").unwrap();
+        std::fs::write(&user_token_file, "fixture").unwrap();
+        let state = AppState::new(data.path().to_owned(), data.path().join("resources")).unwrap();
+        {
+            let mut slot = state.core.lock().await;
+            let core = slot.as_mut().unwrap();
+            core.config.persistent_environment = Some("fixture-environment".into());
+            core.config.runtime_binary_source = crate::runtime_selection::RuntimeSource::Custom {
+                directory: binaries,
+            };
+            core.adapter
+                .set_runtime_source(core.config.runtime_binary_source.clone());
+            core.config.project = Some(ProjectSelection {
+                path: data.path().join("project").to_string_lossy().to_string(),
+                allowed_root: data.path().to_string_lossy().to_string(),
+                is_git_repository: false,
+                runtime_project_id: Some("agent:desktop:project".into()),
+            });
+            core.config.runtime = Some(StoredRuntime {
+                server_url: "http://127.0.0.1:1".into(),
+                server_env_file: None,
+                runner_config: Some(runner_config),
+                user_token_file: Some(user_token_file),
+                runner_client_id: Some("desktop".into()),
+                project_id: Some("project".into()),
+                runtime_project_id: Some("agent:desktop:project".into()),
+            });
+            core.snapshot.readiness.runtime_ready = true;
+            assert!(
+                core.adapter.binaries().is_err(),
+                "a reopened GUI has no CLI cache"
+            );
+            core.publish_snapshot();
+        }
+        (data, state)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reopened_persistent_runtime_resolves_cli_for_chatgpt_activity() {
+        let (_data, state) = reopened_activity_fixture(
+            r#"[{"source":"mcp","last_meaningful_activity_at_ms":9000},{"source":"openai-session","last_meaningful_activity_at_ms":5678}]"#,
+            false,
+        )
+        .await;
+        let observed = state.observe_chatgpt_activity().await.unwrap();
+        assert_eq!(
+            observed
+                .chatgpt_activity
+                .as_ref()
+                .unwrap()
+                .last_meaningful_activity_at_ms,
+            Some(5678),
+        );
+        assert!(observed.chatgpt_activity.unwrap().observed);
+        assert!(observed.current_operation.is_none());
+        let slot = state.core.lock().await;
+        assert!(slot.as_ref().unwrap().adapter.binaries().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn chatgpt_activity_successful_empty_query_is_explicit() {
+        let (_data, state) = reopened_activity_fixture("[]", false).await;
+        let observed = state.observe_chatgpt_activity().await.unwrap();
+        let evidence = observed
+            .chatgpt_activity
+            .expect("the query actually completed");
+        assert!(!evidence.observed);
+        assert_eq!(evidence.last_meaningful_activity_at_ms, None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn chatgpt_activity_query_failure_is_not_empty_evidence() {
+        let (_data, state) = reopened_activity_fixture("[]", true).await;
+        let error = state.observe_chatgpt_activity().await.unwrap_err();
+        assert_eq!(error.code, "webcodex_command_failed");
+        assert!(state.get_state().chatgpt_activity.is_none());
+        assert!(state.get_state().current_operation.is_none());
     }
 
     #[test]

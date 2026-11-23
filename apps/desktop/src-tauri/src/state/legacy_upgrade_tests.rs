@@ -172,3 +172,81 @@ async fn check_retired_layouts(root: &Path, saved: StoredDesktopConfig) {
     config.runtime.as_mut().unwrap().runner_config = Some(runner);
     environment::validate_legacy_runner_layout(&config).unwrap();
 }
+
+#[test]
+fn legacy_migration_preserves_unavailable_registered_projects() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let paths: Vec<_> = (0..7)
+        .map(|index| root.join(format!("project-{index}")))
+        .collect();
+    for index in [0, 3, 4, 5, 6] {
+        std::fs::create_dir(&paths[index]).unwrap();
+    }
+    let rows: Vec<_> = paths.iter().enumerate().map(|(index, path)| {
+        serde_json::json!({"id": format!("agent:original-runner:project-{index}"), "path": path})
+    }).collect();
+    let projects =
+        environment::legacy_inventory_projects(&rows, "original-runner", Some(&paths[3])).unwrap();
+    assert_eq!(projects.len(), 7);
+    for (index, project) in projects.iter().enumerate() {
+        assert_eq!(project.id, format!("project-{index}"));
+        assert_eq!(project.path, paths[index]);
+    }
+    assert!(!paths[1].exists());
+    assert!(!paths[2].exists());
+}
+
+#[test]
+fn legacy_migration_unavailable_project_preserves_inventory_identity_checks() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let selected = root.join("selected");
+    let other = root.join("unregistered");
+    std::fs::create_dir(&selected).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    let missing = root.join("missing");
+    let rows = vec![
+        serde_json::json!({"id": "agent:original-runner:selected", "path": selected}),
+        serde_json::json!({"id": "agent:original-runner:missing", "path": missing}),
+    ];
+    for replacement in [
+        serde_json::json!({"id": "agent:another-runner:missing", "path": missing}),
+        serde_json::json!({"id": "agent:original-runner:missing", "path": "relative/missing"}),
+        serde_json::json!({"id": "agent:original-runner:missing"}),
+    ] {
+        let mut changed = rows.clone();
+        changed[1] = replacement;
+        assert_eq!(
+            environment::legacy_inventory_projects(&changed, "original-runner", Some(&selected),)
+                .unwrap_err()
+                .code,
+            "migration_target_conflict"
+        );
+    }
+    assert_eq!(
+        environment::legacy_inventory_projects(&rows, "original-runner", Some(&other),)
+            .unwrap_err()
+            .code,
+        "migration_target_conflict"
+    );
+    assert!(!missing.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_migration_existing_alias_keeps_canonical_selected_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let selected = root.join("selected");
+    let alias = root.join("alias");
+    std::fs::create_dir(&selected).unwrap();
+    std::os::unix::fs::symlink(&selected, &alias).unwrap();
+    let rows = vec![serde_json::json!({"id": "agent:original-runner:project", "path": alias})];
+    let projects =
+        environment::legacy_inventory_projects(&rows, "original-runner", Some(&selected)).unwrap();
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].id, "project");
+    assert_eq!(projects[0].path, selected);
+    assert_eq!(std::fs::read_link(alias).unwrap(), selected);
+}

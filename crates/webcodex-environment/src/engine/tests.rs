@@ -190,8 +190,24 @@ async fn projectless_runners_install_without_registering_a_default_project() {
             !create
         );
         let effects = setup.backend.effects.clone();
+        let stale = setup
+            .resume_if_current(
+                &store,
+                Some("replaced-environment"),
+                &SetupSecrets::default(),
+                |_| {},
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(stale.code, "environment_changed");
+        assert_eq!(setup.backend.effects, effects);
         setup
-            .resume(&store, &SetupSecrets::default(), |_| {})
+            .resume_if_current(
+                &store,
+                Some(&result.environment.environment_id),
+                &SetupSecrets::default(),
+                |_| {},
+            )
             .await
             .unwrap();
         assert_eq!(setup.backend.effects, effects);

@@ -268,6 +268,12 @@ fn tunnel_failure_evidence(code: &str) -> (&'static str, &'static str) {
     match code {
         "tunnel_auth_rejected" => ("tunnel_control_plane", "tunnel_auth_rejected"),
         "tunnel_restart_uncertain" => ("tunnel_recovery", "tunnel_restart_uncertain"),
+        "tunnel_protected_history_binding_changed" => (
+            "tunnel_recovery",
+            "tunnel_protected_history_binding_changed",
+        ),
+        "tunnel_receipts_binding_changed" => ("tunnel_recovery", "tunnel_receipts_binding_changed"),
+        "tunnel_archive_binding_changed" => ("tunnel_recovery", "tunnel_archive_binding_changed"),
         "tunnel_capacity_exhausted" => ("tunnel_capacity", "tunnel_capacity_exhausted"),
         "tunnel_protocol_failed" => ("tunnel_protocol", "tunnel_protocol_failed"),
         "tunnel_control_plane_unreachable" => {
@@ -493,6 +499,24 @@ mod tests {
         assert!(!encoded.contains("private recovery"));
         assert!(!encoded.contains("Authorization"));
         assert!(!encoded.contains("Bearer"));
+    }
+
+    #[test]
+    fn machine_failure_preserves_exact_binding_diagnostics_without_private_context() {
+        for code in [
+            "tunnel_protected_history_binding_changed",
+            "tunnel_receipts_binding_changed",
+            "tunnel_archive_binding_changed",
+        ] {
+            let event = machine_regular_tunnel_failure_event(&ProductError::new(
+                code,
+                "private local credential",
+                Some("private local address"),
+            ));
+            assert_eq!(event["failure_stage"], "tunnel_recovery");
+            assert_eq!(event["reason_code"], code);
+            assert!(!event.to_string().contains("private"));
+        }
     }
 
     #[test]

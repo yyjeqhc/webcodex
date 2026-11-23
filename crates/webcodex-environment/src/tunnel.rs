@@ -142,6 +142,10 @@ pub struct TunnelRuntimeObservation {
     pub configured_revision: u64,
     pub applied_revision: Option<u64>,
     pub server_restart_required: bool,
+    /// Safe evidence from the exact current owner and configuration. A failed
+    /// task retains its terminal diagnostic without retaining ready authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1392,20 +1396,18 @@ impl NativeEnvironment {
         let server_restart_required = profile.host_mode == TunnelHostMode::Embedded
             && owner_running
             && applied_revision != Some(configured_revision);
-        let (tunnel_ready, local_mcp_ready) = if owner_running
-            && !server_restart_required
-            && owner_pid.is_some()
-            && health
-                .as_ref()
-                .is_some_and(|value| value.service_pid == owner_pid)
-        {
-            health
-                .as_ref()
-                .map(|value| (value.tunnel_ready, value.local_mcp_ready))
-                .unwrap_or((false, false))
-        } else {
-            (false, false)
-        };
+        let matched_health = matching_tunnel_health(
+            health.as_ref(),
+            owner_running,
+            owner_pid,
+            (profile.host_mode == TunnelHostMode::Embedded).then_some(configured_revision),
+        );
+        let (tunnel_ready, local_mcp_ready) = matched_health
+            .map(|value| (value.tunnel_ready, value.local_mcp_ready))
+            .unwrap_or((false, false));
+        let diagnostic = matched_health
+            .filter(|value| value.fresh || value.state == Some(TunnelState::Failed))
+            .and_then(|value| value.diagnostic.clone());
         Ok(TunnelRuntimeObservation {
             profile_id: profile.profile_id,
             tunnel_id: snapshot.tunnel_id,
@@ -1418,6 +1420,7 @@ impl NativeEnvironment {
             configured_revision,
             applied_revision,
             server_restart_required,
+            diagnostic,
         })
     }
 
@@ -1833,6 +1836,9 @@ pub enum TunnelState {
 fn safe_tunnel_diagnostic(code: &str) -> &str {
     match code {
         "tunnel_restart_uncertain"
+        | "tunnel_protected_history_binding_changed"
+        | "tunnel_receipts_binding_changed"
+        | "tunnel_archive_binding_changed"
         | "tunnel_health_unavailable"
         | "tunnel_profile_configuration"
         | "tunnel_probe_configuration"
@@ -1878,6 +1884,20 @@ pub struct TunnelDiagnosticObservation {
     pub tunnel_ready: bool,
     pub local_mcp_ready: bool,
     pub next_action: &'static str,
+}
+
+fn matching_tunnel_health(
+    health: Option<&TunnelHealthObservation>,
+    owner_running: bool,
+    owner_pid: Option<u32>,
+    revision: Option<u64>,
+) -> Option<&TunnelHealthObservation> {
+    health.filter(|value| {
+        owner_running
+            && owner_pid.is_some()
+            && value.service_pid == owner_pid
+            && (revision.is_none() || value.profile_revision == revision)
+    })
 }
 
 pub(crate) fn health_status(
@@ -1946,7 +1966,16 @@ impl NativeEnvironment {
             tunnel_ready: current && health.as_ref().is_some_and(|h| h.tunnel_ready),
             local_mcp_ready: current && health.as_ref().is_some_and(|h| h.local_mcp_ready),
             readiness_status,
-            next_action: if diagnostic.as_deref() == Some("tunnel_restart_uncertain") {
+            next_action: if matches!(
+                diagnostic.as_deref(),
+                Some(
+                    "tunnel_protected_history_binding_changed"
+                        | "tunnel_receipts_binding_changed"
+                        | "tunnel_archive_binding_changed"
+                )
+            ) {
+                "Use the original local environment, or create a new Tunnel for this environment; preserve the existing history"
+            } else if diagnostic.as_deref() == Some("tunnel_restart_uncertain") {
                 "Inspect prior effects and the exact profile restart fence; do not automatically restart or replay work"
             } else if !current {
                 "Verify the owning service and its current configuration; saved readiness does not prove a live Tunnel"

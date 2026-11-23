@@ -1,6 +1,6 @@
 //! Per-user interactive Task Scheduler adapter. No password, UAC or SCM account.
 //! A fixed native script consumes bounded non-secret JSON as child-local data;
-//! callers cannot supply script text. Registration is create-only, never /F.
+//! callers cannot supply script text. New tasks are registered create-only.
 use super::*;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -32,11 +32,131 @@ fn task_request(spec: &ServiceSpec, operation: &str) -> Result<Value, ServiceErr
         out
     };
     let name = task_name(spec, sid);
+    let arguments = spec
+        .args
+        .iter()
+        .map(|value| quote(value))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let host = desktop_task_host(&spec.program);
+    let program = spec.program.to_str().ok_or_else(|| {
+        ServiceError::new(
+            ServiceErrorCode::InvalidSpec,
+            "Task executable must be UTF-8",
+        )
+    })?;
+    let directory = spec.working_directory.to_str().ok_or_else(|| {
+        ServiceError::new(
+            ServiceErrorCode::InvalidSpec,
+            "Task directory must be UTF-8",
+        )
+    })?;
+    let host_arguments = format!(
+        "--user-task {} {} {} {} {}",
+        quote(spec.component.as_str()),
+        quote(&spec.config_identity),
+        quote(directory),
+        quote(program),
+        arguments
+    );
     Ok(json!({"operation":operation, "name":name,
         "description":format!("{} scope=user", ownership_marker(spec)), "sid":sid,
-        "program":spec.program.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec,"Task executable must be UTF-8"))?,
-        "arguments":spec.args.iter().map(|value| quote(value)).collect::<Vec<_>>().join(" "),
-        "directory":spec.working_directory.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec,"Task working directory must be UTF-8"))?}))
+        "program":program,
+        "arguments":arguments, "host":host, "host_arguments":host_arguments,
+        "directory":directory}))
+}
+
+// The installed GUI and its runtime are verified and updated as one package.
+fn desktop_task_host(program: &Path) -> Option<PathBuf> {
+    let runtime = program.parent()?;
+    if runtime.file_name()? != "webcodex-runtime" {
+        return None;
+    }
+    let host = runtime.parent()?.join("WebCodex.exe");
+    #[cfg(windows)]
+    {
+        // A custom Runtime folder cannot designate its sibling as a launcher.
+        use crate::unified_update::{installed_desktop_path, InstallerTarget, RuntimePlatform};
+        let current = std::env::current_exe().ok()?.canonicalize().ok()?;
+        let host_path = host.canonicalize().ok()?;
+        if current != host_path {
+            let target = InstallerTarget::default_for_non_linux(RuntimePlatform::current()?)?;
+            if installed_desktop_path(target)?.canonicalize().ok()? != host_path {
+                return None;
+            }
+        }
+    }
+    Some(host)
+}
+
+#[cfg(windows)]
+pub fn run_desktop_user_task(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+    use crate::{service_spec, tunnel_service_spec, EnvironmentStore};
+    use std::process::{Command, Stdio};
+    let [component, identity, directory, program, worker_args @ ..] = args else {
+        return Err("Invalid task arguments".into());
+    };
+    let directory = PathBuf::from(directory);
+    if !directory.is_absolute()
+        || directory.canonicalize()? != std::env::current_dir()?.canonicalize()?
+    {
+        return Err("Task working directory changed".into());
+    }
+    let (component, root) = match component.as_str() {
+        "server" => (Component::Server, directory.parent()),
+        "runner" => (Component::Runner, Some(directory.as_path())),
+        "tunnel" => (Component::Tunnel, directory.ancestors().nth(3)),
+        _ => return Err("Invalid service component".into()),
+    };
+    let store = EnvironmentStore::open_existing(root.ok_or("Missing task root")?.into())?
+        .ok_or("Missing task environment")?;
+    let record = match store.load_environment()? {
+        Some(record) => record,
+        None => {
+            store
+                .load_journal()?
+                .ok_or("Missing setup journal")?
+                .environment
+        }
+    };
+    if record.request.service_scope != ServiceScope::User {
+        return Err("Task service scope changed".into());
+    }
+    let spec = if component == Component::Tunnel {
+        let profile = directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Missing tunnel profile")?;
+        tunnel_service_spec(&store, &record, profile)?
+    } else {
+        service_spec(&store, &record, component)?
+    };
+    let expected_host = desktop_task_host(&spec.program).ok_or("Missing packaged task host")?;
+    if spec.config_identity != *identity
+        || spec.program != Path::new(program)
+        || spec.args != worker_args
+        || spec.working_directory != directory
+        || expected_host.canonicalize()? != std::env::current_exe()?.canonicalize()?
+    {
+        return Err("Task target changed".into());
+    }
+    scope::verify_current_user(&spec)?;
+    check_install_files(&spec)?;
+    let mut command = Command::new(&spec.program);
+    command
+        .args(&spec.args)
+        .current_dir(&directory)
+        .stdin(Stdio::null())
+        .env("WEBCODEX_SERVICE_LOG_DIR", &directory);
+    // Preserve inherited diagnostic handles. The child writes bounded private
+    // service events when Scheduler supplies no console or redirected streams.
+    Ok(run_console_free_worker(&mut command)?)
+}
+
+#[cfg(windows)]
+fn run_console_free_worker(command: &mut std::process::Command) -> std::io::Result<i32> {
+    let mut child = webcodex_process::ManagedChild::spawn_background(command)?;
+    Ok(child.wait()?.code().unwrap_or(1))
 }
 
 /// Pure saved task identity, also used by read-only diagnostic references.
@@ -73,6 +193,17 @@ fn decode_status(spec: &ServiceSpec, value: &Value) -> Result<ServiceStatus, Ser
         Some(1 | 3) => Some(false), // disabled/ready
         _ => None,
     };
+    let mut detail = String::from(
+        "user Task Scheduler; runs only while this owner is signed in; no password stored",
+    );
+    if owned && running == Some(false) {
+        if let Some(result) = value["last_task_result"]
+            .as_i64()
+            .filter(|result| *result != 0)
+        {
+            detail.push_str(&format!("; last Task Scheduler result {result}"));
+        }
+    }
     Ok(ServiceStatus {
         id: spec.id.clone(),
         ownership: if owned {
@@ -83,10 +214,7 @@ fn decode_status(spec: &ServiceSpec, value: &Value) -> Result<ServiceStatus, Ser
         installed: true,
         enabled: value["enabled"].as_bool(),
         running,
-        detail: Some(
-            "user Task Scheduler; runs only while this owner is signed in; no password stored"
-                .into(),
-        ),
+        detail: Some(detail),
     })
 }
 
@@ -370,6 +498,33 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn console_free_worker_has_no_console_and_preserves_exit_and_redirected_streams() {
+        use std::process::{Command, Stdio};
+        let temp = crate::test_tempdir().unwrap();
+        let stdout = temp.path().join("stdout");
+        let stderr = temp.path().join("stderr");
+        let root = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let mut command = Command::new(root.join("System32/WindowsPowerShell/v1.0/powershell.exe"));
+        command.args(["-NoProfile", "-NonInteractive", "-Command", r#"
+            Add-Type -Name Console -Namespace TaskTest -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();'
+            if ([TaskTest.Console]::GetConsoleWindow() -ne [IntPtr]::Zero) { exit 11 }
+            [Console]::Out.WriteLine('fixture-out')
+            [Console]::Error.WriteLine('fixture-err')
+            exit 37
+        "#]).stdin(Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap());
+        assert_eq!(run_console_free_worker(&mut command).unwrap(), 37);
+        assert!(std::fs::read_to_string(stdout)
+            .unwrap()
+            .contains("fixture-out"));
+        assert!(std::fs::read_to_string(stderr)
+            .unwrap()
+            .contains("fixture-err"));
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn user_task_action_pid_selection_rejects_ambiguous_or_replaced_processes() {
         use crate::process::CommandOutputExt;
         use std::os::windows::process::CommandExt;
@@ -390,6 +545,31 @@ mod tests {
         assert!(
             result.status.success(),
             "mocked action PID selection failed"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn user_task_restart_waits_for_owned_process_exit_and_confirms_one_new_instance() {
+        use crate::process::CommandOutputExt;
+        use std::os::windows::process::CommandExt;
+        let root = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let result =
+            std::process::Command::new(root.join("System32/WindowsPowerShell/v1.0/powershell.exe"))
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    include_str!("windows_user_lifecycle_tests.ps1"),
+                ])
+                .env("WEBCODEX_PARSE_SCRIPT", SCRIPT)
+                .creation_flags(0x08000000)
+                .bounded_output()
+                .unwrap();
+        assert!(
+            result.status.success(),
+            "native user-task lifecycle races failed"
         );
     }
 

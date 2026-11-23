@@ -40,6 +40,7 @@ mod cloudflare_ingress;
 mod oauth_http;
 mod public_ingress_auth;
 pub use cloudflare_host::run_cloudflare_tunnel_with_stop;
+pub use project_entry::cloudflare_transport::prepare_user_cloudflare_component;
 
 mod pairing_http;
 mod plugin_gateway;

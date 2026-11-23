@@ -775,9 +775,10 @@ fn persistent_connection_projection(
         webcodex_environment::TunnelRuntimeObservation,
     >,
 ) -> TunnelConnectionSnapshot {
-    let server_restart_required = observation
-        .as_ref()
-        .is_ok_and(|status| status.server_restart_required);
+    let server_restart_required = profile.provider == webcodex_environment::TunnelProvider::Openai
+        && observation
+            .as_ref()
+            .is_ok_and(|status| status.server_restart_required);
     let enabled = match profile.host_mode {
         webcodex_environment::TunnelHostMode::Embedded => profile.autostart,
         webcodex_environment::TunnelHostMode::Standalone => observation
@@ -865,7 +866,17 @@ fn persistent_runtime_projection(
         ConnectionLifecycle::Stopped
     };
     let (last_error, failure_stage, reason_code) = if process_started && !ready {
-        if !status.local_mcp_ready {
+        if let Some(diagnostic) = status.diagnostic {
+            (
+                Some(if diagnostic == "local_mcp_unavailable" {
+                    ConnectionError::LocalMcpUnavailable
+                } else {
+                    ConnectionError::TunnelUnavailable
+                }),
+                Some("tunnel_readiness".to_string()),
+                Some(diagnostic),
+            )
+        } else if !status.local_mcp_ready {
             (
                 Some(ConnectionError::LocalMcpUnavailable),
                 Some("tunnel_readiness".to_string()),

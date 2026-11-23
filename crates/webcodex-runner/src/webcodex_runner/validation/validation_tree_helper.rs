@@ -47,6 +47,30 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(secs));
             std::process::exit(code);
         }
+        #[cfg(windows)]
+        "console-probe" | "-V" => {
+            use std::io::Read;
+            #[link(name = "kernel32")]
+            unsafe extern "system" {
+                fn GetConsoleWindow() -> *mut core::ffi::c_void;
+            }
+            // The test owner has no console. An ordinary console spawn here
+            // creates a window; CREATE_NO_WINDOW permits only a hidden console.
+            let window = unsafe { !GetConsoleWindow().is_null() };
+            if mode == "-V" {
+                // The real SSH capability probe discards its output. Its
+                // injected executable reports console allocation by exit code.
+                std::process::exit(if window { 37 } else { 0 });
+            }
+            let mut input = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut input)
+                .expect("read stdin");
+            println!("CONSOLE_WINDOW={window}");
+            println!("STDIN_BYTES={}", input.len());
+            eprintln!("CONSOLE_PROBE_STDERR");
+            std::process::exit(37);
+        }
         "spawn-descendant" => {
             spawn_descendant(&args, false);
             // Wait until the descendant has written its own marker, so the

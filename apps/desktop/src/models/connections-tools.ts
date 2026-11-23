@@ -1,6 +1,6 @@
 export type TunnelProvider = { kind: "openai" } | { kind: "cloudflare_named"; public_origin: string; tunnel_id: string } | { kind: "cloudflare_quick" };
 export interface CloudflareConnectionStatus {
-  profile_id: string; server_instance_id: string; process_generation: number;
+  profile_id: string; configuration_id: string; server_instance_id: string; process_generation: number;
   lifecycle: "stopped" | "starting" | "running" | "disconnected" | "error";
   public_origin: string | null; oauth_configured: boolean; observed_authorization: boolean;
   registration_available?: boolean; observed_tool_call?: boolean;
@@ -8,7 +8,7 @@ export interface CloudflareConnectionStatus {
 }
 export type CloudflareConnectionRequest =
   | { action: "status"; profile_id: string }
-  | { action: "start"; profile_id: string; server_instance_id: string; expected_revision: number }
+  | { action: "start"; profile_id: string; server_instance_id: string; expected_revision: number; expected_generation: number; expected_configuration_id: string }
   | { action: "stop"; profile_id: string; server_instance_id: string; process_generation: number }
   | { action: "configure_oauth"; profile_id: string; server_instance_id: string; process_generation: number; redirect_uri: string; scopes: string[]; replace?: boolean };
 // Only the explicit handoff response carries a secret; never add it to DesktopState.

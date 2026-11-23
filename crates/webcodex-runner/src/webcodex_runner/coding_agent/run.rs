@@ -116,7 +116,7 @@ impl CodingAgentManager {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = match ManagedChild::spawn(&mut command) {
+        let mut child = match ManagedChild::spawn_background(&mut command) {
             Ok(child) => child,
             Err(error) => {
                 let failure = AcpFailure::SpawnIo(error.kind()).diagnose(

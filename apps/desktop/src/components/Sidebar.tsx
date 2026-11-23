@@ -31,7 +31,7 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
   useShortcutHints();
   return (
       <aside className="sidebar">
-        <div className="brand"><BrandMark /><div><strong>WebCodex</strong><span>Desktop</span></div></div>
+        <div className="brand"><BrandMark /><div><strong>WebCodex</strong></div></div>
         <nav ref={selectionRef} aria-label={t("nav.main")}>
           {NAVIGATION_GROUPS.map((group) => (
             <section className="nav-group" key={group.label} aria-label={t(group.label)}>

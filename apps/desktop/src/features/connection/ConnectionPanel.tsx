@@ -34,6 +34,8 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient, cha
   const [editor, setEditor] = useState<{ profile: TunnelConnection | null; geminiNamed?: boolean; chatgptPreset?: boolean } | null>(null);
   const [deleting, setDeleting] = useState<TunnelConnection | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [tunnelAction, setTunnelAction] = useState<TunnelProfileAction | null>(null);
+  const [serverAction, setServerAction] = useState<"start" | "restart" | null>(null);
   const [failed, setFailed] = useState<DesktopError | null>(null);
   useEffect(() => {
     setFailed(previous => previous && isErrorStaleForState(previous, state) ? null : previous);
@@ -112,6 +114,7 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient, cha
     if (submitting.current || state.current_operation) return;
     submitting.current = true;
     setBusyId(id);
+    setTunnelAction(action);
     setFailed(null);
     setSaved(false);
     try {
@@ -122,12 +125,14 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient, cha
     } finally {
       submitting.current = false;
       setBusyId(null);
+      setTunnelAction(null);
     }
   };
   const runServer = async (action: "start" | "restart") => {
     if (!environmentId || submitting.current || state.current_operation) return;
     submitting.current = true;
     setBusyId("__server__");
+    setServerAction(action);
     setFailed(null);
     setSaved(false);
     try {
@@ -137,6 +142,7 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient, cha
     } finally {
       submitting.current = false;
       setBusyId(null);
+      setServerAction(null);
     }
   };
   const diagnostics = () => onSettings("diagnostics");
@@ -159,6 +165,7 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient, cha
   }
   return <section className="page-section workspace-page" aria-labelledby="connection-title" data-webcodex-page="connection">
     <header className="page-heading-row"><h1 id="connection-title">{c("connections")}</h1></header>
+    {serverAction && <p role="status" className="workspace-notice">{serverAction === "restart" ? c("restarting") : p("starting")}</p>}
     {local && state.topology?.runner.kind === "local" && <p className="lede">{c("sharedRuntimeHelp")}</p>}
     {state.topology?.server.kind === "remote" && <p className="workspace-notice"><code>{state.topology.server.url}</code></p>}
     {presentation.externalConnectionUnobserved && <p className="workspace-notice">{c("externalConnectionUnobserved")}</p>}
@@ -201,7 +208,7 @@ export function ConnectionPanel({ state, onState, onSettings, initialClient, cha
           <button type="button" className="secondary-button" disabled={disabled} onClick={() => void desktopApi.resumeSavedRuntime().then(onState).catch(value => setFailed(normalizeDesktopError(value)))}>{p("start")} WebCodex</button></div>}
       {openaiProfiles.some(profile => profile.ready) && <p className="field-help">{c("chatgptNextStep")}</p>}
       {(openaiProfiles.length > 0 || state.chatgpt_activity?.observed) && <ChatgptObservation state={state} queryStatus={chatgptActivityQueryStatus} />}
-      <div className="connection-list">{openaiProfiles.map(profile => <ConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.runtime_ready} busy={disabled || !canManageConnections} copied={copiedId === profile.id}
+      <div className="connection-list">{openaiProfiles.map(profile => <ConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.runtime_ready} busy={disabled || !canManageConnections} pendingAction={busyId === profile.id ? tunnelAction : null} copied={copiedId === profile.id}
         onAction={action => void run(profile.id, action)} onSettings={onSettings}
         onEdit={() => { setSaved(false); setEditor({ profile }); }} onDelete={() => { setFailed(null); setDeleting(profile); }}
         onCopy={() => { if (profile.tunnel_id) void writeText(profile.tunnel_id).then(() => setCopiedId(profile.id)).catch(value => setFailed(normalizeDesktopError(value))); }} />)}</div>

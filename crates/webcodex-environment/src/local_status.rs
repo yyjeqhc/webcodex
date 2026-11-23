@@ -32,6 +32,59 @@ pub struct LocalEnvironmentStatus {
     pub client_connection: String,
 }
 
+struct ServiceProbe {
+    spec: SetupResultValue<crate::service::ServiceSpec>,
+    with_pid: bool,
+}
+
+type ServiceProbeResult = SetupResultValue<(ServiceStatus, Option<u32>)>;
+
+fn inspect_probe(probe: ServiceProbe) -> ServiceProbeResult {
+    let spec = probe.spec?;
+    if probe.with_pid {
+        ServiceManager::inspect_with_pid(&spec).map_err(crate::native::service_error)
+    } else {
+        ServiceManager::inspect(&spec)
+            .map(|status| (status, None))
+            .map_err(crate::native::service_error)
+    }
+}
+
+/// Task Scheduler inspection starts a PowerShell process. Keep independent
+/// observations concurrent but bounded; the source order remains stable, and a
+/// failing query cannot turn an unknown owner into a successful observation.
+fn inspect_probes(probes: Vec<ServiceProbe>, windows_user: bool) -> Vec<ServiceProbeResult> {
+    if !windows_user {
+        return probes.into_iter().map(inspect_probe).collect();
+    }
+
+    const MAX_CONCURRENT_PROBES: usize = 3;
+    let mut observations = Vec::with_capacity(probes.len());
+    let mut remaining = probes.into_iter();
+    loop {
+        let group: Vec<_> = remaining.by_ref().take(MAX_CONCURRENT_PROBES).collect();
+        if group.is_empty() {
+            break;
+        }
+        std::thread::scope(|scope| {
+            let tasks: Vec<_> = group
+                .into_iter()
+                .map(|probe| scope.spawn(move || inspect_probe(probe)))
+                .collect();
+            for task in tasks {
+                observations.push(task.join().unwrap_or_else(|_| {
+                    Err(SetupDiagnostic::new(
+                        "local_observation_unavailable",
+                        "Native service status could not be observed",
+                        "Inspect the service owner before retrying",
+                    ))
+                }));
+            }
+        });
+    }
+    observations
+}
+
 pub(crate) fn collect(
     store: &EnvironmentStore,
     record: &EnvironmentRecord,
@@ -53,71 +106,130 @@ pub(crate) fn collect(
         local_connection_ready: None,
         client_connection: "not_observed".into(),
     };
-    for component in [
-        record.request.local_server().then_some(Component::Server),
-        record.request.local_runner().then_some(Component::Runner),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let observed = service_spec(store, record, component)
-            .and_then(|spec| ServiceManager::inspect(&spec).map_err(crate::native::service_error));
-        result
-            .components
-            .push(observation(component.as_str(), None, observed));
-    }
-    if record.request.local_server() {
-        match crate::tunnel_profiles(store) {
-            Ok(profiles) => {
-                result.profiles_truncated = profiles.len() > 16;
-                for profile in profiles.into_iter().take(16) {
-                    let spec = if profile.host_mode == TunnelHostMode::Embedded {
-                        service_spec(store, record, Component::Server)
-                    } else {
-                        crate::tunnel_service_spec(store, record, &profile.profile_id)
-                    };
-                    let health_path = store
-                        .root()
-                        .join("server/tunnels")
-                        .join(&profile.profile_id)
-                        .join("readiness.json");
-                    let state = spec.as_ref().map_err(Clone::clone).and_then(|spec| {
-                        ServiceManager::inspect(spec).map_err(crate::native::service_error)
-                    });
-                    let mut row = observation("tunnel", Some(profile.profile_id.clone()), state);
-                    row.host_mode = Some(profile.host_mode);
-                    let owner_pid = spec
-                        .as_ref()
-                        .ok()
-                        .and_then(|spec| ServiceManager::running_pid(spec).ok().flatten());
-                    let health = crate::tunnel::read_tunnel_health(&health_path).ok();
-                    let health_status = crate::tunnel::health_status(
-                        health.as_ref(),
-                        (profile.host_mode == TunnelHostMode::Embedded)
-                            .then(|| profile.effective_runtime_revision()),
-                        owner_pid,
-                    );
-                    row.observed_tunnel_state = health.as_ref().and_then(|h| h.state);
-                    row.tunnel_ready = Some(
-                        health_status == "current"
-                            && health.as_ref().is_some_and(|h| h.tunnel_ready),
-                    );
-                    row.local_mcp_ready = Some(
-                        health_status == "current"
-                            && health.as_ref().is_some_and(|h| h.local_mcp_ready),
-                    );
-                    if let Some(code) = health.as_ref().and_then(|h| h.diagnostic.as_deref()) {
-                        row.diagnostic = Some(SetupDiagnostic::new(code, "Saved Tunnel owner diagnostic", "Run environment tunnel-diagnose PROFILE --environment-dir PATH; do not clear an uncertain restart fence"));
-                    } else if health_status != "current" {
-                        row.diagnostic = Some(SetupDiagnostic::new(health_status, "Tunnel readiness is not verified", "Inspect the exact owner PID and profile revision using tunnel-diagnose"));
-                    }
-                    result.components.push(row);
-                }
+
+    let tunnel_profiles = record
+        .request
+        .local_server()
+        .then(|| crate::tunnel_profiles(store));
+    let embedded_owner = tunnel_profiles
+        .as_ref()
+        .and_then(|profiles| profiles.as_ref().ok())
+        .is_some_and(|profiles| {
+            profiles
+                .iter()
+                .take(16)
+                .any(|profile| profile.host_mode == TunnelHostMode::Embedded)
+        });
+
+    let mut probes = Vec::new();
+    let server_index = record.request.local_server().then(|| {
+        let index = probes.len();
+        probes.push(ServiceProbe {
+            spec: service_spec(store, record, Component::Server),
+            with_pid: embedded_owner,
+        });
+        index
+    });
+    let runner_index = record.request.local_runner().then(|| {
+        let index = probes.len();
+        probes.push(ServiceProbe {
+            spec: service_spec(store, record, Component::Runner),
+            with_pid: false,
+        });
+        index
+    });
+
+    // Embedded Tunnel profiles share the exact Server owner. Its status and
+    // verified PID can be observed once and reused for each readiness marker.
+    let mut tunnel_indices = Vec::new();
+    if let Some(Ok(profiles)) = &tunnel_profiles {
+        for profile in profiles.iter().take(16) {
+            if profile.host_mode == TunnelHostMode::Embedded {
+                tunnel_indices.push(server_index.expect("embedded Tunnel requires local Server"));
+            } else {
+                let index = probes.len();
+                probes.push(ServiceProbe {
+                    spec: crate::tunnel_service_spec(store, record, &profile.profile_id),
+                    with_pid: true,
+                });
+                tunnel_indices.push(index);
             }
-            Err(error) => result
-                .components
-                .push(observation("tunnel", None, Err(error))),
         }
+    }
+
+    let observed = inspect_probes(
+        probes,
+        cfg!(windows) && record.request.service_scope == crate::service::ServiceScope::User,
+    );
+    if let Some(index) = server_index {
+        result.components.push(observation(
+            Component::Server.as_str(),
+            None,
+            observed[index].clone().map(|(status, _)| status),
+        ));
+    }
+    if let Some(index) = runner_index {
+        result.components.push(observation(
+            Component::Runner.as_str(),
+            None,
+            observed[index].clone().map(|(status, _)| status),
+        ));
+    }
+
+    match tunnel_profiles {
+        Some(Ok(profiles)) => {
+            result.profiles_truncated = profiles.len() > 16;
+            for (profile, index) in profiles.into_iter().take(16).zip(tunnel_indices) {
+                let sampled = &observed[index];
+                let mut row = observation(
+                    "tunnel",
+                    Some(profile.profile_id.clone()),
+                    sampled.clone().map(|(status, _)| status),
+                );
+                row.host_mode = Some(profile.host_mode);
+                let owner_pid = sampled.as_ref().ok().and_then(|(_, pid)| *pid);
+                let health_path = store
+                    .root()
+                    .join("server/tunnels")
+                    .join(&profile.profile_id)
+                    .join("readiness.json");
+                let health = crate::tunnel::read_tunnel_health(&health_path).ok();
+                let health_status = crate::tunnel::health_status(
+                    health.as_ref(),
+                    (profile.host_mode == TunnelHostMode::Embedded)
+                        .then(|| profile.effective_runtime_revision()),
+                    owner_pid,
+                );
+                row.observed_tunnel_state = health.as_ref().and_then(|h| h.state);
+                row.tunnel_ready = Some(
+                    health_status == "current" && health.as_ref().is_some_and(|h| h.tunnel_ready),
+                );
+                row.local_mcp_ready = Some(
+                    health_status == "current"
+                        && health.as_ref().is_some_and(|h| h.local_mcp_ready),
+                );
+                if let Some(code) = health.as_ref().and_then(|h| h.diagnostic.as_deref()) {
+                    row.diagnostic = Some(SetupDiagnostic::new(
+                        code,
+                        "Saved Tunnel owner diagnostic",
+                        "Run environment tunnel-diagnose PROFILE --environment-dir PATH; do not clear an uncertain restart fence",
+                    ));
+                } else if health_status != "current" {
+                    row.diagnostic = Some(SetupDiagnostic::new(
+                        health_status,
+                        "Tunnel readiness is not verified",
+                        "Inspect the exact owner PID and profile revision using tunnel-diagnose",
+                    ));
+                }
+                result.components.push(row);
+            }
+        }
+        Some(Err(error)) => {
+            result
+                .components
+                .push(observation("tunnel", None, Err(error)));
+        }
+        None => {}
     }
     result.local_connection_ready = record.request.local_server().then(|| {
         connection_ready(
@@ -205,6 +317,34 @@ fn linger(record: &EnvironmentRecord) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_service_probes_preserve_order_and_fail_closed() {
+        let codes = [
+            "probe_first",
+            "probe_second",
+            "probe_third",
+            "probe_fourth",
+            "probe_fifth",
+        ];
+        let plans = codes
+            .iter()
+            .map(|code| ServiceProbe {
+                spec: Err(SetupDiagnostic::new(
+                    code,
+                    "Synthetic service failure",
+                    "Inspect owner",
+                )),
+                with_pid: true,
+            })
+            .collect();
+        let results = inspect_probes(plans, true);
+        assert_eq!(results.len(), codes.len());
+        for (actual, code) in results.into_iter().zip(codes) {
+            assert_eq!(actual.err().expect("probe must fail").code, code);
+        }
+    }
+
     #[test]
     fn readiness_requires_owned_services_fresh_transport_and_runtime_authentication() {
         let service = ServiceStatus {

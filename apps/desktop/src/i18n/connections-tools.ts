@@ -149,6 +149,7 @@ export const CONNECTIONS_TOOLS_MESSAGES = {
   operationFailed: ["Could not apply the change. Refresh and check the saved settings before retrying.", "未能应用更改。请刷新并检查已保存的配置后重试。", "Änderung fehlgeschlagen. Aktualisieren und gespeicherte Einstellungen prüfen.", "Modification impossible. Actualisez et vérifiez les paramètres enregistrés.", "変更を適用できませんでした。更新して保存された設定を確認してください。", "변경을 적용하지 못했습니다. 새로 고침 후 저장된 설정을 확인하세요.", "未能應用更改。請重新整理並檢查已儲存的設定後重試。"],
   configError: ["Saved configuration is unavailable. The original file has not been replaced.", "无法读取配置，原始文件未被覆盖。", "Konfiguration nicht verfügbar. Originaldatei wurde nicht ersetzt.", "Configuration indisponible. Le fichier d’origine n’a pas été remplacé.", "設定を読み込めません。元のファイルは変更していません。", "설정을 읽을 수 없습니다. 원본 파일은 교체되지 않았습니다.", "無法讀取設定，原始檔案未被覆蓋。"],
   stopping: ["Stopping", "停止中", "Wird beendet", "Arrêt en cours", "停止処理中", "중지 중", "停止中"],
+  restarting: ["Restarting…", "正在重启…", "Neustart läuft…", "Redémarrage en cours…", "再起動中…", "다시 시작하는 중…", "正在重新啟動…"],
   logs: ["Connection events", "连接事件", "Verbindungsereignisse", "Événements de connexion", "接続イベント", "연결 이벤트", "連線事件"],
   mcpProviders: ["MCP servers", "MCP 工具服务", "MCP-Server", "Serveurs MCP", "MCP サーバー", "MCP 서버", "MCP 工具服務"],
   addMcpProvider: ["Add MCP server", "添加 MCP 服务", "MCP-Server hinzufügen", "Ajouter un serveur MCP", "MCP サーバーを追加", "MCP 서버 추가", "新增 MCP 服務"],

@@ -13,6 +13,29 @@ beforeEach(() => {
 });
 
 describe("Connection advanced details", () => {
+
+  it.each(PRODUCT_LOCALES)("acknowledges a requested stop or restart immediately in %s", (locale) => {
+    localStorage.setItem("webcodex.desktop.locale", locale);
+    const profile = connectionFixture({ lifecycle: "running", ready: true });
+    const props = { profile, canStart: true, busy: true, copied: false,
+      onAction: () => undefined, onEdit: () => undefined, onDelete: () => undefined,
+      onCopy: () => undefined, onSettings: () => undefined };
+    const { container, rerender } = render(
+      <LocaleProvider><ConnectionCard {...props} pendingAction="stop" /></LocaleProvider>,
+    );
+    const card = container.querySelector("article.connection-profile")!;
+    const status = card.querySelector('[role="status"]')!;
+    expect(card).toHaveAttribute("aria-busy", "true");
+    expect(status).toHaveTextContent(connectionsToolsText(locale, "stopping"));
+    expect(status.querySelector(".status-dot")).not.toHaveClass("ready");
+
+    rerender(<LocaleProvider><ConnectionCard {...props} pendingAction="restart" /></LocaleProvider>);
+    expect(status).toHaveTextContent(connectionsToolsText(locale, "restarting"));
+    expect(card).toHaveAttribute("aria-busy", "true");
+
+    rerender(<LocaleProvider><ConnectionCard {...props} busy={false} pendingAction={null} /></LocaleProvider>);
+    expect(card).toHaveAttribute("aria-busy", "false");
+  });
   it.each(PRODUCT_LOCALES)("keeps the two-column metadata and translated labels in %s", (locale) => {
     localStorage.setItem("webcodex.desktop.locale", locale);
     const profile = connectionFixture({

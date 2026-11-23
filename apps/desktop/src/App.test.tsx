@@ -680,7 +680,8 @@ beforeEach(() => {
 
     renderApp();
     await screen.findByRole("heading", { level: 1, name: "概览" });
-    expect(screen.getByRole("status")).toHaveTextContent("WebCodex · 运行中");
+    expect(screen.getByRole("complementary")).toHaveTextContent("WebCodex · 运行中");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "项目" }));
     expect(screen.queryByRole("button", { name: /添加项目|切换项目|Use project|Select project/ })).not.toBeInTheDocument();
     expect(api.activateLocalProject).not.toHaveBeenCalled();
@@ -774,8 +775,11 @@ beforeEach(() => {
   it("does not equate an unmanaged Desktop tunnel with ChatGPT being disconnected", async () => {
     api.getState.mockResolvedValue(readyState); renderApp();
     await screen.findByRole("heading", { level: 1, name: "概览" });
-    expect(screen.getByText(/尚未检查 ChatGPT 活动/)).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("WebCodex · 运行中");
+    // Activity observation may enter Pending before this assertion: neither state means the Tunnel is disconnected.
+    expect(screen.getByRole("button", { name: /ChatGPT/ }))
+      .toHaveTextContent(/(尚未检查|正在检查|尚未观察到) ChatGPT 活动/);
+    expect(screen.getByRole("complementary")).toHaveTextContent("WebCodex · 运行中");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByText(/ChatGPT 未连接|等待 ChatGPT|不代表 ChatGPT/)).not.toBeInTheDocument();
   });
 

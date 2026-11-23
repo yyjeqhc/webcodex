@@ -42,6 +42,35 @@ beforeEach(() => {
 });
 
 describe("Connections + Tools control surfaces", () => {
+
+  it("reports Stop immediately while the Tunnel control request is pending", async () => {
+    const initial = { ...state(), persistent_environment: "local" };
+    let finish!: (snapshot: DesktopState) => void;
+    api.tunnelProfileAction.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render(<Harness mode="connections" initial={initial} />);
+    const stop = screen.getByRole("button", { name: "Stop ChatGPT Personal" });
+    fireEvent.click(stop);
+    expect(api.tunnelProfileAction).toHaveBeenCalledExactlyOnceWith("personal", "stop");
+    expect(screen.getByText(connectionsToolsText("en-US", "stopping"))).toBeInTheDocument();
+    expect(stop).toBeDisabled();
+    await act(async () => finish(initial));
+    expect(screen.queryByText(connectionsToolsText("en-US", "stopping"))).toBeNull();
+  });
+
+  it("acknowledges a Server restart before waiting for the native refresh", async () => {
+    const profile = connectionFixture({ id: "server-owned", host_mode: "embedded", autostart: true, server_restart_required: true });
+    const initial = { ...state(), persistent_environment: "local", connections: connectionSnapshot(profile) };
+    let finish!: (snapshot: DesktopState) => void;
+    api.environmentServiceAction.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render(<Harness mode="connections" initial={initial} />);
+    const restart = screen.getByRole("button", { name: connectionsToolsText("en-US", "restartServer") });
+    fireEvent.click(restart);
+    expect(api.environmentServiceAction).toHaveBeenCalledExactlyOnceWith({ environmentId: "local", component: "server", action: "restart" });
+    expect(screen.getByText(connectionsToolsText("en-US", "restarting"))).toBeInTheDocument();
+    expect(restart).toBeDisabled();
+    await act(async () => finish(initial));
+    expect(screen.queryByText(connectionsToolsText("en-US", "restarting"))).toBeNull();
+  });
   it("prepares one embedded Gemini Quick connection, starts the verified public ingress and hands off the current URL", async () => {
     const initial = { ...state(), persistent_environment: "local", connections: connectionSnapshot() };
     const quick = connectionFixture({ id: "q", configuration_id: "new", name: "Gemini", provider: {kind: "cloudflare_quick"},

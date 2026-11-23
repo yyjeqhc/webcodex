@@ -34,10 +34,11 @@ function recoveryFor(profile: TunnelConnection): Recovery {
   }
 }
 
-export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEdit, onDelete, onCopy, onSettings }: {
+export function ConnectionCard({ profile, canStart, busy, pendingAction, copied, onAction, onEdit, onDelete, onCopy, onSettings }: {
   profile: TunnelConnection;
   canStart: boolean;
   busy: boolean;
+  pendingAction?: TunnelProfileAction | null;
   copied: boolean;
   onAction: (action: TunnelProfileAction) => void;
   onEdit: () => void;
@@ -58,7 +59,10 @@ export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEd
   const failed = !profile.ready && Boolean(profile.last_error || profile.lifecycle === "error");
   const recovery = recoveryFor(profile);
   const healthStale = profile.last_error === "health_stale";
-  const status = profile.server_restart_required
+  const status = pendingAction === "stop" ? c("stopping")
+    : pendingAction === "restart" ? c("restarting")
+    : pendingAction === "start" ? p("starting")
+    : profile.server_restart_required
     ? c("pendingServerRestart")
     : profile.ready
       ? p("running")
@@ -109,8 +113,8 @@ export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEd
   if (profile.reason_code) detailRows.push({ label: "reasonCode", value: <code>{profile.reason_code}</code> });
   if (profile.local_mcp_url) detailRows.push({ label: "mcpAddress", value: <code>{profile.local_mcp_url}</code>, path: true });
   if (profile.runtime_directory) detailRows.push({ label: "runtimeDirectory", value: <code>{profile.runtime_directory}</code>, path: true });
-  return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
-    <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2></div><span className={`connection-state ${profile.ready ? "ready" : ""}`} role="status"><i className={`status-dot ${profile.ready ? "ready" : failed ? "error" : "unknown"}`} aria-hidden="true" />{status}</span></header>
+  return <article className="connection-profile" aria-busy={Boolean(pendingAction)} aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
+    <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2></div><span className={`connection-state ${profile.ready && !pendingAction ? "ready" : ""}`} role="status"><i className={`status-dot ${pendingAction ? "unknown" : profile.ready ? "ready" : failed ? "error" : "unknown"}`} aria-hidden="true" />{status}</span></header>
     <div className="connection-id"><span>{c("tunnelId")}</span><code>{profile.tunnel_id || "—"}</code>{profile.tunnel_id && <button type="button" className="text-button" aria-label={`${c("copyId")} ${profile.name}`} onClick={onCopy}>{copied ? p("copied") : c("copyId")}</button>}</div>
     {profile.server_restart_required && <div className="connection-apply-note" role="status"><strong>{c("pendingServerRestart")}</strong><span>{c("profileRestartHelp")}</span></div>}
     {failed && <div className="connection-recovery" role="status"><strong>{c(recovery.title)}</strong><p>{c(recovery.action)}</p>{autoProxyRecovery && <p>{c("autoProxyHint")}</p>}

@@ -36,6 +36,19 @@ cargo build --locked --profile dogfood -p webcodex-cli -p webcodex -p webcodex-r
 
 此时选择 `target/dogfood`。三个程序都支持单独运行 `--build-info-json`，在启动服务/读取 Runtime 配置之前输出 schema version 1 的构建信息。不能识别的外部程序不会被默认视为兼容。macOS 签名、Gatekeeper 和 Computer Use 权限是独立的操作系统约束，不能用协议兼容代替它们。
 
+## Windows 登录自启
+
+**登录时启动 WebCodex** 控制的是登录 Windows 后是否打开 Desktop。
+在持久 Environment 中，Server 和 Runner 由各自的 WebCodex 受管计划任务启动。
+关闭 Desktop 的登录自启开关后，这些后台服务任务仍会保留。
+
+Windows 持久 Environment 目前没有受支持的纯手动模式，无法同时禁用后台
+服务的登录触发器并继续通过 Desktop 管理这些服务。受管任务的校验要求
+登录触发器处于启用状态。在任务计划程序中禁用触发器后，Desktop 或 CLI
+可能会报 `service_foreignservice`。尝试恢复前，先核对原任务的来源和配置。
+恢复 WebCodex 创建的登录触发器也会恢复后台服务的登录自启。排查期间请保留
+现有任务、Environment 和已保存的凭据。
+
 ## 故障排查与诊断包
 
 “设置 → Runtime 与服务”先展示服务状态和本机服务的启动、停止、重启操作，再展示程序来源与兼容性；构建信息在“版本与文件详情”中。已安装环境的程序统一通过“关于与更新”升级。

@@ -94,6 +94,22 @@ Select `target/dogfood`. No special source revision is required by Desktop. Runt
 
 On macOS, OS code signing, Gatekeeper and Computer Use permissions are separate from protocol compatibility. Rebuilding a binary may change its OS identity; use the repository's documented local signing flow where appropriate. Never overwrite an independent control Runner while dogfooding the candidate it is meant to recover.
 
+## Windows login startup
+
+**Launch WebCodex at login** controls whether Windows opens the Desktop app
+when you sign in. A persistent Environment has separate WebCodex-managed
+Task Scheduler entries for Server and Runner. Turning off Desktop login
+startup leaves those background service tasks in place.
+
+The Windows persistent Environment currently has no supported manual-only
+mode that keeps its services manageable from Desktop while disabling their
+login triggers. The managed-task check expects an enabled login trigger.
+If you disable the trigger in Task Scheduler, Desktop or the CLI can report
+`service_foreignservice` for that task. Check the existing task's origin and
+configuration before attempting recovery. Restoring the WebCodex-managed
+trigger also restores background login startup. Leave the task, Environment,
+and saved credentials in place while diagnosing the mismatch.
+
 ## Diagnostics and tracing
 
 Open **Settings → Troubleshooting** for problem-specific links to Connections, Activity, and Runtime & services, followed by report export and request tracing. Installed-environment service controls are under Runtime & services; account credential recovery remains under Troubleshooting. Metadata tracing records request lifecycle/correlation information without full tool argument/result bodies. Desktop can edit its local Server and an installed Environment's verified current-user Server service. For a non-persistent local Runtime, tracing edit authority uses the exact Desktop-managed private environment file and Server ownership, independently of Runtime switching or Runner ownership. A stopped Server's managed configuration remains editable; Save & Restart requires separate Server control authority. Administrator guidance applies only to a saved system-scope Environment. The tracing selector stays visible. Remote, system-scope, unowned or unavailable Servers show a disabled selector with the effective mode (or an explicit unconfirmed value) and specific guidance. Configuration navigation is independent of editing: a known local configuration directory remains accessible, and read-only views can copy `WEBCODEX_TOOL_REQUEST_TRACE=metadata`. System-service changes require administrator/service permissions; remote changes must be made on the Server machine. Ownership and ACL checks remain unchanged. Full tracing can contain sensitive inputs/results and requires explicit confirmation; enable it only temporarily.

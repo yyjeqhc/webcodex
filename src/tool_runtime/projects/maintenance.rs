@@ -8,6 +8,43 @@ pub(super) fn registered_git_summary(project: &RunnerProjectSummary) -> Value {
         "source":"runner_inventory","freshness":"unverified"})
 }
 
+// The Server may run on a different OS. Compare DOS drive spellings to the
+// Runner's verbatim drive path without resolving files or folding directory case.
+fn registered_workspace_path_matches(registered: &str, requested: &str) -> bool {
+    if registered == requested {
+        return true;
+    }
+    fn drive_path(path: &str) -> Option<(u8, &str)> {
+        let verbatim = path.strip_prefix(r"\\?\");
+        let path = verbatim.unwrap_or(path);
+        let [drive, b':', b'\\' | b'/', ..] = path.as_bytes() else {
+            return None;
+        };
+        if !drive.is_ascii_alphabetic() || (verbatim.is_some() && path.contains('/')) {
+            return None;
+        }
+        let tail = &path[3..];
+        // Verbatim paths keep dots/spaces that the DOS form may interpret
+        // differently. Leave unusual or traversing spellings to the Runner.
+        if tail
+            .split(['\\', '/'])
+            .any(|part| part.ends_with(['.', ' ']) || part.contains([':', '*', '?']))
+        {
+            return None;
+        }
+        Some((drive.to_ascii_uppercase(), tail))
+    }
+    let (Some((registered_drive, registered_tail)), Some((requested_drive, requested_tail))) =
+        (drive_path(registered), drive_path(requested))
+    else {
+        return false;
+    };
+    registered_drive == requested_drive
+        && registered_tail
+            .split(['\\', '/'])
+            .eq(requested_tail.split(['\\', '/']))
+}
+
 impl ToolRuntime {
     pub(crate) async fn resolve_workspace(
         &self,
@@ -52,7 +89,8 @@ impl ToolRuntime {
             .iter()
             .filter(|project| {
                 let id = runner_project_runtime_id(&client_id, &project.id);
-                path.as_ref().is_none_or(|path| project.path == *path)
+                path.as_ref()
+                    .is_none_or(|path| registered_workspace_path_matches(&project.path, path))
                     && query
                         .as_deref()
                         .is_none_or(|query| super::project_query_matches(query, &id, project))

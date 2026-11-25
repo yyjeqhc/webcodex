@@ -96,7 +96,7 @@ pub(super) fn handle_stream_envelope(
         }
         RunnerEnvelope::Pong { .. } => None,
         RunnerEnvelope::ProjectInventoryStatus { status } => {
-            project_inventory.handle_status(transport, status, cfg, runtime, out_tx);
+            project_inventory.handle_status(transport, status, runtime, out_tx);
             None
         }
         RunnerEnvelope::Registered { .. } if transport == StreamTransport::Quic => None,

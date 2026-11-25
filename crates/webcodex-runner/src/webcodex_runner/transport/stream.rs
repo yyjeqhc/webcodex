@@ -326,39 +326,28 @@ where
                 } else {
                     last_scan_publication = Some(publication);
                 }
-                project_inventory = StreamingProjectInventoryCoordinator::new(Some(paged_sync_after_registration(projects)));
-                project_inventory.queue_pending(transport, &out_tx);
+                project_inventory.replace_projects(projects, transport, &out_tx, "project_inventory_background_scan");
             }
             _ = tokio::time::sleep_until(project_inventory_retry_deadline), if project_inventory_retry_at.is_some() => {
                 project_inventory.retry_pending_now(transport, &out_tx);
             }
             refresh = project_inventory_refresh_rx.changed() => {
-                if refresh.is_ok() {
-                    if initial_scan.is_some() {
-                        if last_scan_publication.is_some() {
-                            project_inventory.refresh_from_project_metadata(
-                                transport,
-                                cfg,
-                                runtime,
-                                &out_tx,
-                                "project_inventory_local_project_mutation",
-                            );
-                        }
-                        // Reuse the dirty worker, or replace an already completed
-                        // but unconsumed scan. Never run a second synchronous Git
-                        // scan on the stream thread while initial discovery waits.
-                        match runtime.initial_project_scan(cfg) {
-                            Ok(receiver) => initial_scan = Some(receiver),
-                            Err(error) => session_error = Some(error),
-                        }
-                    } else {
-                        project_inventory.refresh_from_current_projects(
+                if refresh.is_ok() && project_inventory.supported {
+                    if last_scan_publication.is_some() {
+                        project_inventory.refresh_from_project_metadata(
                             transport,
                             cfg,
                             runtime,
                             &out_tx,
-                            "project_inventory_local_project_mutation",
+                            "project_inventory_refresh_while_enriching",
                         );
+                    }
+                    // Project mutations and Server-requested resnapshots use
+                    // the same worker as startup. Git probes must never hold
+                    // the stream reader while new requests or pings are queued.
+                    match runtime.initial_project_scan(cfg) {
+                        Ok(receiver) => initial_scan = Some(receiver),
+                        Err(error) => session_error = Some(error),
                     }
                 }
             }

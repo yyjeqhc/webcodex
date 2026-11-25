@@ -1,4 +1,3 @@
-
 #[test]
 fn project_inventory_pager_honors_count_byte_and_ack_boundaries() {
     for count in [64usize, 65, 100, 256, 1024] {
@@ -334,7 +333,6 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
         coordinator.handle_status(
             transport,
             inventory_status("in_progress", &generation_a, 100, page_a0.projects.len()),
-            &cfg,
             &runtime,
             &tx,
         );
@@ -358,7 +356,7 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
             ),
         )
         .unwrap();
-        coordinator.refresh_from_current_projects(
+        coordinator.refresh_from_project_metadata(
             transport,
             &cfg,
             &runtime,
@@ -387,6 +385,7 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
         // The authoritative dynamic projection can race after B/page0 and retire
         // it too. A stale status is therefore the synchronization fence: abandon
         // the old logical snapshot and re-observe project-registry as generation C.
+        let scan_changes = runtime.project_inventory_changes();
         coordinator.handle_status(
             transport,
             ShellProjectInventoryStatus {
@@ -399,9 +398,20 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
                 max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
                 max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
             },
-            &cfg,
             &runtime,
             &tx,
+        );
+        assert!(scan_changes.has_changed().unwrap());
+        let mut scan = runtime.initial_project_scan(&cfg).unwrap();
+        let publication = runtime
+            .next_project_scan_publication(&mut scan, None)
+            .await
+            .unwrap();
+        coordinator.replace_projects(
+            (*publication.projects).clone(),
+            transport,
+            &tx,
+            "test_resnapshot",
         );
         let page_c0 = match rx.recv().await {
             Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
@@ -427,7 +437,6 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
         coordinator.handle_status(
             transport,
             inventory_status("in_progress", &generation_c, 101, page_c0.projects.len()),
-            &cfg,
             &runtime,
             &tx,
         );
@@ -442,7 +451,6 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
         coordinator.handle_status(
             transport,
             inventory_status("complete", &generation_c, 101, 101),
-            &cfg,
             &runtime,
             &tx,
         );
@@ -478,7 +486,6 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
         coordinator.handle_status(
             transport,
             inventory_status("in_progress", &generation_a, 100, page_a0.projects.len()),
-            &cfg,
             &runtime,
             &tx,
         );
@@ -494,7 +501,6 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
         coordinator.handle_status(
             transport,
             inventory_status("in_progress", &generation_a, 100, page_a0.projects.len()),
-            &cfg,
             &runtime,
             &tx,
         );
@@ -541,7 +547,6 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
                 max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
                 max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
             },
-            &cfg,
             &runtime,
             &tx,
         );
@@ -552,7 +557,6 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
         coordinator.handle_status(
             transport,
             inventory_status("in_progress", &generation_a, 100, page_a0.projects.len()),
-            &cfg,
             &runtime,
             &tx,
         );
@@ -604,7 +608,6 @@ async fn streaming_permanent_inventory_error_does_not_fresh_resnapshot() {
                 max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
                 max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
             },
-            &cfg,
             &runtime,
             &tx,
         );

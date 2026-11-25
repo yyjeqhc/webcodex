@@ -5,6 +5,16 @@ import { once } from 'node:events';
 import { chromium } from 'playwright';
 import { baseState } from '../../src/mcp_tests/work_result_app_fixture.mjs';
 
+// The card folds its body by default; open it the way a reader would.
+async function expandCard(frame) {
+  const body = frame.locator('#detailsBody');
+  if (await body.count() === 0) return;
+  if (await body.evaluate(node => node.hidden)) {
+    await frame.locator('#detailsToggle').click();
+    await frame.waitForFunction(() => document.getElementById('detailsBody').hidden === false);
+  }
+}
+
 const output = new URL('../../artifacts/work-result-controls/', import.meta.url);
 await mkdir(output, { recursive: true });
 const html = await readFile(new URL('../../src/mcp_work_result_app.html', import.meta.url), 'utf8');
@@ -68,6 +78,7 @@ async function mount(width, theme, empty = false, touch = false, displayMode = '
   }, { html, state: structuredClone(baseState), theme, empty, displayMode });
   const frame = page.frames().find(candidate => candidate.parentFrame());
   await frame.locator(empty ? '#emptyState' : '#refresh:not(:disabled)').waitFor();
+  if (!empty) await expandCard(frame);
   return { page, frame, errors };
 }
 
@@ -82,7 +93,7 @@ try {
     try {
       await check(`Header geometry (${label})`, async () => {
         assert.equal(await frame.evaluate(() => getComputedStyle(document.documentElement).colorScheme), theme);
-        assert.equal(await frame.locator('#badge').innerText(), 'Waiting');
+        assert.equal(await frame.locator('#badge').innerText(), '等待中');
         // Appearance is a quiet footer preference; the header keeps only Refresh and status.
         assert.equal(await frame.locator('.app-header .card-appearance').count(), 0);
         assert.equal(await frame.locator('.app-footer > .card-appearance').count(), 1);
@@ -103,7 +114,7 @@ try {
         });
         await page.screenshot({ path: new URL(`appearance-open-${theme}-${width}.png`, output).pathname });
         assert.ok(bounds.left >= 0 && bounds.right <= bounds.width + 1 && bounds.top >= 0 && bounds.bottom <= bounds.height + 1, `Appearance must fit viewport: ${JSON.stringify(bounds)}`);
-        const picker = frame.getByRole('combobox', { name: 'Selected controls' });
+        const picker = frame.getByRole('combobox', { name: '选中控件' });
         await picker.click();
         const dropdown = await picker.evaluate(node => {
           const list = document.getElementById(node.getAttribute('aria-controls'));
@@ -142,7 +153,7 @@ try {
       });
       if (await frame.locator('.card-appearance').evaluate(node => node.open)) await frame.locator('.card-appearance > summary').click();
       await check(`Pointer selection and keyboard focus (${label})`, async () => {
-        const results = frame.getByRole('tab', { name: 'Results', exact: true });
+        const results = frame.getByRole('tab', { name: '结果', exact: true });
         await results.click();
         assert.equal(await results.getAttribute('aria-selected'), 'true');
         const pointer = await results.evaluate(node => ({ focusVisible: node.matches(':focus-visible'), outline: getComputedStyle(node).outlineStyle }));
@@ -158,7 +169,7 @@ try {
         await page.screenshot({ path: new URL(`results-keyboard-${theme}-${width}.png`, output).pathname });
       });
       await check(`Populated and empty Results actions (${label})`, async () => {
-        await frame.getByRole('tab', { name: 'Results', exact: true }).click();
+        await frame.getByRole('tab', { name: '结果', exact: true }).click();
         assert.equal(await frame.locator('#workspaceCollapse').isVisible(), false, 'Collapsed files need no collapse action');
         assert.equal(await frame.locator('#workspacePin').isEnabled(), true, 'Changed files retain pin action');
         await frame.locator('#workspaceFiles .file-toggle').first().click();
@@ -215,8 +226,8 @@ try {
           return box.left >= 0 && box.right <= innerWidth + 1 && box.top >= 0 && box.bottom <= innerHeight + 1;
         });
         await frame.locator('h1').click();
-        await frame.getByRole('tab', { name: 'Results', exact: true }).click();
-        assert.equal(await frame.getByRole('tab', { name: 'Results', exact: true }).getAttribute('aria-selected'), 'true');
+        await frame.getByRole('tab', { name: '结果', exact: true }).click();
+        assert.equal(await frame.getByRole('tab', { name: '结果', exact: true }).getAttribute('aria-selected'), 'true');
         assert.equal(await frame.locator('#workspaceCollapse').isVisible(), false);
         assert.equal(await frame.locator('#workspacePin').isVisible(), true);
         await assertLayout(frame);

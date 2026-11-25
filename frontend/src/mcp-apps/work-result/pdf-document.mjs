@@ -94,11 +94,11 @@ async function open() {
       } }, remaining, controller.signal);
       const value = envelope(result);
       if (!value?.success) {
-        if (value?.output?.error_kind === "snapshot_changed") throw new Error("PDF version changed · reopen the document");
-        throw new Error("PDF read unavailable · retry this version");
+        if (value?.output?.error_kind === "snapshot_changed") throw new Error("PDF 版本已变化 · 请重新打开文档");
+        throw new Error("PDF 读取不可用 · 请重试此版本");
       }
       const encoded = privateToolMetadata(result, "webcodex/artifactChunk")?.content_base64;
-      if (typeof encoded !== "string") throw new Error("PDF chunk bytes missing from Host result");
+      if (typeof encoded !== "string") throw new Error("宿主结果中缺少 PDF 分块字节");
       return { page: value.output?.artifact_chunk, encoded };
     },
   });
@@ -117,7 +117,7 @@ addEventListener("message", event => {
   const message = event.data;
   if (pending.has(message.id)) {
     const entry = pending.get(message.id);
-    message.error ? entry.reject(new Error("Host request failed")) : entry.resolve(message.result); return;
+    message.error ? entry.reject(new Error("宿主请求失败")) : entry.resolve(message.result); return;
   }
   if (message.method === "ui/resource-teardown") {
     close(); parent.postMessage({ jsonrpc: "2.0", id: message.id, result: {} }, "*"); return;
@@ -130,10 +130,10 @@ addEventListener("message", event => {
     if (!value?.success || invalidField) {
       stop(); identity = null; el("retry").hidden = true; el("reader").replaceChildren(); el("empty").hidden = false;
       el("empty").textContent = !value
-        ? "PDF unavailable: Host tool result did not include a readable WebCodex envelope."
+        ? "PDF 不可用：宿主工具结果中没有可读取的 WebCodex 信封。"
         : value.success !== true
-          ? "PDF unavailable: present_pdf did not succeed."
-          : `PDF unavailable: invalid PDF document identity (${invalidField}).`;
+          ? "PDF 不可用：present_pdf 未成功。"
+          : `PDF 不可用：PDF 文档标识无效（${invalidField}）。`;
       return;
     }
     // Repeated Host delivery must not restart a live transfer/Worker.
@@ -151,4 +151,4 @@ send("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "webcode
     if (disposed) return; theme(result?.hostContext);
     parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
     if (result?.hostContext?.displayMode !== "fullscreen") parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/size-changed", params: { height: 720 } }, "*");
-  }).catch(() => { if (!disposed) el("empty").textContent = "PDF reader could not connect to the Host."; });
+  }).catch(() => { if (!disposed) el("empty").textContent = "PDF 阅读器无法连接到宿主。"; });

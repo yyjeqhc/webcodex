@@ -130,7 +130,7 @@ function reader(options = {}) {
     async close() { deliver({ method: 'ui/resource-teardown', id: 'teardown' }); await flush(); },
   };
 }
-const failure = 'PDF unavailable: page paint failed';
+const failure = 'PDF 不可用：page paint failed';
 const rejectedPaint = () => ({ promise: Promise.reject(new Error('page paint failed')) });
 
 for (const [name, sourceLineEnding] of [['LF', '\n'], ['CRLF', '\r\n']]) {
@@ -138,13 +138,13 @@ for (const [name, sourceLineEnding] of [['LF', '\n'], ['CRLF', '\r\n']]) {
     const view = reader({ sourceLineEnding });
     try {
       await view.present();
-      assert.match(view.status(), /^PDF · 3 pages/);
+      assert.match(view.status(), /^PDF · 3 页/);
       assert.ok(view.page(1).querySelector('canvas').width > 0);
     } finally { await view.close(); view.dom.window.close(); }
   });
 }
 
-for (const action of ['Next', 'Zoom in', 'resize', 'completion']) {
+for (const action of ['下一页', '放大', 'resize', 'completion']) {
   test(`page render failure survives ${action} without hiding Retry`, async () => {
     const view = reader({ paint: page => page.number === 1 && page.doc.pages.filter(item => item.number === 1).length === 1 ? rejectedPaint() : undefined });
     await view.present();
@@ -164,8 +164,8 @@ test('failed pages release partial canvas/proxy and do not automatically retry o
   const canvas = view.page(1).querySelector('canvas'), failedPage = view.documents[0].pages[0];
   assert.equal(canvas.width, 0); assert.equal(canvas.height, 0);
   assert.equal(failedPage.cleanups, 1);
-  await view.near(1, 2); await view.click('Next'); await view.click('Previous');
-  await view.click('Zoom in'); await view.resize(650);
+  await view.near(1, 2); await view.click('下一页'); await view.click('上一页');
+  await view.click('放大'); await view.resize(650);
   assert.equal(view.documents[0].pages.filter(page => page.number === 1).length, 1);
   assert.ok(view.documents[0].pages.some(page => page.number === 2 && page.renders === 1), 'Valid queued pages still render');
   await view.close(); view.dom.window.close();
@@ -175,7 +175,7 @@ for (const stage of ['textContent', 'textLayer']) {
   test(`${stage} failures clear all partial output`, async () => {
     const view = reader({ [stage]: () => Promise.reject(new Error('text failed')) });
     await view.present();
-    assert.equal(view.status(), 'PDF unavailable: text failed');
+    assert.equal(view.status(), 'PDF 不可用：text failed');
     assert.equal(view.page(1).querySelector('canvas').width, 0);
     assert.equal(view.page(1).querySelector('.textLayer').children.length, 0);
     assert.equal(view.documents[0].pages[0].cleanups, 1);
@@ -187,10 +187,10 @@ test('stale render failure after zoom cannot clear the new canvas or poison the 
   const old = deferred();
   const view = reader({ paint: page => page.doc.pages.length === 1 ? old : undefined });
   await view.present(); const original = view.documents[0].pages[0];
-  await view.click('Zoom in');
+  await view.click('放大');
   old.reject(new Error('stale render error')); await flush();
   assert.equal(original.task.cancelled, true); assert.equal(original.cleanups, 1);
-  assert.match(view.status(), /^PDF · 3 pages/);
+  assert.match(view.status(), /^PDF · 3 页/);
   assert.ok(view.page(1).querySelector('canvas').width > 0);
   assert.equal(view.document.getElementById('retry').hidden, true);
   await view.close(); view.dom.window.close();
@@ -213,7 +213,7 @@ for (const action of ['retry', 'replacement', 'teardown']) {
     assert.equal(oldWorker.terminated, true); assert.equal(view.documents[0].destroyed, true);
     assert.equal(view.document.getElementById('retry').hidden, true);
     if (action !== 'teardown') {
-      assert.match(view.status(), /^PDF · 3 pages/);
+      assert.match(view.status(), /^PDF · 3 页/);
       assert.ok(view.page(1).querySelector('canvas').width > 0);
       await view.close();
     }
@@ -227,7 +227,7 @@ test('explicit Retry and new source clear a recorded render failure and paint ag
     const view = reader({ paint: page => page.doc.index === 0 ? rejectedPaint() : undefined });
     await view.present(); assert.equal(view.status(), failure);
     if (action === 'retry') await view.retry(); else await view.present('new');
-    assert.match(view.status(), /^PDF · 3 pages/);
+    assert.match(view.status(), /^PDF · 3 页/);
     assert.equal(view.document.getElementById('retry').hidden, true);
     assert.equal(view.documents[0].destroyed, true);
     assert.ok(view.page(1).querySelector('canvas').width > 0);
@@ -241,7 +241,7 @@ test('Worker stream failure clears only its active page while valid queued pages
   await view.present(); await view.near(1, 2);
   view.workers[0].fail('Image exceeded maximum allowed size');
   paint.resolve(); await flush();
-  assert.match(view.status(), /16 million pixel limit/);
+  assert.match(view.status(), /1600 万像素上限/);
   assert.equal(view.page(1).querySelector('canvas').width, 0);
   assert.ok(view.page(2).querySelector('canvas').width > 0, 'Unrelated page must remain renderable');
   assert.equal(view.page(2).querySelector('.textLayer').textContent, 'page 2');
@@ -251,10 +251,10 @@ test('Worker stream failure clears only its active page while valid queued pages
 test('Worker errors from a cancelled generation cannot poison a newer zoom render', async () => {
   const old = deferred();
   const view = reader({ paint: page => page.doc.pages.length === 1 ? old : undefined });
-  await view.present(); await view.click('Zoom in');
+  await view.present(); await view.click('放大');
   view.workers[0].fail('stale Worker failure');
   old.reject(new Error('stale render failure')); await flush();
-  assert.match(view.status(), /^PDF · 3 pages/);
+  assert.match(view.status(), /^PDF · 3 页/);
   assert.equal(view.document.getElementById('retry').hidden, true);
   assert.ok(view.page(1).querySelector('canvas').width > 0);
   await view.close(); view.dom.window.close();
@@ -265,11 +265,11 @@ test('a late stream error cannot be attributed to a different active page', asyn
   const old = deferred(), next = deferred();
   const view = reader({ paint: page => page.number === 1 ? old : next });
   await view.present(); const oldStream = view.workers[0].lastStream;
-  await view.click('Next');
+  await view.click('下一页');
   old.resolve(); await flush();
   view.workers[0].fail('late previous page stream', oldStream);
   next.resolve(); await flush();
-  assert.match(view.status(), /^PDF · 3 pages/);
+  assert.match(view.status(), /^PDF · 3 页/);
   assert.equal(view.document.getElementById('retry').hidden, true);
   assert.ok(view.page(2).querySelector('canvas').width > 0);
   await view.close(); view.dom.window.close();
@@ -280,14 +280,14 @@ for (const reuseOperatorStream of [false, true]) {
     const old = deferred(), latest = deferred();
     const view = reader({ reuseOperatorStream, paint: page => page.doc.pages.length === 1 ? old : latest });
     await view.present(); const oldStream = view.workers[0].lastStream;
-    await view.click('Zoom in'); old.resolve(); await flush();
+    await view.click('放大'); old.resolve(); await flush();
     view.workers[0].fail('operator stream failed', oldStream);
     latest.resolve(); await flush();
     if (reuseOperatorStream) {
-      assert.equal(view.status(), 'PDF unavailable: operator stream failed');
+      assert.equal(view.status(), 'PDF 不可用：operator stream failed');
       assert.equal(view.page(1).querySelector('canvas').width, 0);
     } else {
-      assert.match(view.status(), /^PDF · 3 pages/);
+      assert.match(view.status(), /^PDF · 3 页/);
       assert.equal(view.document.getElementById('retry').hidden, true);
       assert.ok(view.page(1).querySelector('canvas').width > 0);
     }
@@ -300,11 +300,11 @@ test('long documents still load lazily and preserve selected page/relative posit
   assert.equal(view.documents[0].pages.length, 1);
   await view.near(1, 2, 3, 4, 5, 6, 7);
   assert.ok(view.documents[0].pages.length < 32);
-  for (let number = 2; number <= 8; number++) await view.click('Next');
+  for (let number = 2; number <= 8; number++) await view.click('下一页');
   const viewport = view.host.querySelector('.pdf-viewer-container');
   const selected = view.page(8);
   viewport.scrollTop += selected.getBoundingClientRect().height / 4;
-  for (const action of [() => view.click('Zoom in'), () => view.resize(600)]) {
+  for (const action of [() => view.click('放大'), () => view.resize(600)]) {
     await action();
     assert.equal(view.host.querySelector('.pdf-control-group span').textContent, '8 / 32');
     const bounds = selected.getBoundingClientRect();
@@ -343,8 +343,8 @@ test('an active Worker failure clears partial pixels immediately and stays faile
   const view = reader({ paint: () => paint }); await view.present();
   view.workers[0].fail('operator failed');
   assert.equal(view.page(1).querySelector('canvas').width, 0);
-  await view.click('Zoom in'); paint.resolve(); await flush();
+  await view.click('放大'); paint.resolve(); await flush();
   assert.equal(view.documents[0].pages.length, 1, 'Zoom must not retry the failed page');
-  assert.equal(view.status(), 'PDF unavailable: operator failed');
+  assert.equal(view.status(), 'PDF 不可用：operator failed');
   await view.close(); view.dom.window.close();
 });

@@ -114,6 +114,7 @@ mod search_and_read;
 mod search_project_texts;
 mod semantic_navigation;
 mod session_context;
+mod web_preview;
 pub(crate) use session_context::runtime_observation_principal;
 pub(crate) use session_context::SESSION_ATTENTION_MAX_MESSAGES;
 pub(crate) use window_activity::{

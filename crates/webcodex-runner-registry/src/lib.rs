@@ -28,6 +28,7 @@ mod projects;
 mod protocol;
 mod receipts;
 mod reconciliation;
+mod removal;
 pub use receipts::{
     JobReceiptStore, JobTerminalEvent, JobTerminalEventSink, JobTerminalRegistrationSnapshot,
     RetainedJobReceipt,
@@ -177,6 +178,7 @@ pub use maintenance::{
 };
 pub(crate) use protocol::AcceptedRunnerProtocol;
 pub use reconciliation::recovery_timeout_sweep;
+pub use removal::{RunnerRemovalOutcome, RunnerRemovalRefusal};
 pub use registry::{
     job_recovery_grace_secs, RunnerRegistry, RunnerTransport, DETACHED_IDEMPOTENCY_CONFLICT,
     DETACHED_IDEMPOTENCY_RECOVERY_PREFIX, JOB_RECOVERY_GRACE_MAX_SECS, JOB_RECOVERY_GRACE_MIN_SECS,

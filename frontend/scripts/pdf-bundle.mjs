@@ -12,7 +12,7 @@ function gzipBase64(bytes) {
   return compressed.toString("base64");
 }
 export async function buildPdfBundle(entryPoint, globalName) {
-const settings = { bundle: true, platform: "browser", target: "es2022", minify: true,
+const settings = { bundle: true, platform: "browser", target: "es2022", charset: "utf8", minify: true,
   write: false, legalComments: "inline", supported: { "inline-script": true } };
 const worker = await build({ ...settings, entryPoints: [resolve(pdfRoot, "build/pdf.worker.mjs")], format: "esm" });
 const assets = {}, notices = [`pdfjs-dist ${JSON.parse(await readFile(resolve(pdfRoot, "package.json"), "utf8")).version}\n${await readFile(resolve(pdfRoot, "LICENSE"), "utf8")}`];

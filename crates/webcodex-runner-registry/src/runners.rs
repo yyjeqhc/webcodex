@@ -1036,14 +1036,7 @@ impl RunnerRegistry {
             !request_ids.contains(request_id) && !job_ids.contains(job_id)
         });
         for client_id in &expired {
-            inner.runners.remove(client_id);
-            inner.queues_by_runner.remove(client_id);
-            inner.notifiers.remove(client_id);
-            inner.retired_instances.remove(client_id);
-            let project_prefix = format!("agent:{client_id}:");
-            inner
-                .unregistering_projects
-                .retain(|project_id, _| !project_id.starts_with(&project_prefix));
+            crate::removal::remove_runner_registration_locked(inner, client_id);
         }
         self.cleanup_intents
             .lock()

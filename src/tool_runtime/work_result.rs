@@ -512,6 +512,12 @@ impl ToolRuntime {
             "max_reuse_ms": super::work_result_workspace::REUSE_LEASE.as_millis() as u64,
             "semantics": "bounded_snapshot_not_filesystem_freshness",
         });
+        // Presentation links the App may offer. Deployment-absolute URLs only, and
+        // only for what this server can actually serve: the console, plus a preview
+        // while one is leased. The App hides a link that is not present.
+        if let Some(links) = self.work_result_links(&resolved_project) {
+            projection["links"] = links;
+        }
 
         if let Some(summary) = summary.as_ref() {
             match self.sealed_work_result_changes(&resolved_project, summary, auth) {
@@ -521,6 +527,26 @@ impl ToolRuntime {
             }
         }
         ToolResult::ok(json!({"work_result": projection}))
+    }
+
+    /// Console URL from the configured public URL, plus the project's live
+    /// preview. Both are optional: an unconfigured deployment sends neither.
+    fn work_result_links(&self, project: &str) -> Option<Value> {
+        let base = self
+            .runtime_info
+            .configured_public_url
+            .as_deref()
+            .map(|url| url.trim_end_matches('/'))
+            .filter(|url| url.starts_with("https://") || url.starts_with("http://"))?;
+        let mut links = serde_json::Map::new();
+        links.insert(
+            "console".to_string(),
+            json!(format!("{base}/runtime")),
+        );
+        if let Some(preview) = super::web_preview::active_preview_url(project) {
+            links.insert("preview".to_string(), json!(preview));
+        }
+        Some(Value::Object(links))
     }
 
     pub(crate) async fn work_result_jobs(

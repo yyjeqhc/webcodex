@@ -265,6 +265,12 @@ fn generate_field(
             "sha256" | "expected_artifact_sha256" | "adapter_id" | "event_id" => {
                 Some(json!("a".repeat(64)))
             }
+            "idempotency_key"
+                if schema.get("pattern").and_then(Value::as_str)
+                    == Some("^[A-Za-z0-9_-]{16,100}$") =>
+            {
+                Some(json!("preview-key-0123456789abcdef"))
+            }
             "observed_tool" => Some(json!("sample_tool")),
             "expected_definition_revision" => Some(json!("a".repeat(64))),
             "expected_revision"

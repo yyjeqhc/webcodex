@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 mod accounts;
 mod activity;
 mod admin_project_lifecycle;
+mod admin_runner_lifecycle;
 mod agent_attention;
 mod agent_task;
 mod agent_wait;
@@ -75,6 +76,7 @@ pub use window_inventory::{
 };
 
 pub use self::admin_project_lifecycle::{AdminProjectAudit, AdminProjectIdempotencyRecord};
+pub use self::admin_runner_lifecycle::AdminRunnerAudit;
 pub use self::agent_continuation_reference::AgentContinuationReferenceRecord;
 pub use self::agent_task::{
     AgentTaskAttemptCompletionMutation, AgentTaskAttemptHeartbeatMutation, AgentTaskAttemptRecord,

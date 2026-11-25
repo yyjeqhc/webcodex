@@ -1,0 +1,4 @@
+node_modules/
+.env.preview
+.env.preview.local
+npm-debug.log

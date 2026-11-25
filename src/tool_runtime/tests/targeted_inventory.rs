@@ -1847,7 +1847,7 @@ async fn workbench_scopes_projects_by_runner_before_paging_and_never_selects_a_s
     .await;
     register_target_agent(&runtime, "sf", vec![maintenance_project("release")], None).await;
     let empty = runtime
-        .open_webcodex_workbench(None, None, None, None)
+        .open_webcodex_workbench(None, None, None, None, None)
         .await;
     assert!(empty.success, "{empty:?}");
     assert_eq!(empty.output["runners"]["count"], 2);
@@ -1881,6 +1881,7 @@ async fn workbench_scopes_projects_by_runner_before_paging_and_never_selects_a_s
             None,
             Some("special".into()),
             None,
+            None,
         )
         .await;
     assert!(!mismatch.success);
@@ -1893,6 +1894,7 @@ async fn workbench_scopes_projects_by_runner_before_paging_and_never_selects_a_s
             Some("agent:sf:release".into()),
             Some(session.session_id),
             Some("sf".into()),
+            None,
             None,
         )
         .await;

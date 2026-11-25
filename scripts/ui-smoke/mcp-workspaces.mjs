@@ -6,6 +6,16 @@ import { chromium } from 'playwright';
 import { workbenchState, goalDetail } from '../../src/mcp_tests/workbench_upgrade_fixture.mjs';
 import { baseState, project } from '../../src/mcp_tests/work_result_app_fixture.mjs';
 
+// The card folds its body by default; open it the way a reader would.
+async function expandCard(frame) {
+  const body = frame.locator('#detailsBody');
+  if (await body.count() === 0) return;
+  if (await body.evaluate(node => node.hidden)) {
+    await frame.locator('#detailsToggle').click();
+    await frame.waitForFunction(() => document.getElementById('detailsBody').hidden === false);
+  }
+}
+
 // Shipped Apps in a private, synthetic MCP Host. No credentials or real projects.
 const baseline = process.argv.includes('--baseline');
 const caseFilter = process.env.WEBCODEX_SMOKE_CASE;
@@ -126,8 +136,9 @@ async function mount(kind, width, mode = 'fullscreen', empty = false, record = f
     frame.srcdoc = html; document.body.append(frame);
   }, { html, state, kind, mode, empty, workbenchState, goalDetail, thread });
   const frame = page.frames().find(frame => frame.parentFrame());
-  await frame.locator('#status').filter({ hasNotText: /Connecting/ }).waitFor();
+  await frame.locator('#status').filter({ hasNotText: /Connecting|连接中/ }).waitFor();
   if (!empty) await frame.locator('#refresh:not(:disabled)').waitFor();
+  if (!empty) await expandCard(frame);
   return { page, frame, errors };
 }
 
@@ -355,7 +366,7 @@ try {
       const disclosure = frame.locator(kind === 'workbench' ? '#instanceMenu' : '.card-appearance');
       await disclosure.locator('summary').click();
       const source = frame.locator('#selectionPreference');
-      const picker = disclosure.getByRole('combobox', { name: 'Selected controls' });
+      const picker = disclosure.getByRole('combobox', { name: kind === 'workbench' ? 'Selected controls' : '选中控件' });
       assert.equal(await source.inputValue(), 'accent');
       const plate = frame.locator(kind === 'workbench' ? '.primary-navigation [data-selection-motion-plate]' : '#viewTabs [data-selection-motion-plate]');
       const accentFill = await plate.evaluate(node => getComputedStyle(node).backgroundColor);
@@ -589,7 +600,7 @@ try {
     const { page, frame, errors } = await mount('work_result', 390, 'fullscreen', false, true);
     try {
       await frame.locator('#tabCollaboration').click();
-      const picker = frame.getByRole('combobox', { name: 'Message type' });
+      const picker = frame.getByRole('combobox', { name: '消息类型' });
       const source = frame.locator('#messageKind');
       assert.equal(await source.inputValue(), 'guidance');
       await picker.focus();
@@ -616,7 +627,7 @@ try {
   for (const width of [320, 1440]) await run(`work_result: file view selection and forced colors (${width})`, async () => {
     const { page, frame, errors } = await mount('work_result', width, 'fullscreen', false, width === 1440, 'no-preference', true);
     try {
-      assert.equal(await frame.locator('#tabResults').textContent(), 'Results', 'thread review keeps the card tab name');
+      assert.equal(await frame.locator('#tabResults').textContent(), '结果', 'thread review keeps the card tab name');
       await frame.locator('#workspaceFiles .file-toggle').first().click();
       const group = frame.locator('#workspaceFiles .file-views').first();
       const plate = group.locator('[data-selection-motion-plate]');

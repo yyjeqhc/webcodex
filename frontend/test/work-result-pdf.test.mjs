@@ -49,7 +49,7 @@ test("PDF reader stops on close, a changed size, and expiration rather than reta
   let time = 0;
   await assert.rejects(readPdf({ ...options(async offset => {
     time = 120_001; return response(data, offset);
-  }), now: () => time }), /timed out/);
+  }), now: () => time }), /加载超时/);
 });
 
 test("unsupported PDFs return a bounded actionable reason without requesting another segment", async () => {

@@ -24,6 +24,19 @@ pub(super) struct BundledMcpApp {
     tool_entrypoints: &'static [&'static str],
     read_display_modes: &'static [&'static str],
     resource_domains: &'static [&'static str],
+    allow_web_preview_frames: bool,
+}
+
+// Web previews are scoped to an operator-owned wildcard domain.
+fn web_preview_frame_origin() -> Option<String> {
+    let domain = std::env::var("WEBCODEX_PREVIEW_BASE_DOMAIN").ok()?;
+    let valid = domain.len() <= 253
+        && domain.split('.').count() >= 2
+        && domain.split('.').all(|part| {
+            !part.is_empty() && part.len() <= 63 && !part.starts_with('-') && !part.ends_with('-')
+                && part.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        });
+    valid.then(|| format!("https://*.{domain}"))
 }
 
 impl BundledMcpApp {
@@ -38,6 +51,7 @@ impl BundledMcpApp {
             tool_entrypoints: &[],
             read_display_modes: &[],
             resource_domains: &[],
+            allow_web_preview_frames: false,
         }
     }
 
@@ -45,6 +59,11 @@ impl BundledMcpApp {
         let mut meta = resource_meta(domain);
         if !self.resource_domains.is_empty() {
             meta["ui"]["csp"]["resourceDomains"] = json!(self.resource_domains);
+        }
+        if self.allow_web_preview_frames {
+            if let Some(origin) = web_preview_frame_origin() {
+                meta["ui"]["csp"]["frameDomains"] = json!([origin]);
+            }
         }
         meta
     }

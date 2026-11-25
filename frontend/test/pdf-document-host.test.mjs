@@ -95,7 +95,7 @@ test("a canonical present_pdf failure does not open a document", () => {
   const error = view.present({ structuredContent: { success: false, error: "present failed" } });
   assert.equal(error, null);
   assert.equal(view.chunks().length, 0);
-  assert.match(view.nodes.empty.textContent, /present_pdf did not succeed/);
+  assert.match(view.nodes.empty.textContent, /present_pdf 未成功/);
 });
 
 test("a non-canonical host structuredContent does not mask the private PDF envelope", () => {
@@ -110,7 +110,7 @@ test("a non-canonical host structuredContent does not mask the private PDF envel
   assert.equal(view.chunks()[0].params.arguments.sha256, sha);
   assert.equal(view.chunks()[0].params.arguments.bytes, pdfDocument.bytes);
   assert.equal(view.nodes.filename.textContent, pdfDocument.name);
-  assert.doesNotMatch(view.nodes.empty.textContent, /unavailable|invalid/);
+  assert.doesNotMatch(view.nodes.empty.textContent, /不可用|无效/);
 });
 
 test("a canonical host projection does not mask the private PDF envelope", () => {
@@ -124,7 +124,7 @@ test("a canonical host projection does not mask the private PDF envelope", () =>
   assert.equal(view.chunks().length, 1);
   assert.equal(view.chunks()[0].params.arguments.path, pdfDocument.path);
   assert.equal(view.chunks()[0].params.arguments.sha256, sha);
-  assert.doesNotMatch(view.nodes.empty.textContent, /unavailable|invalid/);
+  assert.doesNotMatch(view.nodes.empty.textContent, /不可用|无效/);
 });
 
 for (const key of ["result", "toolResult", "tool_result"]) {
@@ -148,7 +148,7 @@ test("nested PDF server failure outranks outer Host success", () => {
   });
   assert.equal(error, null);
   assert.equal(view.chunks().length, 0);
-  assert.match(view.nodes.empty.textContent, /did not succeed/);
+  assert.match(view.nodes.empty.textContent, /未成功/);
 });
 
 test("server text wins when a host projection drops the PDF chunk offset", async () => {

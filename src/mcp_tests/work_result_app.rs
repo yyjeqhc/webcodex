@@ -61,7 +61,7 @@ fn work_result_pdf_bytes_are_private_and_do_not_enter_structured_or_text_content
 async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v39"
+        "ui://webcodex/work-result/v41"
     );
     let runtime = workflow_runtime();
 
@@ -694,36 +694,36 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "read_changed_file_diff",
         "send_work_result_message",
         "wc_changes_snapshot_",
-        "Window activity",
+        "调用记录",
         "id=\"windowIdentity\"",
-        "Project · ",
-        "Session · ",
+        "项目 · ",
+        "会话 · ",
         "id=\"summaryStrip\"",
         "Activity",
         "Collaboration",
-        "Final changes",
+        "最终变更",
         "id=\"tabResults\"",
         "id=\"workspaceFiles\"",
-        "Changed files",
-        "Checks and review",
-        "Message this Window",
-        "No messages yet",
-        "Acknowledged",
-        "Included in tool result",
+        "变更文件",
+        "验证与审查",
+        "给这个窗口发消息",
+        "暂无消息",
+        "已确认",
+        "已送达对话",
         "ui/notifications/tool-input",
         "Object.keys(args).length === 0",
         "ui/notifications/tool-result",
         "id=\"refresh\"",
-        "Refreshing…",
+        "正在刷新…",
         "ui/resource-teardown",
         "state_version",
         "pagehide",
         "beforeunload",
-        "Current activity",
+        "当前活动",
         "visibilitychange",
         "VISIBLE_REFRESH_MS",
         "VISIBLE_IDLE_REFRESH_MS",
-        "Observe · ",
+        "仅记录 · ",
         "async_job_id",
         "observed_job_ids",
     ] {
@@ -756,13 +756,13 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "scrolling Work Result regions must reserve content space beside the scrollbar"
     );
     assert!(
-        MCP_WORK_RESULT_APP_HTML.contains("Changed content"),
+        MCP_WORK_RESULT_APP_HTML.contains("已更改内容"),
         "live workspace file contents should be rendered in Results"
     );
     // Output export is an explicit user action, covered by executable App tests;
     // refresh and mounting still never send an automatic chat message.
-    assert!(MCP_WORK_RESULT_APP_HTML.contains("Get file in chat"));
-    assert!(MCP_WORK_RESULT_APP_HTML.contains("First check that its current SHA-256"));
+    assert!(MCP_WORK_RESULT_APP_HTML.contains("在聊天中获取文件"));
+    assert!(MCP_WORK_RESULT_APP_HTML.contains("先核对"));
     // PDF.js includes dormant URL-loading code. Keep the first-party App's
     // network prohibition; the browser smoke checks the offline renderer too.
     let (before_pdf, pdf_tail) = MCP_WORK_RESULT_APP_HTML

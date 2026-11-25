@@ -25,6 +25,7 @@ export function app(filename, { deliverToolMeta = true, deliverToolStructuredCon
     return {
       tagName: String(tagName).toUpperCase(),
       textContent: "", hidden: false, open: false, children: [], className: "", type: "", onclick: null, ontoggle: null,
+      dataset: {},
       parentNode: null,
       get ownerDocument() { return document; },
       style: { setProperty() {} },

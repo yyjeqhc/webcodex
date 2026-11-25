@@ -1,5 +1,6 @@
 //! Host-independent, re-authorized resource discovery and latest-content reads.
 use super::kernel::{HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport};
+use super::web_preview::valid_preview_url;
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -123,8 +124,16 @@ impl ToolRuntime {
         project: Option<String>,
         session: Option<String>,
         client_id: Option<String>,
+        preview_url: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let preview_url = match preview_url {
+            Some(raw) => match valid_preview_url(&raw) {
+                Some(url) => Some(url),
+                None => return error("invalid_preview_url"),
+            },
+            None => None,
+        };
         if client_id
             .as_deref()
             .is_some_and(|id| id.is_empty() || id.len() > 128 || id.chars().any(char::is_control))
@@ -232,7 +241,7 @@ impl ToolRuntime {
             json!({"runners":[],"count":0,"truncated":true,"incomplete":"runner_discovery_unavailable"})
         };
         ToolResult::ok(
-            json!({"client_id":client_id,"project":project,"session_id":session,
+            json!({"client_id":client_id,"project":project,"session_id":session,"preview_url":preview_url,
             "runners":runners,"projects":projects,"selection":"caller_must_choose_runner_project_and_session"}),
         )
     }

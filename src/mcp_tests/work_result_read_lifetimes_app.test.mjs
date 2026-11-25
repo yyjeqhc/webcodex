@@ -51,8 +51,8 @@ test("a shared activity failure reaches the refreshed row without retrying autom
   const { view, row, request } = await pendingActivity();
   const current = await refreshActivity(view);
   await view.reject(request);
-  assert.equal(current.children[1].textContent, "Details unavailable.");
-  assert.notEqual(row.children[1].textContent, "Details unavailable.");
+  assert.equal(current.children[1].textContent, "详情不可用。");
+  assert.notEqual(row.children[1].textContent, "详情不可用。");
   assert.equal(view.calls("read_work_result_activity_detail").length, 1);
   current.open = false; current.ontoggle(); current.open = true; current.ontoggle(); await flush();
   assert.equal(view.calls("read_work_result_activity_detail").length, 2);
@@ -162,8 +162,8 @@ test("explicit pin retains its code and pending diff even when current workspace
   assert.equal(view.nodes.workspacePin.getAttribute("aria-pressed"), "true");
   assert.equal(view.nodes.workspacePin.hidden, false, "pinned files retain the Follow changes action when current workspace is clean");
   assert.equal(view.nodes.workspaceFiles.children[0], row);
-  assert.equal(view.nodes.workspaceStatus.textContent, "No uncommitted changes");
-  assert.match(view.nodes.workspaceTracking.textContent, /Pinned for review/);
+  assert.equal(view.nodes.workspaceStatus.textContent, "无未提交的变更");
+  assert.match(view.nodes.workspaceTracking.textContent, /已固定以供审查/);
   assert.equal(files(view).length, count);
   await view.reply(request, response);
   assert.equal(pre.children[0].textContent, "+late");
@@ -179,7 +179,7 @@ for (const failed of [false, true]) test(`pinning while a follow capture is pend
   assert.notEqual(newCapture, oldCapture);
   await view.reply(oldCapture, failed ? { structuredContent: { success: false, output: {} } } : inventory(newerSnapshot));
   assert.equal(view.nodes.workspaceFiles.children[0], row);
-  assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /unavailable/);
+  assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /不可用/);
   await view.reply(newCapture, inventory(newerSnapshot));
   assert.notEqual(view.nodes.workspaceFiles.children[0], row);
 });
@@ -189,10 +189,10 @@ test("failed renewal retains the previous view and teardown ignores late capture
   await observeWorkspace(view);
   await view.reply(files(view).at(-1), { structuredContent: { success: false, output: {} } });
   assert.equal(view.nodes.workspaceFiles.children[0], row);
-  assert.match(view.nodes.workspaceMeta.textContent, /retaining the previous file snapshot/);
+  assert.match(view.nodes.workspaceMeta.textContent, /保留上一个文件快照/);
   await observeWorkspace(view);
   await view.reply(files(view).at(-1), inventory());
-  assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /unavailable/, "successful unchanged capture clears a previous failure");
+  assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /不可用/, "successful unchanged capture clears a previous failure");
   await observeWorkspace(view);
   const capture = files(view).at(-1), count = files(view).length;
   await view.teardown(); await view.reply(capture, inventory(newerSnapshot));
@@ -220,19 +220,19 @@ test("failed pin before the first diff remains in Follow mode", async () => {
   const pin = view.nodes.workspacePin.onclick(); await flush();
   const capture = files(view)[0];
   assert.equal(view.nodes.workspacePin.getAttribute("aria-pressed"), "false");
-  assert.equal(view.nodes.workspacePin.textContent, "Pin snapshot for review");
-  assert.match(view.nodes.workspaceTracking.textContent, /Following changes/);
+  assert.equal(view.nodes.workspacePin.textContent, "固定快照以便审查");
+  assert.match(view.nodes.workspaceTracking.textContent, /正在跟随变更/);
   await view.reply(capture, { structuredContent: { success: false, output: {} } }); await pin;
   assert.equal(view.nodes.workspacePin.getAttribute("aria-pressed"), "false");
-  assert.equal(view.nodes.workspacePin.textContent, "Pin snapshot for review");
-  assert.match(view.nodes.workspaceTracking.textContent, /Following changes/);
-  assert.match(view.nodes.workspaceMeta.textContent, /still following changes/);
+  assert.equal(view.nodes.workspacePin.textContent, "固定快照以便审查");
+  assert.match(view.nodes.workspaceTracking.textContent, /正在跟随变更/);
+  assert.match(view.nodes.workspaceMeta.textContent, /仍在跟随变更/);
 });
 
 test("following working changes leaves a sealed Full text preview and its pending read intact", async () => {
   const { view, row: finalRow } = await pendingDiff(true);
   const controls = finalRow.children[1].children[2];
-  controls.children.find(button => button.textContent === "Full text").onclick(); await flush();
+  controls.children.find(button => button.textContent === "全文").onclick(); await flush();
   const textRead = files(view).at(-1), args = textRead.params.arguments;
   assert.equal(args.session_id, session_id);
   const liveRow = view.nodes.workspaceFiles.children[0];
@@ -247,6 +247,6 @@ test("following working changes leaves a sealed Full text preview and its pendin
   } }));
   assert.equal(finalRow.children[1].children[3].children[1].textContent, "sealed");
   const reads = files(view).filter(call => call.params.arguments.files.view === "content").length;
-  controls.children.find(button => button.textContent === "Full text").onclick(); await flush();
+  controls.children.find(button => button.textContent === "全文").onclick(); await flush();
   assert.equal(files(view).filter(call => call.params.arguments.files.view === "content").length, reads);
 });

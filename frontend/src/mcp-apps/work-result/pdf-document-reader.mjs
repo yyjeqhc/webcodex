@@ -28,9 +28,9 @@ async function verifyPdfDocument(bytes, identity, current, now, deadline) {
   const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
     .map(value => value.toString(16).padStart(2, "0")).join("");
   if (!current()) throw new Error("PDF preview closed");
-  if (now() >= deadline) throw new Error("PDF loading timed out · retry this version");
+  if (now() >= deadline) throw new Error("PDF 加载超时 · 请重试此版本");
   if (digest !== identity.sha256 || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-")
-    throw new Error("PDF version mismatch · reopen the document");
+    throw new Error("PDF 版本不匹配 · 请重新打开文档");
   return bytes;
 }
 
@@ -48,7 +48,7 @@ export async function readPdfDocument({
   while (offset < bytes.length) {
     if (!current()) throw new Error("PDF preview closed");
     const remaining = deadline - now();
-    if (remaining <= 0) throw new Error("PDF loading timed out · retry this version");
+    if (remaining <= 0) throw new Error("PDF 加载超时 · 请重试此版本");
     const { page, encoded } = await request(offset, remaining);
     if (!current()) throw new Error("PDF preview closed");
     if (!page || page.project !== identity.project || page.path !== identity.path || page.sha256 !== identity.sha256

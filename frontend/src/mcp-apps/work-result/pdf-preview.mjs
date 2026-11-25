@@ -9,7 +9,7 @@ async function unzip(value) {
 class InlineBinaryDataFactory {
   async fetch({ kind, filename }) {
     const value = WEBCODEX_PDF_ASSETS[`${kind}/${filename}`];
-    if (!value) throw new Error("PDF font resource unavailable");
+    if (!value) throw new Error("PDF 字体资源不可用");
     return unzip(value); // Fresh transferable bytes for each PDF.js request.
   }
 }
@@ -30,31 +30,31 @@ export function createPreview(host, options) {
   status.setAttribute("role", "status");
   const stage = element("div", "pdf-stage"), page = element("div", "pdf-page");
   const canvas = element("canvas"), layer = element("div", "textLayer");
-  canvas.setAttribute("aria-label", "PDF page");
+  canvas.setAttribute("aria-label", "PDF 页面");
   page.append(canvas, layer); stage.append(page); page.hidden = true;
   host.replaceChildren(toolbar, status, stage);
   const button = (label, action, group = toolbar) => {
     const node = element("button", "refresh"); node.type = "button"; node.textContent = label;
     node.onclick = () => enqueue(action); group.append(node); return node;
   };
-  const prev = button("Previous", async () => { if (pdf && pageNumber > 1) { pageNumber--; await render(); } }, navigation);
+  const prev = button("上一页", async () => { if (pdf && pageNumber > 1) { pageNumber--; await render(); } }, navigation);
   const info = element("span"); navigation.append(info);
-  const next = button("Next", async () => { if (pdf && pageNumber < pdf.numPages) { pageNumber++; await render(); } }, navigation);
+  const next = button("下一页", async () => { if (pdf && pageNumber < pdf.numPages) { pageNumber++; await render(); } }, navigation);
   const minus = button("−", async () => { fit = false; scale = Math.max(0.15, scale / 1.2); await render(); }, zoom);
-  minus.setAttribute("aria-label", "Zoom out");
+  minus.setAttribute("aria-label", "缩小");
   const plus = button("+", async () => { fit = false; scale = Math.min(3, scale * 1.2); await render(); }, zoom);
-  plus.setAttribute("aria-label", "Zoom in");
-  const fitButton = button("Fit width", async () => { fit = true; await render(); }, zoom);
-  fitButton.setAttribute("aria-label", "Fit page width");
-  const search = element("input"); search.type = "search"; search.placeholder = "Find on page";
-  search.setAttribute("aria-label", "Find text on current PDF page"); searchGroup.append(search);
-  const find = button("Find", async () => {
+  plus.setAttribute("aria-label", "放大");
+  const fitButton = button("适合宽度", async () => { fit = true; await render(); }, zoom);
+  fitButton.setAttribute("aria-label", "适合页面宽度");
+  const search = element("input"); search.type = "search"; search.placeholder = "在页内查找";
+  search.setAttribute("aria-label", "在当前 PDF 页面中查找文本"); searchGroup.append(search);
+  const find = button("查找", async () => {
     const query = search.value.trim().toLocaleLowerCase(); if (!query) return;
     const match = [...layer.querySelectorAll("span")].find(node => node.textContent.toLocaleLowerCase().includes(query));
-    if (!match) { status.textContent = "No match on this page · scanned images may have no text"; return; }
+    if (!match) { status.textContent = "本页无匹配 · 扫描图片可能不含文本"; return; }
     const range = host.ownerDocument.createRange(); range.selectNodeContents(match);
     const selection = host.ownerDocument.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-    match.scrollIntoView({ block: "nearest", inline: "nearest" }); status.textContent = "Matching text selected";
+    match.scrollIntoView({ block: "nearest", inline: "nearest" }); status.textContent = "已选中匹配文本";
   }, searchGroup);
   search.onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); find.onclick(); } };
   function controls() {
@@ -70,9 +70,9 @@ export function createPreview(host, options) {
         release(); if (current()) {
           options.failed?.();
           const reason = error.message.includes("Image exceeded maximum allowed size")
-            ? "An embedded image exceeds the 16 million pixel limit; a complete preview is unavailable."
+            ? "内嵌图片超过 1600 万像素上限，无法提供完整预览。"
             : error.message;
-          status.textContent = `PDF unavailable: ${reason}`;
+          status.textContent = `PDF 不可用：${reason}`;
         }
       }
       finally { busy = false; controls(); }
@@ -93,9 +93,9 @@ export function createPreview(host, options) {
     port = new Worker(workerUrl, { type: "module", name: "webcodex-pdf" });
     port.addEventListener("message", workerMessage);
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => finish(new Error("PDF Worker unavailable")), 3000);
+      const timer = setTimeout(() => finish(new Error("PDF 工作线程不可用")), 3000);
       const message = event => { if (event.data?.webcodexPdfReady) finish(); };
-      const error = () => finish(new Error("PDF Worker blocked by the Host"));
+      const error = () => finish(new Error("PDF 工作线程被宿主阻止"));
       function finish(reason) {
         clearTimeout(timer); port?.removeEventListener("message", message); port?.removeEventListener("error", error);
         readyCancel = null; reason ? reject(reason) : resolve();
@@ -126,8 +126,8 @@ export function createPreview(host, options) {
     textLayer = new TextLayer({ textContentSource: text, container: layer, viewport }); await textLayer.render();
     if (!current()) return;
     if (workerFailure) throw workerFailure;
-    fitButton.textContent = fit ? "Fit width" : `${Math.round(scale * 100)}%`;
-    status.textContent = `${options.sourceLabel || "PDF"} · ${pdf.numPages} ${pdf.numPages === 1 ? "page" : "pages"} · ${Math.round(scale * 100)}%`;
+    fitButton.textContent = fit ? "适合宽度" : `${Math.round(scale * 100)}%`;
+    status.textContent = `${options.sourceLabel || "PDF"} · ${pdf.numPages} 页 · ${Math.round(scale * 100)}%`;
     controls();
   }
   let observedWidth = null;
@@ -164,7 +164,7 @@ export function createPreview(host, options) {
     load: () => enqueue(async () => {
       try {
         const bytes = await (options.readDocument || readPdf)({ ...options, current, progress: (loaded, total) => {
-          if (current()) status.textContent = `Loading PDF · ${loaded} / ${total} bytes`;
+          if (current()) status.textContent = `正在加载 PDF · ${loaded} / ${total} 字节`;
         } });
         await createWorker(); if (!current()) return;
         // Fail instead of presenting a successful page with oversized images removed.

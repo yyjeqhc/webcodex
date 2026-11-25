@@ -944,7 +944,7 @@ fn valid_idempotency_key(value: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
 }
-fn subject_id(auth: &AuthContext) -> String {
+pub(crate) fn subject_id(auth: &AuthContext) -> String {
     if auth.is_bootstrap() {
         "bootstrap".to_string()
     } else {
@@ -990,7 +990,7 @@ fn project_projection_reconcile_response(
     }
 }
 
-fn api_error(status: u16, code: &str) -> ServiceResponse {
+pub(crate) fn api_error(status: u16, code: &str) -> ServiceResponse {
     ServiceResponse {
         status,
         body: json!({"error":{"code":code}}),

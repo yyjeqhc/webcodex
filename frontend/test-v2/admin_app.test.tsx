@@ -183,3 +183,39 @@ test.each([80.25, 80.49])("Admin scroll navigation recognizes a fractional mobil
   await waitFor(() => expect(runners.getAttribute("aria-current")).toBe("location"));
   expect(screen.getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBeNull();
 });
+
+test("Admin unregisters an idle Runner from the fleet table and offers no removal for a live one", async () => {
+  const mutations: { url: string; body: Record<string, unknown> }[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("dashboard")) return jsonResponse({
+      ...dashboardFixture,
+      devices: [
+        { client_id: "runner-online", display_name: "Online host", status: "online", actions: { unregister: false } },
+        { client_id: "gpu21-7ff4f11c8ef74468", display_name: "Old GPU host", status: "stale", project_count: 2, actions: { unregister: true } },
+      ],
+    });
+    mutations.push({ url, body: JSON.parse(String(init.body)) });
+    return jsonResponse({ outcome: "unregistered" });
+  }));
+
+  render(<UiProvider><AdminApp /></UiProvider>);
+  fireEvent.change(screen.getByLabelText("Admin token"), { target: { value: "fixture-secret" } });
+  fireEvent.click(screen.getByRole("button", { name: "Unlock console" }));
+  await screen.findByRole("heading", { name: "Operations" });
+
+  fireEvent.click(await screen.findByRole("button", { name: "Actions for Runner Online host" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Unregister" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(mutations).toHaveLength(0);
+
+  fireEvent.click(screen.getByRole("button", { name: "Actions for Runner Old GPU host" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Unregister" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText(/Server-side registration record only/)).toBeTruthy();
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "gpu21-7ff4f11c8ef74468" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
+  await waitFor(() => expect(mutations).toHaveLength(1));
+  expect(mutations[0].url.endsWith("/api/admin/runners/unregister")).toBe(true);
+  expect(mutations[0].body).toEqual({ client_id: "gpu21-7ff4f11c8ef74468", confirm: true });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});

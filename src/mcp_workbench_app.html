@@ -323,6 +323,7 @@ footer { padding: 0 22px 12px; color: var(--muted); font-size: 12px; overflow-wr
     if (!object(result.output)) throw new Error("Invalid tool output");
     return result.output;
   }
+  window.webcodexCallTool = tool;
   function errorMessage(error) { return "Unavailable: " + String(error.message || error).slice(0,512); }
   // Authentication and permission loss must clear previously authorized work.
   function accessLost(message) { return /denied|forbidden|unauthori[sz]ed|not authorized|authenticat(?:ion|e)?[\s_-]*(?:required|failed)|authori[sz]ation[\s_-]*required|permission[\s_-]*required|credentials?[\s_-]*(?:expired|revoked)/i.test(message); }
@@ -1141,5 +1142,181 @@ footer { padding: 0 22px 12px; color: var(--muted); font-size: 12px; overflow-wr
   }).catch(error=>{if(!disposed){el("status").textContent=errorMessage(error);updateControls();}});
 })();
 </script>
-</body>
+
+<style>
+#webPreviewPanel { border-top: 1px solid var(--border, #ddd); padding: 14px 20px 20px; background: var(--content, #fff); }
+#webPreviewPanel .web-preview-bar { display:flex; align-items:end; gap:8px; flex-wrap:wrap; margin:8px 0 12px; }
+#webPreviewPanel label { flex: 1 1 220px; font-size:12px; color:var(--muted,#666); }
+#webPreviewPanel input { width:100%; font:12px/1.5 ui-monospace, monospace; }
+#webPreviewPanel .port-label { flex:0 0 110px; }
+#webPreviewPanel .port-label input { font:inherit; }
+#webPreviewPanel iframe { display:block; width:100%; height:min(73vh,800px); min-height:360px; border:1px solid var(--border,#ddd); border-radius:10px; background:white; }
+#webPreviewPanel .web-preview-hint { font-size:12px; color:var(--muted,#666); margin:6px 0; }
+</style>
+<script>
+(() => {
+  "use strict";
+  const root = document.querySelector(".card");
+  const header = document.querySelector("header .toolbar");
+  if (!root || !header) return;
+  const element = (tag, id, label) => {
+    const node = document.createElement(tag);
+    if (id) node.id = id;
+    if (label) node.textContent = label;
+    return node;
+  };
+  const toggle = element("button", "webPreviewToggle", "Web preview");
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", "false");
+  header.append(toggle);
+  const panel = element("section", "webPreviewPanel");
+  panel.hidden = true;
+  panel.setAttribute("aria-label", "Live web preview");
+  const title = element("h2", "", "Live web preview");
+  const hint = element("p", "", "Start your development server on the selected Runner, then enter its local HTTP port. The preview opens here and supports Vite HMR.");
+  hint.className = "web-preview-hint";
+  const bar = element("div");
+  bar.className = "web-preview-bar";
+
+  const portLabel = element("label", "", "Local port");
+  portLabel.className = "port-label";
+  const portInput = element("input", "webPreviewPort");
+  portInput.type = "number";
+  portInput.min = "1";
+  portInput.max = "65535";
+  portInput.step = "1";
+  portInput.value = "5173";
+  portLabel.append(portInput);
+  const start = element("button", "webPreviewStart", "Start preview");
+  start.type = "button";
+
+  const label = element("label", "", "Temporary preview address");
+  const input = element("input", "webPreviewUrl");
+  input.type = "url";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.placeholder = "https://wcprev-<session-id>.zetx.tech/";
+  input.maxLength = 2048;
+  label.append(input);
+  const open = element("button", "webPreviewOpen", "Open");
+  const reload = element("button", "webPreviewReload", "Reload");
+  const close = element("button", "webPreviewClose", "Close");
+  for (const button of [open, reload, close]) button.type = "button";
+  bar.append(portLabel, start, label, open, reload, close);
+
+  const status = element("p", "webPreviewStatus", "");
+  status.className = "web-preview-hint";
+  status.setAttribute("role", "status");
+  const frame = element("iframe", "webPreviewFrame");
+  frame.hidden = true;
+  frame.title = "Interactive WebCodex project preview";
+  frame.referrerPolicy = "no-referrer";
+  frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups");
+  panel.append(title, hint, bar, status, frame);
+  root.append(panel);
+
+  let idempotencyKey = null;
+  let startIntent = "";
+  function urlValid(raw) {
+    if (typeof raw !== "string" || raw.length > 2048) return null;
+    let url;
+    try { url = new URL(raw); } catch { return null; }
+    if (url.protocol !== "https:" || url.username || url.password ||
+        url.port ||
+        !/^wcprev-[0-9a-f]{32}\.[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(url.hostname))
+      return null;
+    return url.href;
+  }
+  function showPanel(opened) {
+    panel.hidden = !opened;
+    toggle.setAttribute("aria-expanded", String(opened));
+    if (opened) panel.scrollIntoView({block:"nearest"});
+  }
+  function navigate(raw) {
+    const url = urlValid(raw);
+    showPanel(true);
+    if (!url) {
+      status.textContent = "Use a valid temporary HTTPS WebCodex preview URL.";
+      frame.hidden = true;
+      frame.removeAttribute("src");
+      return;
+    }
+    input.value = url;
+    status.textContent = "Connected to " + new URL(url).hostname;
+    frame.hidden = false;
+    frame.src = url;
+  }
+  async function startPreview() {
+    const project = document.getElementById("projectSelect")?.value || "";
+    const port = Number(portInput.value);
+    if (!project) {
+      status.textContent = "Select a Runner Project in the Workbench first.";
+      return;
+    }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      status.textContent = "Enter a valid local HTTP port.";
+      return;
+    }
+    const intent = project + "|" + port;
+    if (!idempotencyKey || startIntent !== intent) {
+      idempotencyKey = crypto.randomUUID();
+      startIntent = intent;
+    }
+    start.disabled = true;
+    status.textContent = "Starting the Runner preview tunnel…";
+    try {
+      if (typeof window.webcodexCallTool !== "function")
+        throw new Error("Workbench tool bridge is unavailable");
+      const output = await window.webcodexCallTool("start_web_preview", {
+        project,
+        port,
+        idempotency_key: idempotencyKey,
+      });
+      if (output.status !== "ready" || typeof output.preview_url !== "string")
+        throw new Error("Runner preview did not become ready");
+      idempotencyKey = null;
+      startIntent = "";
+      status.textContent = "Ready · port " + port + " · expires " + output.expires_at;
+      navigate(output.preview_url);
+    } catch (error) {
+      status.textContent = String(error.message || error).slice(0, 512);
+      if (error.toolOutput?.retry_with_new_key === true) {
+        idempotencyKey = null;
+        startIntent = "";
+      }
+    } finally {
+      start.disabled = false;
+    }
+  }
+  toggle.onclick = () => showPanel(panel.hidden);
+  start.onclick = () => void startPreview();
+  open.onclick = () => navigate(input.value.trim());
+  reload.onclick = () => {
+    if (urlValid(input.value.trim())) navigate(input.value.trim());
+  };
+  close.onclick = () => {
+    frame.removeAttribute("src");
+    frame.hidden = true;
+    input.value = "";
+    status.textContent = "";
+    showPanel(false);
+  };
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); navigate(input.value.trim()); }
+  });
+  addEventListener("message", event => {
+    if (event.source !== parent || event.data?.jsonrpc !== "2.0") return;
+    const message = event.data;
+    const raw = message.method === "ui/notifications/tool-input"
+      ? message.params?.arguments?.preview_url
+      : message.method === "ui/notifications/tool-result"
+        ? message.params?.structuredContent?.output?.preview_url ??
+          message.params?.result?.structuredContent?.output?.preview_url ??
+          message.params?.result?.output?.preview_url
+        : null;
+    if (typeof raw === "string") navigate(raw);
+    if (message.method === "ui/resource-teardown") frame.removeAttribute("src");
+  });
+})();
+</script></body>
 </html>

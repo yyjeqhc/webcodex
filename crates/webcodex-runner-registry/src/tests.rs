@@ -338,6 +338,8 @@ mod run_enqueue;
 mod runner_config;
 #[path = "tests/runner_liveness.rs"]
 mod runner_liveness;
+#[path = "tests/runner_removal.rs"]
+mod runner_removal;
 #[path = "tests/shared_key_limits.rs"]
 mod shared_key_limits;
 #[path = "tests/shared_key_ttl.rs"]

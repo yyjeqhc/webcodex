@@ -3,12 +3,12 @@
 export const MAX_PDF_BYTES = 20 * 1024 * 1024;
 export const PDF_PAGE_BYTES = 128 * 1024;
 export const PDF_REASONS = Object.freeze({
-  deleted: "Final version has no PDF · deleted",
-  symlink: "Symbolic link · PDF preview unavailable",
-  submodule: "Submodule · PDF preview unavailable",
-  unsupported_file_type: "File type does not support PDF preview",
-  too_large: "PDF exceeds the 20 MiB preview limit",
-  not_pdf: "This file has no supported PDF header",
+  deleted: "最终版本中无此 PDF · 已删除",
+  symlink: "符号链接 · 无法预览 PDF",
+  submodule: "子模块 · 无法预览 PDF",
+  unsupported_file_type: "该文件类型不支持 PDF 预览",
+  too_large: "PDF 超过 20 MiB 的预览上限",
+  not_pdf: "此文件没有受支持的 PDF 文件头",
 });
 
 export async function readPdf({ identity, request, current, progress = () => {}, now = () => performance.now() }) {
@@ -17,7 +17,7 @@ export async function readPdf({ identity, request, current, progress = () => {},
   do {
     if (!current()) throw new Error("PDF preview closed");
     const remaining = deadline - now();
-    if (remaining <= 0) throw new Error("PDF loading timed out · retry preview");
+    if (remaining <= 0) throw new Error("PDF 加载超时 · 请重试预览");
     const { page, encoded } = await request(offset, remaining);
     if (!current()) throw new Error("PDF preview closed");
     if (!page || page.project !== identity.project || (page.session_id ?? null) !== (identity.session_id ?? null)

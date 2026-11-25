@@ -1528,15 +1528,19 @@ async fn project_registration_timeout_only_reports_no_effect_when_dispatch_is_ru
         let register = tokio::spawn({
             let runtime = runtime.clone();
             async move {
-                maintenance_call(
-                    &runtime,
-                    "register_project",
-                    json!({
-                        "client_id":"onboarding", "id":"existing",
-                        "name":"Existing", "path":"/srv/existing",
-                    }),
-                )
-                .await
+                let auth = bootstrap_auth_context();
+                runtime
+                    .register_project(
+                        "onboarding".into(),
+                        "existing".into(),
+                        "Existing".into(),
+                        "/srv/existing".into(),
+                        None,
+                        true,
+                        false,
+                        Some(&auth),
+                    )
+                    .await
             }
         });
 
@@ -1556,7 +1560,7 @@ async fn project_registration_timeout_only_reports_no_effect_when_dispatch_is_ru
         }
 
         let result = register.await.unwrap();
-        assert!(!result.success);
+        assert!(!result.success, "{result:?}");
         if dispatch {
             assert_eq!(result.output["error_code"], "operation_indeterminate");
             assert_eq!(result.output["execution_state"], "outcome_unknown");

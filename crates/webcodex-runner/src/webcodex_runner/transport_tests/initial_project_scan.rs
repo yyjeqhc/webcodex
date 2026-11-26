@@ -878,6 +878,92 @@ async fn mutation_during_git_enrichment_republishes_catalog_and_discards_stale_r
 }
 
 #[tokio::test]
+async fn refresh_after_initial_inventory_keeps_websocket_requests_responsive() {
+    let temp = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (cfg, _) = registry_config(
+        temp.path(),
+        format!("http://{}", listener.local_addr().unwrap()),
+        3,
+    );
+    let runtime = test_runtime(&cfg);
+    let scan = hold_project_enrichment(&runtime, &cfg).await;
+    let initial = runtime.project_metadata_summaries(&cfg);
+    let requests = [
+        initial_scan_unregister_request(&cfg, &initial[0], "first-mutation"),
+        initial_scan_unregister_request(&cfg, &initial[1], "second-mutation"),
+    ];
+    let session_runtime = runtime.clone();
+    let session = tokio::spawn(async move {
+        websocket_session_classified(&cfg, initial, "inst-test", &session_runtime).await
+    });
+    let (socket, _) = listener.accept().await.unwrap();
+    let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+    read_register(&mut ws).await;
+    send_registered_ack_only(&mut ws).await;
+    let before = next_inventory_page(&mut ws).await;
+    assert_eq!(before.total_reported, 3);
+
+    let while_held = tokio::time::timeout(Duration::from_secs(3), async {
+        for (index, request) in requests.into_iter().enumerate() {
+            let request_id = request.request_id.clone();
+            ws.send(WsMessage::Text(
+                RunnerEnvelope::Request { request }
+                    .to_json()
+                    .unwrap()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+            let message = ws.next().await.unwrap().unwrap();
+            match RunnerEnvelope::from_slice(message.into_text().unwrap().as_bytes()).unwrap() {
+                RunnerEnvelope::Result { payload } => {
+                    assert_eq!(payload.result.request_id, request_id);
+                    assert_eq!(payload.result.exit_code, Some(0), "{payload:?}");
+                }
+                other => panic!("expected mutation result, got {}", other.kind()),
+            }
+            let expected_generation = (index + 1) as u64;
+            while runtime.initial_project_scan.lock().unwrap().generation < expected_generation {
+                tokio::task::yield_now().await;
+            }
+        }
+        ws.send(WsMessage::Text(
+            RunnerEnvelope::Ping { ts: 26 }.to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+        let pong = ws.next().await.unwrap().unwrap();
+        assert!(matches!(
+            RunnerEnvelope::from_slice(pong.into_text().unwrap().as_bytes()).unwrap(),
+            RunnerEnvelope::Pong { ts: 26 }
+        ));
+    })
+    .await;
+    scan.release.send(()).unwrap();
+    while_held.expect("a post-startup refresh must not block the next mutation or ping");
+
+    let enriched = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let page = next_inventory_page(&mut ws).await;
+            assert_eq!(project_ids(&page), ["project-0002"]);
+            if page.projects[0].git_branch.as_deref() == Some("main") {
+                break page;
+            }
+        }
+    })
+    .await
+    .expect("the background scan must publish the latest catalog and Git details");
+    assert!(enriched.snapshot_sequence > before.snapshot_sequence);
+    assert_eq!(scan.enrichments.load(Ordering::SeqCst), 2);
+
+    runtime.request_shutdown_signal();
+    let _ = ws.close(None).await;
+    let _ = tokio::time::timeout(Duration::from_secs(3), session).await;
+    assert!(runtime.shutdown().timed_out_phases.is_empty());
+}
+
+#[tokio::test]
 async fn reconnect_during_git_enrichment_gets_catalog_and_shares_the_one_worker() {
     let temp = tempfile::tempdir().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -419,9 +419,8 @@ pub(super) fn handle_project_inventory_status(
 }
 
 pub(super) struct StreamingProjectInventoryCoordinator {
-    supported: bool,
+    pub(super) supported: bool,
     pub(super) sync: Option<ProjectInventorySync>,
-    project_cache: RunnerProjectCache,
     pub(super) retry_backoff: RetryBackoff,
     pub(super) retry_at: Option<tokio::time::Instant>,
 }
@@ -431,7 +430,6 @@ impl StreamingProjectInventoryCoordinator {
         Self {
             supported: sync.is_some(),
             sync,
-            project_cache: RunnerProjectCache::default(),
             retry_backoff: RetryBackoff::new(&PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS),
             retry_at: None,
         }
@@ -465,22 +463,6 @@ impl StreamingProjectInventoryCoordinator {
         self.queue_pending(transport, out_tx);
     }
 
-    pub(super) fn refresh_from_current_projects(
-        &mut self,
-        transport: StreamTransport,
-        cfg: &RunnerConfig,
-        runtime: &RunnerRuntimeState,
-        out_tx: &tokio::sync::mpsc::Sender<RunnerEnvelope>,
-        reason_code: &str,
-    ) {
-        if !self.supported {
-            return;
-        }
-        self.project_cache.invalidate();
-        let projects = runtime.project_summaries(&mut self.project_cache, cfg);
-        self.replace_projects(projects, transport, out_tx, reason_code);
-    }
-
     /// A mutation during Git enrichment must not leave the older catalog
     /// visible until the worker finishes, and needs no Git probe to correct it.
     pub(super) fn refresh_from_project_metadata(
@@ -498,7 +480,7 @@ impl StreamingProjectInventoryCoordinator {
         self.replace_projects(projects, transport, out_tx, reason_code);
     }
 
-    fn replace_projects(
+    pub(super) fn replace_projects(
         &mut self,
         projects: Vec<RunnerProjectSummary>,
         transport: StreamTransport,
@@ -522,7 +504,6 @@ impl StreamingProjectInventoryCoordinator {
         &mut self,
         transport: StreamTransport,
         status: ShellProjectInventoryStatus,
-        cfg: &RunnerConfig,
         runtime: &RunnerRuntimeState,
         out_tx: &tokio::sync::mpsc::Sender<RunnerEnvelope>,
     ) {
@@ -538,13 +519,12 @@ impl StreamingProjectInventoryCoordinator {
             ProjectInventoryStatusAction::RetryExactAfter(delay) => {
                 self.retry_at = Some(tokio::time::Instant::now() + delay);
             }
-            ProjectInventoryStatusAction::FreshResnapshot => self.refresh_from_current_projects(
-                transport,
-                cfg,
-                runtime,
-                out_tx,
-                "project_inventory_server_invalidated_snapshot",
-            ),
+            ProjectInventoryStatusAction::FreshResnapshot => {
+                self.retry_at = None;
+                if self.supported {
+                    runtime.invalidate_project_inventory();
+                }
+            }
         }
     }
 }

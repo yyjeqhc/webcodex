@@ -1476,6 +1476,110 @@ async fn workspace_resolution_never_creates_sessions_or_dispatches_and_does_not_
 }
 
 #[tokio::test]
+async fn workspace_resolution_accepts_dos_spellings_of_registered_verbatim_drive_paths() {
+    let runtime = test_runtime();
+    let mut project = maintenance_project("training");
+    project.path = r"\\?\C:\Projects\training".into();
+    register_target_agent(&runtime, "windows", vec![project], None).await;
+
+    for path in [
+        r"C:\Projects\training",
+        "c:/Projects/training",
+        r"\\?\C:\Projects\training",
+    ] {
+        let result = maintenance_call(
+            &runtime,
+            "resolve_workspace",
+            json!({"client_id":"windows","path":path}),
+        )
+        .await;
+        assert_eq!(result.output["resolution"], "resolved", "{path}");
+        assert_eq!(
+            result.output["workspace"]["project"],
+            "agent:windows:training"
+        );
+        assert_eq!(
+            result.output["workspace"]["path"],
+            r"\\?\C:\Projects\training"
+        );
+    }
+    for path in [
+        r"D:\Projects\training",
+        r"C:\Projects\..\Projects\training",
+        r"C:\Projects\training.",
+        r"\\.\C:\Projects\training",
+        r"C:\Projects\Training",
+    ] {
+        let result = maintenance_call(
+            &runtime,
+            "resolve_workspace",
+            json!({"client_id":"windows","path":path}),
+        )
+        .await;
+        assert_eq!(result.output["resolution"], "not_found", "{path}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn project_registration_timeout_only_reports_no_effect_when_dispatch_is_ruled_out() {
+    for dispatch in [false, true] {
+        let runtime = test_runtime();
+        register_target_agent(&runtime, "onboarding", vec![], None).await;
+        let register = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                let auth = bootstrap_auth_context();
+                runtime
+                    .register_project(
+                        "onboarding".into(),
+                        "existing".into(),
+                        "Existing".into(),
+                        "/srv/existing".into(),
+                        None,
+                        true,
+                        false,
+                        Some(&auth),
+                    )
+                    .await
+            }
+        });
+
+        let poll = || crate::runner_protocol::RunnerPollRequest {
+            client_id: "onboarding".into(),
+            runner_instance_id: "inst-onboarding".into(),
+        };
+        if dispatch {
+            loop {
+                assert!(!register.is_finished());
+                if let Some(request) = runtime.runner_registry.poll(poll()).await.unwrap() {
+                    assert_eq!(request.kind, "register_project");
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+
+        let result = register.await.unwrap();
+        assert!(!result.success, "{result:?}");
+        if dispatch {
+            assert_eq!(result.output["error_code"], "operation_indeterminate");
+            assert_eq!(result.output["execution_state"], "outcome_unknown");
+            assert!(result.output["state_changed"].is_null());
+        } else {
+            assert_eq!(result.output["error_code"], "project_operation_not_started");
+            assert_eq!(result.output["execution_state"], "not_started");
+            assert_eq!(result.output["state_changed"], false);
+        }
+        assert!(runtime
+            .runner_registry
+            .poll(poll())
+            .await
+            .unwrap()
+            .is_none());
+    }
+}
+
+#[tokio::test]
 async fn workspace_resolution_does_not_claim_uniqueness_or_absence_during_inventory_sync() {
     use crate::runner_protocol::ShellProjectInventoryPage;
     let runtime = test_runtime();

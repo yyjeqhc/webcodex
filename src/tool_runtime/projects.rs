@@ -1242,11 +1242,30 @@ impl ToolRuntime {
             match tokio::time::timeout(Duration::from_secs(PROJECT_OP_WAIT_SECS), rx).await {
                 Ok(Ok(response)) => response,
                 Ok(Err(_)) | Err(_) => {
-                    self.runner_registry.cancel_request(&request_id).await;
+                    if self
+                        .runner_registry
+                        .cancel_request_dispatch_state(&request_id)
+                        .await
+                        == Some(false)
+                    {
+                        return ToolResult::err_with_output(
+                            "project_operation_not_started",
+                            json!({
+                                "error_code": "project_operation_not_started",
+                                "execution_state": "not_started",
+                                "state_changed": false,
+                            }),
+                        );
+                    }
                     return ToolResult::err_with_output(
                         "operation_indeterminate",
-                        json!({"error_code":"operation_indeterminate"}),
-                    );
+                        json!({
+                            "error_code": "operation_indeterminate",
+                            "execution_state": "outcome_unknown",
+                            "state_changed": null,
+                        }),
+                    )
+                    .with_recovery(RecoveryKind::Reobserve);
                 }
             };
 

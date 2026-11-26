@@ -57,6 +57,9 @@ impl CloudflareConnectionRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudflareConnectionStatus {
+    // Older Servers omit this field. parse_status rejects the missing identity
+    // before the observation can be displayed or used to authorize a mutation.
+    #[serde(default)]
     pub configuration_id: String,
     pub profile_id: String,
     pub server_instance_id: String,
@@ -76,6 +79,29 @@ pub struct CloudflareConnectionStatus {
 }
 
 impl CloudflareConnectionStatus {
+    fn parse_status(bytes: &[u8], stage: &str, profile_id: &str) -> DesktopResult<Self> {
+        let invalid = || unavailable_for(stage, profile_id, Some("invalid_response"));
+        let status: Self = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+        if status.profile_id != profile_id
+            || !matches!(
+                status.lifecycle.as_str(),
+                "stopped" | "starting" | "running" | "disconnected" | "error"
+            )
+        {
+            return Err(invalid());
+        }
+        if status.configuration_id.is_empty() {
+            return Err(DesktopError::new(
+                "runtime_protocol_incompatible",
+                "The local Server cannot identify the selected Cloudflare configuration",
+                "Update the local Server to the Runtime bundled with this Desktop and refresh the connection.",
+            )
+            .with_stage(stage)
+            .with_operation_context(None, None, Some(profile_id), None));
+        }
+        Ok(status)
+    }
+
     fn check_materialized_revision(&mut self, revision: u64) {
         // Windows Server reads protected materializations. Preserve the observed
         // generation for Stop while the user applies the newer catalog revision.
@@ -242,16 +268,12 @@ impl AppState {
                     &status_request,
                 )
                 .await?;
-                let observed: CloudflareConnectionStatus = serde_json::from_slice(&observed)
-                    .map_err(|_| {
-                        unavailable_for(
-                            request.stage(),
-                            &profile.profile_id,
-                            Some("invalid_response"),
-                        )
-                    })?;
+                let observed = CloudflareConnectionStatus::parse_status(
+                    &observed,
+                    status_request.stage(),
+                    &profile.profile_id,
+                )?;
                 if observed.configuration_id != profile.configuration_id
-                    || observed.profile_id != profile.profile_id
                     || observed.server_instance_id != expected_instance
                     || expected_revision.is_some_and(|revision| {
                         revision != observed.configured_revision || revision != profile.revision
@@ -306,16 +328,11 @@ impl AppState {
                 },
             ));
         }
-        let mut status: CloudflareConnectionStatus =
-            serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
-        if status.profile_id != request.profile_id()
-            || !matches!(
-                status.lifecycle.as_str(),
-                "stopped" | "starting" | "running" | "disconnected" | "error"
-            )
-        {
-            return Err(unavailable());
-        }
+        let mut status = CloudflareConnectionStatus::parse_status(
+            &bytes,
+            request.stage(),
+            request.profile_id(),
+        )?;
         if status.configuration_id != profile.configuration_id {
             return Err(stale_revision(request.stage(), &profile.profile_id));
         }

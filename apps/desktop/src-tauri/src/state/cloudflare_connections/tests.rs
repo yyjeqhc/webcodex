@@ -62,6 +62,45 @@ fn cloudflare_native_actions_require_selected_instance_and_secret_free_status() 
     assert_eq!(active.process_generation, 2);
 }
 
+#[test]
+fn cloudflare_native_status_requires_server_configuration_identity() {
+    let mut wire = serde_json::json!({
+        "profile_id": "profile", "server_instance_id": "instance",
+        "process_generation": 0, "lifecycle": "stopped", "oauth_configured": false,
+        "observed_authorization": false, "configured_revision": 1,
+        "local_target": "http://127.0.0.1:1234"
+    });
+    let parse = |wire: &serde_json::Value| {
+        CloudflareConnectionStatus::parse_status(
+            &serde_json::to_vec(wire).unwrap(),
+            "cloudflare_status",
+            "profile",
+        )
+    };
+    let error = parse(&wire).unwrap_err();
+    assert_eq!(error.code, "runtime_protocol_incompatible");
+    let diagnostic = error.diagnostic_ref().unwrap();
+    assert_eq!(diagnostic.stage.as_deref(), Some("cloudflare_status"));
+    assert_eq!(diagnostic.resource_id.as_deref(), Some("profile"));
+    assert!(!diagnostic.retry_allowed);
+    wire["configuration_id"] = serde_json::json!("");
+    assert_eq!(
+        parse(&wire).unwrap_err().code,
+        "runtime_protocol_incompatible"
+    );
+    wire["configuration_id"] = serde_json::json!("configuration");
+    assert_eq!(parse(&wire).unwrap().configuration_id, "configuration");
+    wire["profile_id"] = serde_json::json!("another-profile");
+    assert_eq!(
+        parse(&wire).unwrap_err().code,
+        "cloudflare_control_unavailable"
+    );
+    assert_eq!(
+        parse(&serde_json::json!({})).unwrap_err().code,
+        "cloudflare_control_unavailable"
+    );
+}
+
 #[tokio::test]
 async fn cloudflare_native_http_rejects_redirect_and_does_not_expose_response_body() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

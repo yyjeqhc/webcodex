@@ -604,6 +604,20 @@ impl SessionStore {
                     }
                     return Err(CodingSessionError::UnknownResumeSession { session_id });
                 };
+                let stored_fingerprint = stored.owner_authority_fingerprint();
+                #[cfg(any(test, feature = "root-test-support"))]
+                let synthetic_test_fixture =
+                    stored_fingerprint == super::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT;
+                #[cfg(not(any(test, feature = "root-test-support")))]
+                let synthetic_test_fixture = false;
+                if !synthetic_test_fixture
+                    && stored_fingerprint != request.authority_fingerprint.as_str()
+                {
+                    return Err(CodingSessionError::ResumeAuthorityMismatch {
+                        session_id: session_id.to_string(),
+                    });
+                }
+
                 let lifecycle = stored.lifecycle();
                 if !lifecycle.allows_mutation() {
                     return Err(CodingSessionError::ResumeSessionNotActive {
@@ -618,33 +632,15 @@ impl SessionStore {
                         request_project: request.project.clone(),
                     });
                 }
-                if stored.project_identity() != request.project_identity.as_deref() {
+                if (!synthetic_test_fixture && stored.project_identity().is_none())
+                    || stored.project_identity() != request.project_identity.as_deref()
+                {
                     return Err(CodingSessionError::ResumeProjectIdentityChanged { session_id });
                 }
                 Some(session_id)
             } else {
                 None
             };
-
-            if let Some(session_id) = reusable_session_id.as_deref() {
-                let stored_fingerprint = inner
-                    .sessions
-                    .get(session_id)
-                    .expect("reusable session must exist")
-                    .owner_authority_fingerprint();
-                #[cfg(any(test, feature = "root-test-support"))]
-                let synthetic_test_fixture =
-                    stored_fingerprint == super::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT;
-                #[cfg(not(any(test, feature = "root-test-support")))]
-                let synthetic_test_fixture = false;
-                if !synthetic_test_fixture
-                    && stored_fingerprint != request.authority_fingerprint.as_str()
-                {
-                    return Err(CodingSessionError::ResumeAuthorityMismatch {
-                        session_id: session_id.to_string(),
-                    });
-                }
-            }
 
             if let Some(session_id) = reusable_session_id {
                 if !inner.prepare_record_mutation(&session_id) {
@@ -948,6 +944,7 @@ impl SessionStore {
         limit: usize,
     ) -> SessionDiscoveryPage {
         let limit = limit.clamp(1, 20);
+        let mut has_project_history = false;
         let mut candidates = {
             let inner = self.inner.lock().expect("session store mutex poisoned");
             inner
@@ -956,8 +953,9 @@ impl SessionStore {
                 .filter(|record| {
                     record.project() == Some(project)
                         && record.owner_authority_fingerprint() == owner_authority_fingerprint
-                        && lifecycle.is_none_or(|state| record.lifecycle() == state)
                 })
+                .inspect(|_| has_project_history = true)
+                .filter(|record| lifecycle.is_none_or(|state| record.lifecycle() == state))
                 .map(|record| (record.session_id().to_string(), record.updated_at()))
                 .collect::<Vec<_>>()
         };
@@ -996,6 +994,7 @@ impl SessionStore {
             })
             .collect();
         SessionDiscoveryPage {
+            has_project_history,
             total,
             offset,
             next_offset: (end < total).then_some(end),
@@ -2203,6 +2202,15 @@ impl SessionStore {
             else {
                 return false;
             };
+            // Concurrent close requests can receive a lost result after another
+            // request already confirmed that this exact Shell was closed.
+            if event.persistent_shell.as_ref().is_some_and(|saved| {
+                saved.shell_id == evidence.shell_id
+                    && saved.shell_state.as_deref() == Some("closed")
+                    && saved.error_code.is_none()
+            }) {
+                return false;
+            }
             Arc::make_mut(event).persistent_shell = Some(evidence);
             record.pending_events.push_back(Arc::clone(event));
             record.updated_at = now_ts();

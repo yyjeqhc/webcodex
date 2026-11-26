@@ -1,4 +1,4 @@
-//! Owner, inventory, identity, and durability fences for retired Project history.
+//! Workflow Session history, execution and closeout across Project lifecycles.
 use super::super::kernel::{
     HostFileImportTrust, ToolCallContext, ToolCallOutcome, ToolCallRequest, ToolTransport,
 };
@@ -212,7 +212,7 @@ async fn retired_project_history_requires_current_runner_owner_even_for_admin() 
 }
 
 #[tokio::test]
-async fn retired_project_history_supports_scoped_owner_and_kernel_recorder() {
+async fn retired_project_history_requires_scoped_owner_and_denies_stale_recorder() {
     for admin in [true, false] {
         let runtime = test_runtime();
         let auth = owner(admin);
@@ -229,7 +229,7 @@ async fn retired_project_history_supports_scoped_owner_and_kernel_recorder() {
             )
             .await;
             assert!(
-                result.success,
+                result.success == recorder.is_none(),
                 "owner history (admin={admin}, recorder={recorder:?}): {result:?}"
             );
         }
@@ -239,7 +239,7 @@ async fn retired_project_history_supports_scoped_owner_and_kernel_recorder() {
                 Some(&auth),
                 "close_session",
                 json!({"session_id":id}),
-                Some(&id),
+                None,
             )
             .await;
             assert!(result.success, "{result:?}");
@@ -253,7 +253,7 @@ async fn retired_project_history_supports_scoped_owner_and_kernel_recorder() {
             Some(&auth),
             "read_session_summary",
             json!({"session_id":id}),
-            Some(&id),
+            None,
         )
         .await;
         assert!(result.success, "{result:?}");
@@ -290,7 +290,7 @@ async fn retired_project_history_supports_scoped_owner_and_kernel_recorder() {
 }
 
 #[tokio::test]
-async fn retired_project_pending_inventory_does_not_prove_unregistration() {
+async fn historical_session_operations_do_not_require_complete_inventory() {
     let runtime = test_runtime();
     let auth = owner(true);
     register(&runtime, "alice", Some("/original-root")).await;
@@ -317,8 +317,8 @@ async fn retired_project_pending_inventory_does_not_prove_unregistration() {
     for tool in ["read_session_summary", "close_session"] {
         let result = call(&runtime, Some(&auth), tool, json!({"session_id":id}), None).await;
         assert!(
-            !result.success,
-            "partial inventory is not removal evidence: {result:?}"
+            result.success,
+            "historical access needs no inventory: {result:?}"
         );
     }
     register(&runtime, "alice", None).await;
@@ -346,8 +346,8 @@ async fn retired_project_reused_id_cannot_resume_old_session() {
     for tool in ["read_session_summary", "close_session"] {
         let response = call(&runtime, Some(&auth), tool, json!({"session_id":id}), None).await;
         assert!(
-            !response.success,
-            "reused root should reject history access"
+            response.success,
+            "the original owner retains history access: {response:?}"
         );
     }
     let result = call(
@@ -504,8 +504,7 @@ async fn local_dev_session_keeps_live_access_and_retired_history_without_auth_co
     );
     unregister(&runtime).await;
 
-    // Historical access is permitted only after complete, authoritative
-    // removal; it must not restore the retired Session's execution privileges.
+    // Reading the record must not restore the retired registration.
     let history = call(
         &runtime,
         None,
@@ -668,6 +667,29 @@ async fn retired_project_close_commits_before_success_and_survives_reopen() {
     register(&runtime, "alice", Some("/original-root")).await;
     let id = start(&runtime, &auth).await;
     unregister(&runtime).await;
+    runtime.sessions.set_persistence_failure_for_test(true);
+    let uncertain = call(
+        &runtime,
+        Some(&auth),
+        "close_session",
+        json!({"session_id":id}),
+        None,
+    )
+    .await;
+    assert!(!uncertain.success);
+    assert_eq!(
+        uncertain.result.unwrap().output["error_kind"],
+        "session_persistence_uncertain"
+    );
+    let interrupted = test_runtime()
+        .with_session_database(&database, &legacy)
+        .unwrap();
+    assert_eq!(
+        interrupted.sessions.lifecycle_state(&id),
+        Some(sessions::SessionLifecycle::Active)
+    );
+    drop(interrupted);
+    runtime.sessions.set_persistence_failure_for_test(false);
     let result = call(
         &runtime,
         Some(&auth),
@@ -696,9 +718,159 @@ async fn retired_project_close_commits_before_success_and_survives_reopen() {
         Some(&auth),
         "close_session",
         json!({"session_id":id}),
-        Some(&id),
+        None,
     )
     .await;
     assert!(result.success, "{result:?}");
     assert_eq!(result.result.unwrap().output["already_closed"], true);
+}
+
+#[tokio::test]
+async fn offline_owner_can_read_history_without_recording_ack_or_resolution() {
+    use super::super::kernel::{ToolInvocationMetadata, ToolProtocolCapabilities};
+    let runtime = test_runtime();
+    let auth = owner(false);
+    register(&runtime, "alice", Some("/original-root")).await;
+    let id = start(&runtime, &auth).await;
+    let posted = call(
+        &runtime,
+        Some(&auth),
+        "post_session_message",
+        json!({"session_id":id, "kind":"todo", "requires_ack":true, "message":"review saved work"}),
+        None,
+    )
+    .await;
+    assert!(posted.success, "{posted:?}");
+    let message_id = posted.result.unwrap().output["message"]["message_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    runtime
+        .runner_registry
+        .set_last_seen_for_test(CLIENT, chrono::Utc::now().timestamp() - 3600)
+        .await;
+    assert!(
+        !runtime
+            .runner_registry
+            .get_runner_view(CLIENT)
+            .await
+            .unwrap()
+            .connected
+    );
+    for tool in [
+        "read_session_summary",
+        "list_session_messages",
+        "read_session_discussion_summary",
+        "observe_session_messages",
+    ] {
+        let result = call(&runtime, Some(&auth), tool, json!({"session_id":id}), None).await;
+        assert!(result.success, "{tool}: {result:?}");
+    }
+    let before = runtime.sessions.summary(&id, None).unwrap();
+    let denied = runtime
+        .call_tool_with_invocation_metadata(
+            ToolCallRequest {
+                tool_name: "read_session_summary".into(),
+                arguments: json!({"session_id":id}),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Mcp,
+                session_id: Some(&id),
+                auth: Some(&auth),
+                window: None,
+                record_oauth_scope_denials: true,
+                host_file_import_trust: HostFileImportTrust::Untrusted,
+            },
+            ToolInvocationMetadata {
+                ack_session_message_ids: vec![message_id.clone()],
+                session_message_resolution: Some(sessions::ToolCallSessionMessageResolution {
+                    message_id: message_id.clone(),
+                    resolution: "handled".into(),
+                }),
+                ..Default::default()
+            },
+            ToolProtocolCapabilities::default(),
+        )
+        .await;
+    assert!(!denied.success);
+    assert_eq!(
+        runtime.sessions.summary(&id, None).unwrap().events_total,
+        before.events_total
+    );
+    let message = runtime
+        .sessions
+        .list_messages(&id, Default::default())
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(message.message_id, message_id);
+    assert_eq!(message.status, sessions::SessionMessageStatus::Open);
+    assert!(message.first_ack_observed_at.is_none());
+    for (name, args) in [
+        (
+            "read_validation_summary",
+            json!({"project":PROJECT,"session_id":id}),
+        ),
+        ("read_session_handoff", json!({"session_id":id})),
+        (
+            "resolve_session_message",
+            json!({"session_id":id,"message_id":message_id}),
+        ),
+    ] {
+        assert!(
+            !call(&runtime, Some(&auth), name, args, None).await.success,
+            "{name}"
+        );
+    }
+    assert!(
+        call(
+            &runtime,
+            Some(&auth),
+            "close_session",
+            json!({"session_id":id}),
+            None
+        )
+        .await
+        .success
+    );
+}
+
+#[tokio::test]
+async fn project_grant_history_stays_in_its_partition_after_unregister() {
+    let runtime = test_runtime();
+    let original = crate::auth::shared_key::project_credential_context("grant-a");
+    let other = crate::auth::shared_key::project_credential_context("grant-b");
+    register_agent_projects_for_auth(
+        &runtime,
+        CLIENT,
+        &original,
+        RunnerCapabilities::default(),
+        vec![registered_project("repo", "/original-root")],
+    )
+    .await;
+    let id = start(&runtime, &original).await;
+    unregister(&runtime).await;
+    let closed = call(
+        &runtime,
+        Some(&original),
+        "list_sessions",
+        json!({"project":PROJECT, "lifecycle":"closed"}),
+        None,
+    )
+    .await;
+    assert!(closed.success, "{closed:?}");
+    assert_eq!(closed.result.unwrap().output["total"], 0);
+    for (name, args) in [
+        ("read_session_summary", json!({"session_id":id})),
+        ("list_sessions", json!({"project":PROJECT})),
+        ("close_session", json!({"session_id":id})),
+    ] {
+        let denied = call(&runtime, Some(&other), name, args.clone(), None).await;
+        assert!(!denied.success);
+        let visible = call(&runtime, Some(&original), name, args, None).await;
+        assert!(visible.success, "{name}: {visible:?}");
+        if name == "list_sessions" {
+            assert_eq!(visible.result.unwrap().output["total"], 1);
+        }
+    }
 }

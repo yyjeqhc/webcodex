@@ -106,6 +106,27 @@ mod allow_patch_projection_tests {
 }
 
 impl RunnerRegistry {
+    /// Authorize historical data against the current credential partition and
+    /// Runner owner. A disabled Project remains hidden. A removed Project
+    /// does not invalidate an owned Session.
+    pub async fn project_history_visible(
+        &self,
+        access: Option<&crate::RunnerAccess>,
+        client_id: &str,
+        project_id: &str,
+    ) -> bool {
+        let inner = self.inner.read().await;
+        let Some(runner) = inner.runners.get(client_id) else {
+            return false;
+        };
+        self.runner_visible_for_snapshot(access, &inner, runner, crate::now_ts())
+            && (access.is_none() || assert_runner_access(access, runner).is_ok())
+            && !runner
+                .projects
+                .iter()
+                .any(|project| project.id == project_id && project.disabled)
+    }
+
     /// Return an immutable clone of the canonical feature truth for one
     /// registered Runner. This is an internal semantic query, never a wire
     /// projection.

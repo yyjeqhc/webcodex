@@ -89,18 +89,17 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         let is_record = input.is_some();
-        let name = if is_record {
-            "record_external_observation"
+        let authorization = if is_record {
+            self.authorize_session_target(&session_id, "record_external_observation", auth)
+                .await
+                .map(|_| ())
         } else {
-            "list_external_observations"
+            self.authorize_session_record(&session_id, "list_external_observations", auth)
+                .await
         };
-        if let Err(result) = self.authorize_session_target(&session_id, name, auth).await {
+        if let Err(result) = authorization {
             return result;
         }
-        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
-            Ok(value) => value,
-            Err(error) => return error.into_tool_result(),
-        };
         let Some(summary) = self.sessions.summary(&session_id, Some(0)) else {
             return super::session_context::absent_workflow_session_result(
                 &self.sessions,
@@ -108,7 +107,7 @@ impl ToolRuntime {
                 auth,
             );
         };
-        if project != resolved.resolved_id || summary.project.as_deref() != Some(project.as_str()) {
+        if summary.project.as_deref() != Some(project.as_str()) {
             return ToolResult::err_with_output(
                 "External observations require the exact Session Project",
                 json!({

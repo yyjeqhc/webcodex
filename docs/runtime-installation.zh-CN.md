@@ -65,3 +65,11 @@ webcodex environment update rollback --operation-id OPERATION_ID --yes
 ```
 
 恢复时使用 `view.upgrade.operation_id` 报告的准确已保存 UUID，在 Linux TTY 中以原用户操作其环境。这些命令复用已有 Environment 完成/回滚保护，不会启动第二个安装程序，也不会推断不确定的替换可以安全重试。需要恢复时保留日志与私有备份。更新只影响本机已安装软件包及其拥有的环境，不会通过连接升级远端中央 Server 或其他 Runner。原生安装与恢复仍需完成上方链接中的平台验收。
+
+## 恢复 v0.5.0 的 Workflow Session 历史
+
+在包含本次生命周期修复的版本中，使用原所有者仍有效且具备相应权限的凭据。将原 Session ID 或 Ref 作为参数调用 `read_session_summary` 和 `list_session_messages`，省略 Recorder。若未保存 ID，可用完整的 Project ID 调用 `list_sessions`。Server 重启后，需要 Runner 注册以重新确认其归属。若 Server 仍保有可验证的 Runner 归属，Runner 离线期间也可读取历史。
+
+v0.5.0 已保存 Session 的所有者和历史，但 Project 注册文件与 Session 记录中没有共同的注册实例凭证。v0.5.1 在升级时才生成 Runner 侧的 UUID。即使有旧记录的备份、路径和所有者都一致，也无法识别升级前发生过的注销和重新注册。Server 保留原记录，实时续接会返回 `session_project_identity_changed`。
+
+需要继续工作时，确认当前 Project，查看原 Session 的决策和结果未明的操作，再用该 Project 和核实过的任务说明调用 `work_on_project`。省略 `session_id` 以创建新 Session，并保存返回的 ID。若创建结果未确认，先用 `list_sessions` 核实。交接完成后，可用原 ID 或 Ref 调用 `close_session`。此流程不会重放待执行请求、Shell、ACK 或验证任务。

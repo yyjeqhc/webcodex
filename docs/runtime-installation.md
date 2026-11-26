@@ -65,3 +65,11 @@ webcodex environment update rollback --operation-id OPERATION_ID --yes
 ```
 
 Use the exact saved UUID reported in `view.upgrade.operation_id` for recovery, from a Linux TTY and the original user's environment. These commands delegate to existing Environment finish/rollback guards; they do not launch a second installer or infer that uncertain replacement is safe to retry. Keep journals and private backups when recovery is required. An update affects only this machine's installed package and owned environment; it does not upgrade a remote central Server or other Runners through the connection. Native installation and recovery acceptance still need the platform-specific checks linked above.
+
+## Recovering Workflow Session history after v0.5.0
+
+In builds containing the Session lifecycle fix, use the original owner's credential with its current scopes. With the original Session ID or Ref, call `read_session_summary` and `list_session_messages` without a recorder. If the ID is missing, call `list_sessions` with the exact canonical Project ID. After a Server restart the Runner must register to establish its access partition. A disconnected Runner with a retained, authorized partition can stay offline for these reads.
+
+v0.5.0 stored Session ownership and history. Its Project files and Session rows contain no shared registration-instance witness. v0.5.1 generates the Runner UUID during upgrade. A backup of those older records, the same path or the same owner cannot distinguish a registration that was removed and recreated before upgrade. The Server preserves the original record and refuses live resume with `session_project_identity_changed`.
+
+To continue work, verify the current Project, review the saved decisions and outstanding effects, then call `work_on_project` with that Project and the reviewed instructions. Omit `session_id` to start fresh and retain the returned ID. If creation is uncertain, inspect `list_sessions` before starting another. Call `close_session` with the old ID or Ref when ready. Pending operations, Shells, ACKs and validation runs are never replayed by this procedure.

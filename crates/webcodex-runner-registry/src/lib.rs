@@ -12,6 +12,7 @@ mod dispatch_fence;
 pub use console_snapshot::{
     ActiveJobAggregate, ConsoleRegistrySnapshot, WorkspaceObservationIdentity,
 };
+pub use dispatch_fence::PersistentShellTarget;
 mod execution_admission;
 pub use execution_admission::ExecutionAdmissionError;
 mod job_index;

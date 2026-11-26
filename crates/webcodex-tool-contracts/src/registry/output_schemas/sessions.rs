@@ -469,6 +469,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "True when the session was already closed; no new transition event was recorded.",
                 ),
             ),
+            ("persistent_shells_closed", schema_type("integer", "Shells confirmed closed during this call.")),
+            ("persistent_shells_unconfirmed", schema_type("integer", "Present when this call could not confirm cleanup of an original Shell.")),
             (
                 "updated_at",
                 schema_type("integer", "Unix timestamp of the session's last update."),

@@ -1890,6 +1890,7 @@ mod tests {
                 allow_patch: true,
             },
             root_fingerprint: None,
+            runner_instance_id: "inst".into(),
             registration_incarnation: None,
             knowledge_association: None,
         };

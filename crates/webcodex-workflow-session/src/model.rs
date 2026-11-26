@@ -334,6 +334,9 @@ pub struct SessionDiscoveryItem {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SessionDiscoveryPage {
+    /// Used to distinguish an empty lifecycle filter from an unknown retired Project.
+    #[serde(skip)]
+    pub has_project_history: bool,
     pub total: usize,
     pub offset: usize,
     pub next_offset: Option<usize>,

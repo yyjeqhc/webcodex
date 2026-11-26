@@ -526,6 +526,14 @@ fn close_cleanup_evidence_commits_before_returning_to_cold_residency() {
         None
     );
 
+    store.record_session_close_persistent_shell_evidence(
+        &session.session_id,
+        "wc_shell_cold_close",
+        "lost",
+        "lost",
+        Some("result_lost"),
+        false,
+    );
     let restored = flush_and_restore(&store, ledger);
     assert!(restored
         .cold_payload_bytes_for_test(&session.session_id)

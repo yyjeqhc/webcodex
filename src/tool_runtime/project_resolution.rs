@@ -16,6 +16,7 @@ pub(crate) struct ProjectResolverCandidate {
     pub(crate) allow_patch: bool,
     pub(crate) root_fingerprint: Option<String>,
     pub(crate) registration_incarnation: Option<String>,
+    pub(crate) runner_instance_id: String,
     pub(crate) lineage: Option<RunnerProjectLineage>,
     pub(crate) connected: bool,
     pub(crate) status: String,
@@ -67,9 +68,28 @@ pub(crate) struct ResolvedProject {
     /// access by itself.
     pub(crate) root_fingerprint: Option<String>,
     pub(crate) registration_incarnation: Option<String>,
+    pub(crate) runner_instance_id: String,
     /// Descriptive Runner-owned lineage only. It never changes execution cwd,
     /// ProjectConfig, Session authority, Plugin placement, or tool permission.
     pub(crate) knowledge_association: Option<RunnerProjectLineage>,
+}
+
+impl ResolvedProject {
+    pub(crate) fn workflow_project_identity(&self) -> Option<String> {
+        webcodex_core::runner_protocol::workflow_project_identity(
+            self.root_fingerprint.as_deref(),
+            &self.config.path,
+            self.registration_incarnation.as_deref(),
+        )
+    }
+
+    pub(crate) fn require_workflow_project_identity(&self) -> Result<String, ToolResult> {
+        self.workflow_project_identity().ok_or_else(|| ToolResult::err_with_output(
+            "project_registration_identity_unavailable",
+            json!({"error_kind": "project_registration_identity_unavailable", "state_changed": false,
+                "recovery": "Reconnect the Runner and wait for its complete Project inventory. A legacy Runner must be upgraded before it can attest the registration."}),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -452,7 +472,16 @@ impl ToolRuntime {
             path: project.path.clone(),
             allow_patch: project.allow_patch,
             root_fingerprint: project.root_fingerprint.clone(),
-            registration_incarnation: project.registration_incarnation.clone(),
+            // A retained offline or partially synchronized catalog is suitable for
+            // discovery, but cannot attest a current execution binding.
+            registration_incarnation: project.registration_incarnation.clone().filter(|_| {
+                client.connected
+                    && client
+                        .project_inventory
+                        .as_ref()
+                        .is_some_and(|i| i.sync_state == "complete")
+            }),
+            runner_instance_id: client.runner_instance_id.clone(),
             lineage: project.lineage.clone(),
             connected: client.connected,
             status: client.status.clone(),
@@ -478,6 +507,7 @@ impl ToolRuntime {
             config: Self::project_config_from_candidate(candidate),
             root_fingerprint: candidate.root_fingerprint.clone(),
             registration_incarnation: candidate.registration_incarnation.clone(),
+            runner_instance_id: candidate.runner_instance_id.clone(),
             knowledge_association: candidate.lineage.clone(),
         }
     }

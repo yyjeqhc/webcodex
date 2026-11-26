@@ -3,6 +3,28 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+/// Published v0.5.1 Workflow Session binding to one registration and root.
+pub fn workflow_project_identity(
+    root_fingerprint: Option<&str>,
+    registered_path: &str,
+    registration_incarnation: Option<&str>,
+) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let incarnation = registration_incarnation.filter(|value| !value.is_empty())?;
+    let (kind, root) = match root_fingerprint.filter(|fp| !fp.trim().is_empty()) {
+        Some(root) => ("canonical-root", root),
+        None => ("registered-path", registered_path),
+    };
+    let mut digest = Sha256::new();
+    digest.update(b"webcodex.workflow-project-registration.v2\0");
+    for component in [kind, incarnation] {
+        digest.update(component.as_bytes());
+        digest.update(b"\0");
+    }
+    digest.update(root.as_bytes());
+    Some(format!("{:x}", digest.finalize()))
+}
+
 /// Shared registration/configuration bounds for optional Runner metadata.
 const MAX_RUNNER_FIELD_LEN: usize = 200;
 pub fn validate_optional_runner_field(value: &Option<String>, field: &str) -> Result<(), String> {

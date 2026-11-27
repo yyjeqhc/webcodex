@@ -471,6 +471,9 @@ beforeEach(() => {
       expect(count()).toBe(1);
       await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
       expect(api.refresh.mock.calls.length).toBeGreaterThan(2);
+      // Repeated automatic observation must opt into the shared native budget;
+      // the startup/manual refresh remains explicitly fresh.
+      expect(api.refresh.mock.calls.slice(1).every(args => args[0] === true)).toBe(true);
       expect(count()).toBe(1);
       await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
       expect(count()).toBeGreaterThanOrEqual(2);
@@ -505,6 +508,7 @@ beforeEach(() => {
     expect(screen.getByRole("button", { name: "启动 WebCodex" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "刷新" }));
     await waitFor(() => expect(api.refresh).toHaveBeenCalledTimes(1));
+    expect(api.refresh).toHaveBeenCalledWith();
     expect(screen.getByRole("status")).toHaveTextContent("WebCodex · 已停止");
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
   });

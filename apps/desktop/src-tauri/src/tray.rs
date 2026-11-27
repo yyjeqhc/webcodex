@@ -254,8 +254,8 @@ pub fn start_background_observer(app: &AppHandle) {
             let state = app.state::<AppState>();
             let mut snapshot = state.get_state();
             if should_refresh_persistent_status(&snapshot) {
-                if let Ok(fresh) = state.refresh_runtime_status().await {
-                    snapshot = fresh;
+                if let Ok(observed) = state.observe_runtime_status().await {
+                    snapshot = observed;
                 }
             }
             refresh_from_snapshot(&app, &snapshot);

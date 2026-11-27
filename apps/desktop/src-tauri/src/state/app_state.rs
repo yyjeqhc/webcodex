@@ -32,7 +32,7 @@ impl AppState {
             supervisor,
             connections,
             operations: OperationController::new(activity.clone()),
-            refresh_lock: tokio::sync::Mutex::new(()),
+            refresh_lock: tokio::sync::Mutex::new(None),
             activity,
             shutdown_signal: CancellationSignal::new(),
             shutdown_started: AtomicBool::new(false),
@@ -141,7 +141,19 @@ impl AppState {
         })
     }
 
+    pub async fn observe_runtime_status(&self) -> DesktopResult<DesktopStateSnapshot> {
+        self.refresh_runtime_status_with_policy(true).await
+    }
+
     pub async fn refresh_runtime_status(&self) -> DesktopResult<DesktopStateSnapshot> {
+        self.refresh_runtime_status_with_policy(false).await
+    }
+
+    async fn refresh_runtime_status_with_policy(
+        &self,
+        automatic: bool,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        let requested_at = Instant::now();
         if self.shutdown_signal.is_cancelled() {
             return Err(cancelled_error());
         }
@@ -166,7 +178,7 @@ impl AppState {
         }
 
         let before_generation = self.get_state().state_generation;
-        let _refresh_guard = self.refresh_lock.lock().await;
+        let mut refresh_guard = self.refresh_lock.lock().await;
         if self.shutdown_signal.is_cancelled() {
             return Err(cancelled_error());
         }
@@ -182,12 +194,6 @@ impl AppState {
             }))
             .with_operation_context(Some(&current.id), None, None, None));
         }
-        // Coalesce overlapping background refreshes: if another refresh already
-        // published a fresher snapshot while we waited, return it directly.
-        if self.get_state().state_generation != before_generation {
-            return Ok(self.get_state());
-        }
-
         let cancellation =
             CancellationContext::new(CancellationSignal::new(), self.shutdown_signal.clone());
         let start_op_generation = self.operations.generation();
@@ -208,7 +214,7 @@ impl AppState {
             },
         }
 
-        let plan = {
+        let (plan, environment_id, runtime_selection_revision) = {
             let slot = self.core.lock().await;
             let Some(core) = slot.as_ref() else {
                 return Err(DesktopError::new(
@@ -217,7 +223,14 @@ impl AppState {
                     "Wait for the current operation to finish.",
                 ));
             };
-            if let Some(environment_id) = core.config.persistent_environment.clone() {
+            if core.configuration_issue.is_some() {
+                return Err(DesktopError::new(
+                    "configuration_migration_failed",
+                    "Configuration could not be migrated",
+                    "Open Diagnostics or explicitly restore the previous known-good configuration.",
+                ));
+            }
+            let plan = if let Some(environment_id) = core.config.persistent_environment.clone() {
                 RefreshPlan::Persistent { environment_id }
             } else if core.snapshot.quick_share.is_some() {
                 RefreshPlan::QuickShare
@@ -236,10 +249,45 @@ impl AppState {
                 }
             } else {
                 RefreshPlan::Unconfigured
-            }
+            };
+            (
+                plan,
+                core.config.persistent_environment.clone(),
+                core.config.runtime_selection_revision,
+            )
         };
 
-        match plan {
+        // All automatic callers share this gate, including a recreated renderer
+        // and the no-window tray observer. Ordinary presentation publications
+        // neither invalidate nor extend the full-observation budget.
+        if let Some(previous) = refresh_guard.as_ref().filter(|previous| {
+            previous.environment_id == environment_id
+                && previous.operation_generation == start_op_generation
+                && previous.runtime_selection_revision == runtime_selection_revision
+        }) {
+            let last_attempt = previous.completed.map_or(previous.started_at, |(at, _)| at);
+            let current = self.get_state();
+            let completed_since_request = previous.completed.is_some_and(|(at, generation)| {
+                at >= requested_at && generation == current.state_generation
+            });
+            if (automatic && last_attempt.elapsed() < AUTOMATIC_RUNTIME_REFRESH_INTERVAL)
+                || completed_since_request
+            {
+                return Ok(current);
+            }
+        }
+
+        // A failure cools down automatic retries, but never becomes a successful
+        // full observation that could satisfy a fresh manual request.
+        *refresh_guard = Some(RuntimeRefreshAttempt {
+            environment_id: environment_id.clone(),
+            operation_generation: start_op_generation,
+            runtime_selection_revision,
+            started_at: Instant::now(),
+            completed: None,
+        });
+
+        let observed: DesktopResult<DesktopStateSnapshot> = match plan {
             RefreshPlan::QuickShare | RefreshPlan::Unconfigured => {
                 let mut slot = self.core.lock().await;
                 let Some(core) = slot.as_mut() else {
@@ -407,7 +455,19 @@ impl AppState {
                 core.publish_snapshot();
                 Ok(self.get_state())
             }
+        };
+        let observed = observed?;
+        // Every stale-result branch above returns before recording completion.
+        // Keep the identity captured at the beginning; never rebind late work.
+        if self.operations.current().is_none()
+            && self.operations.generation() == start_op_generation
+            && observed.persistent_environment == environment_id
+        {
+            if let Some(attempt) = refresh_guard.as_mut() {
+                attempt.completed = Some((Instant::now(), observed.state_generation));
+            }
         }
+        Ok(observed)
     }
 
     pub async fn observe_chatgpt_activity(&self) -> DesktopResult<DesktopStateSnapshot> {

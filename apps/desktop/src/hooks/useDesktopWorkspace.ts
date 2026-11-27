@@ -255,7 +255,7 @@ export function useDesktopWorkspace() {
           if (refreshRuntime) setRuntimeObservations(count => count + 1);
           try {
             const next = refreshRuntime
-              ? await desktopApi.refresh()
+              ? await desktopApi.refresh(true)
               : await desktopApi.getState();
             if (!cancelled && stateVersionRef.current === observedVersion) {
               commitState(next);

@@ -342,11 +342,12 @@ impl ToolRuntime {
     pub(super) async fn explicit_coding_session_project(
         &self,
         session_id: &str,
+        requested_project: Option<&str>,
         tool_name: &str,
         auth: Option<&AuthContext>,
     ) -> Result<Option<ResolvedProject>, ToolResult> {
         if let Some(resolved) = self
-            .authorize_session_target(session_id, tool_name, auth)
+            .authorize_session_target(session_id, tool_name, requested_project, auth)
             .await?
         {
             return Ok(Some(resolved));

@@ -20,7 +20,7 @@ use webcodex_tool_contracts::{
 };
 
 use super::model::{
-    PersistentShellEventEvidence, SessionEvent, SessionRecord, SessionSummary, ToolCallExpectation,
+    PersistentShellEventEvidence, SessionEvent, SessionSummary, ToolCallExpectation,
     ToolCallRecorderMetadata, LOGICAL_INVOCATION_ID_PREFIX, LOGICAL_INVOCATION_ROLE_BUSINESS,
     LOGICAL_INVOCATION_ROLE_RECORDER, MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS,
     MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, TOOL_ACCEPTED_EXIT_CODES_FIELD,
@@ -31,125 +31,6 @@ use super::model::{
     TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_RESULT_EXPECTATION_FIELD,
 };
 use super::util::{bound_summary_string, looks_like_secret_string, validation_excerpt};
-
-#[derive(Clone, Copy)]
-pub(super) struct Interaction<'a> {
-    pub(super) start: Option<&'a SessionEvent>,
-    pub(super) finish: Option<&'a SessionEvent>,
-    pub(super) sequence: usize,
-}
-
-pub(super) fn has_unresolved_execution(record: &SessionRecord) -> bool {
-    build_interactions(record).iter().any(|interaction| {
-        interaction
-            .finish
-            .map_or(interaction.start.is_some(), unknown_execution)
-    })
-}
-
-pub(super) fn build_interactions(record: &SessionRecord) -> Vec<Interaction<'_>> {
-    let mut correlated: HashMap<&str, Interaction<'_>> = HashMap::new();
-    let mut legacy_finished = Vec::new();
-
-    for (sequence, event) in record.events.iter().enumerate() {
-        let event = event.as_ref();
-        match event.kind.as_str() {
-            "tool_call_started" => {
-                let Some(call_id) = event.call_id.as_deref() else {
-                    // A legacy start cannot safely be labelled "running": its
-                    // matching finish predates call correlation. Do not guess.
-                    continue;
-                };
-                correlated.entry(call_id).or_insert(Interaction {
-                    start: Some(event),
-                    finish: None,
-                    sequence,
-                });
-            }
-            "tool_call_finished" => {
-                let Some(call_id) = event.call_id.as_deref() else {
-                    legacy_finished.push(Interaction {
-                        start: None,
-                        finish: Some(event),
-                        sequence,
-                    });
-                    continue;
-                };
-                correlated
-                    .entry(call_id)
-                    .and_modify(|interaction| interaction.finish = Some(event))
-                    .or_insert(Interaction {
-                        start: None,
-                        finish: Some(event),
-                        sequence,
-                    });
-            }
-            _ => {}
-        }
-    }
-
-    let mut interactions: Vec<_> = correlated.into_values().collect();
-    interactions.extend(legacy_finished);
-    interactions.sort_by_key(|interaction| interaction.sequence);
-    interactions
-}
-
-pub(crate) fn unknown_execution(event: &SessionEvent) -> bool {
-    let states = [
-        event
-            .effect_evidence
-            .as_ref()
-            .and_then(|e| e.execution_state.as_deref()),
-        event
-            .persistent_shell
-            .as_ref()
-            .and_then(|e| e.execution_state.as_deref()),
-        event
-            .validation_output_summary
-            .as_ref()
-            .and_then(|value| value.get("execution_state"))
-            .and_then(Value::as_str),
-    ];
-    // Producers can retain uncertainty as a structured failure kind without
-    // effect evidence. An accepted Job must never mask explicit uncertainty.
-    if [
-        event.failure_kind.as_deref(),
-        event.error_kind.as_deref(),
-        event.actual_failure_kind.as_deref(),
-    ]
-    .contains(&Some("outcome_unknown"))
-        || states
-            .iter()
-            .any(|state| matches!(state, Some("outcome_unknown" | "unknown" | "recovering")))
-    {
-        return true;
-    }
-    let pending =
-        |state: Option<&str>| matches!(state, Some("queued" | "pending" | "started" | "running"));
-    if event.status.as_deref() == Some("succeeded")
-        && event
-            .job_id
-            .as_deref()
-            .is_some_and(webcodex_core::workflow_session_contract::is_safe_job_id)
-        && states.iter().copied().any(pending)
-    {
-        // This immutable event records successful asynchronous acceptance, not
-        // an unknown outcome. Active/recovering/terminal Jobs are already owned
-        // by the canonical Job projection; do not create a permanent recovery
-        // requirement from its historical command_completed=false receipt.
-        return false;
-    }
-    event.effect_evidence.as_ref().is_some_and(|evidence| {
-        pending(evidence.execution_state.as_deref())
-            || (evidence.command_started == Some(true) && evidence.command_completed != Some(true))
-    }) || event.persistent_shell.as_ref().is_some_and(|evidence| {
-        pending(evidence.execution_state.as_deref())
-            || (evidence.command_started == Some(true) && evidence.command_completed != Some(true))
-    }) || event
-        .validation_output_summary
-        .as_ref()
-        .is_some_and(|value| pending(value.get("execution_state").and_then(Value::as_str)))
-}
 
 impl ToolCallRecorderMetadata {
     /// Allocate one trusted logical request identity at the kernel boundary.

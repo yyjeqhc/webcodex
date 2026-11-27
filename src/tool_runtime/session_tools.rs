@@ -11,9 +11,11 @@ use crate::auth::AuthContext;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-enum SessionAccess {
+#[derive(Clone, Copy)]
+enum SessionAccess<'a> {
     Record,
-    Live,
+    BoundTarget,
+    Live { requested_project: Option<&'a str> },
 }
 
 impl ToolRuntime {
@@ -446,7 +448,7 @@ impl ToolRuntime {
         transport: sessions::SessionTransport,
     ) -> ToolResult {
         if let Err(result) = self
-            .authorize_session_target(&session_id, "update_session_context", auth)
+            .authorize_session_target(&session_id, "update_session_context", Some(&project), auth)
             .await
         {
             return result;
@@ -629,16 +631,32 @@ impl ToolRuntime {
             .map(|_| ())
     }
 
-    /// Includes recorder admission and compound observations that consult
-    /// Jobs, files or Git. The tool name is for diagnostics only.
-    pub(crate) async fn authorize_session_target(
+    /// Indirect Window/Goal discovery may observe a bound target, but cannot
+    /// choose a first registration on behalf of the Session owner.
+    pub(super) async fn observe_bound_session_target(
         &self,
         session_id: &str,
         tool_name: &str,
         auth: Option<&AuthContext>,
     ) -> Result<Option<super::project_resolution::ResolvedProject>, ToolResult> {
-        self.authorize_session_access(session_id, tool_name, auth, SessionAccess::Live)
+        self.authorize_session_access(session_id, tool_name, auth, SessionAccess::BoundTarget)
             .await
+    }
+
+    pub(crate) async fn authorize_session_target(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        requested_project: Option<&str>,
+        auth: Option<&AuthContext>,
+    ) -> Result<Option<super::project_resolution::ResolvedProject>, ToolResult> {
+        self.authorize_session_access(
+            session_id,
+            tool_name,
+            auth,
+            SessionAccess::Live { requested_project },
+        )
+        .await
     }
 
     async fn authorize_session_access(
@@ -646,7 +664,7 @@ impl ToolRuntime {
         session_id: &str,
         tool_name: &str,
         auth: Option<&AuthContext>,
-        access: SessionAccess,
+        access: SessionAccess<'_>,
     ) -> Result<Option<super::project_resolution::ResolvedProject>, ToolResult> {
         let (project, owner) = self
             .sessions
@@ -657,23 +675,43 @@ impl ToolRuntime {
         #[cfg(not(test))]
         let fixture = false;
 
+        if let (Some(project), SessionAccess::Record) = (project.as_deref(), access) {
+            if !(fixture && auth.is_none())
+                && !self.session_project_history_visible(project, auth).await
+            {
+                return Err(super::session_context::unknown_session_result(session_id));
+            }
+        }
+        if !fixture
+            && workflow_session_authority_fingerprint(auth).ok().as_deref() != Some(owner.as_str())
+        {
+            return Err(session_authority_denied_result(session_id, tool_name));
+        }
+        self.sessions
+            .prepare_request()
+            .await
+            .map_err(|_| session_storage_unavailable_result())?;
         let resolved = match (project.as_deref(), access) {
             _ if fixture && auth.is_none() => None,
-            (None, _) => {
-                if !fixture && auth.is_some_and(AuthContext::is_open_anonymous) {
-                    return Err(session_authority_denied_result(session_id, tool_name));
-                }
-                None
+            (None, _) if !fixture && auth.is_some_and(AuthContext::is_open_anonymous) => {
+                return Err(session_authority_denied_result(session_id, tool_name));
             }
-            (Some(project), SessionAccess::Record) => {
-                if !self.session_project_history_visible(project, auth).await {
-                    return Err(super::session_context::unknown_session_result(session_id));
-                }
-                None
-            }
-            (Some(project), SessionAccess::Live) => {
+            (None, _) | (_, SessionAccess::Record) => None,
+            (Some(project), live) => {
+                let bound = self.sessions.session_project_identity(session_id);
+                // A first binding must match the caller's selected Project too.
+                // Bound Sessions retain their normal per-tool mismatch diagnostics.
+                let input = match (&bound, live) {
+                    (
+                        Some(None),
+                        SessionAccess::Live {
+                            requested_project: Some(input),
+                        },
+                    ) if !fixture && !input.trim().is_empty() => input,
+                    _ => project,
+                };
                 let resolved = self
-                    .resolve_project_input_for_auth(project, auth)
+                    .resolve_project_input_for_auth(input, auth)
                     .await
                     .map_err(super::ProjectResolverError::into_tool_result)?;
                 if resolved.resolved_id != project {
@@ -686,31 +724,99 @@ impl ToolRuntime {
                         },
                     ));
                 }
+                if !fixture {
+                    let identity = resolved.require_live_workflow_project_identity()?;
+                    match (bound, live) {
+                        (Some(Some(stored)), _) if stored == identity => {}
+                        (Some(None), SessionAccess::Live { .. }) => {
+                            if auth.is_some_and(|a| !a.has_scope(crate::auth::SCOPE_PROJECT_READ)) {
+                                return Err(session_authority_denied_result(session_id, tool_name));
+                            }
+                            self.bind_legacy_session_project(
+                                session_id, tool_name, project, &owner, &identity, auth,
+                            )
+                            .await?;
+                        }
+                        _ => {
+                            return Err(session_project_identity_changed_result(
+                                session_id, tool_name,
+                            ))
+                        }
+                    }
+                }
                 Some(resolved)
             }
         };
-        if !fixture {
-            if workflow_session_authority_fingerprint(auth).ok().as_deref() != Some(owner.as_str())
-            {
-                return Err(session_authority_denied_result(session_id, tool_name));
-            }
-            if let Some(resolved) = resolved.as_ref() {
-                let identity = resolved.require_live_workflow_project_identity()?;
-                let bound = self.sessions.session_project_identity(session_id).flatten();
-                if bound.as_ref() != Some(&identity) {
-                    let mut result = session_project_identity_changed_result(session_id, tool_name);
-                    if bound.is_none() {
-                        result.output["recovery"] = json!("Ask the original owner to review the current registration in Runtime Console → Session → Evidence and reauthorize this legacy Session. Then resume with the original ID or Ref.");
+        Ok(resolved)
+    }
+
+    async fn bind_legacy_session_project(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        project: &str,
+        owner: &str,
+        identity: &str,
+        auth: Option<&AuthContext>,
+    ) -> Result<(), ToolResult> {
+        use webcodex_workflow_session::SessionBindingError as Error;
+        let access = crate::runner_http::runner_access_from_auth(auth);
+        let local_work = self.session_shells.has_active_shell(session_id).await
+            || self.coding_agent_runs.has_active_recorder(session_id).await;
+        let binding = self
+            .runner_registry
+            .with_live_session_registration(
+                access.as_ref(),
+                project,
+                session_id,
+                |current, busy| {
+                    if current != identity {
+                        return Err(Error::DifferentRegistration);
                     }
-                    return Err(result);
-                }
-            }
-        }
+                    self.sessions.bind_legacy_project(
+                        session_id,
+                        project,
+                        owner,
+                        identity,
+                        local_work || busy,
+                    )
+                },
+            )
+            .await
+            .ok_or_else(
+                super::project_resolution::ResolvedProject::registration_identity_unavailable,
+            )?;
+        binding.map_err(|error| match error {
+            Error::Closed => session_lifecycle_denied_result(
+                session_id, tool_name, sessions::SessionLifecycleDenial { lifecycle: sessions::SessionLifecycle::Closed },
+            ),
+            Error::UnknownSession => super::session_context::unknown_session_result(session_id),
+            Error::DifferentRegistration => session_project_identity_changed_result(session_id, tool_name),
+            Error::StorageUnavailable => session_storage_unavailable_result(),
+            Error::ExecutionBusy => ToolResult::err_with_output(
+                "Session has active execution",
+                json!({
+                    "error_kind": "session_execution_busy", "execution_state": "not_started",
+                    "recovery": "Wait for the current Session operation to finish, then continue with the same Session."
+                }),
+            ),
+        })?;
         self.sessions
-            .prepare_request()
+            .flush()
             .await
             .map_err(|_| session_storage_unavailable_result())?;
-        Ok(resolved)
+        // The writer waits outside the registry lock. A replacement during that
+        // wait must not become the target of the request that acquired the binding.
+        let current = self
+            .resolve_project_input_for_auth(project, auth)
+            .await
+            .map_err(super::ProjectResolverError::into_tool_result)?;
+        if current.require_live_workflow_project_identity()? != identity {
+            return Err(session_project_identity_changed_result(
+                session_id, tool_name,
+            ));
+        }
+        Ok(())
     }
 
     fn trusted_collaboration_author_session(
@@ -755,7 +861,7 @@ impl ToolRuntime {
         trusted_recording_session_id: Option<&str>,
     ) -> ToolResult {
         if let Err(result) = self
-            .authorize_session_target(&session_id, "post_session_message", auth)
+            .authorize_session_target(&session_id, "post_session_message", None, auth)
             .await
         {
             return result;
@@ -947,7 +1053,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(result) = self
-            .authorize_session_target(&session_id, "resolve_session_message", auth)
+            .authorize_session_target(&session_id, "resolve_session_message", None, auth)
             .await
         {
             return result;
@@ -985,7 +1091,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(result) = self
-            .authorize_session_target(&session_id, "complete_session_message", auth)
+            .authorize_session_target(&session_id, "complete_session_message", None, auth)
             .await
         {
             return result;

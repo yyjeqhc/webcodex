@@ -776,7 +776,7 @@ exit 0
         tool_name: &'static str,
         auth: Option<&AuthContext>,
     ) -> Result<(String, super::sessions::SessionSummary, String), ToolResult> {
-        self.authorize_session_target(session_id, tool_name, auth)
+        self.authorize_session_target(session_id, tool_name, Some(project), auth)
             .await?;
         let resolved = self
             .resolve_project_input_for_auth(project, auth)

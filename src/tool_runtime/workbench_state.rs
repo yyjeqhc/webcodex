@@ -335,7 +335,11 @@ impl ToolRuntime {
                     match self.canonicalize_explicit_session_selector(&raw_session, auth) {
                         Ok(session)
                             if self
-                                .authorize_session_target(&session, "list_session_messages", auth)
+                                .observe_bound_session_target(
+                                    &session,
+                                    "list_session_messages",
+                                    auth,
+                                )
                                 .await
                                 .is_ok() =>
                         {

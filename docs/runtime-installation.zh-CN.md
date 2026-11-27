@@ -68,12 +68,8 @@ webcodex environment update rollback --operation-id OPERATION_ID --yes
 
 ## 续接 v0.5.0 的 Workflow Session
 
-v0.5.0 保存了 Session 的所有者、ID 和历史。Runner 在升级至 v0.5.1 时才首次为旧注册分配 UUID。原所有者向当前注册实例授权前，实时续接会返回 `session_project_identity_changed`。
+升级后，在原客户端使用原 Session ID 或 Ref 即可继续工作，包括已授权的 OAuth 客户端。直接从 v0.5.0 升级和经 v0.5.1 升级均无需额外操作。
 
-1. 使用原所有者具备 `runtime:read`、`project:read` 和 `session:collaborate` 权限的直接凭据打开 Runtime Console（`/runtime`）。托管 OAuth 用户可使用自己的个人 API Token。连接 Runner，等待 Project Inventory 完整同步。
-2. 在工作视图中选中原 Session，打开 **证据 → 重新授权旧 Session**。确认框显示原 Session ID、完整 Project ID、注册路径和注册 UUID。核对目标后确认。如果注册实例已变化，刷新并重新核对。
-3. 使用原 ID 或 Ref 调用 `work_on_project` 续接。授权和唯一一条 `session_project_reauthorized` 事件在同一次持久化中提交。若未收到确认，先用原 ID 调用 `read_session_summary`（省略 Recorder）核对该事件，再决定是否重新确认。若存储不可用，先恢复 Session 数据库访问。
-
-仅缺少注册绑定的 Active Session 可以恢复。已有绑定与当前注册不匹配时继续拒绝。若有执行状态未决，请先核对原调用、Job 和 Shell。授权保留历史、指令、消息、Todo、验证记录和 Session 限制，也不会派发旧请求、重跑 Job、打开 Shell 或发送协作回执。
+v0.5.0 未保存 Project 注册身份。原所有者首次在活动 Session 上发起实时请求时，WebCodex 校验当前 Project 权限，将原 Project ID 对应的在线注册身份写入 SQLite，然后继续处理同一请求。历史、消息、Todo、验证记录和 Session 配置均保留。已有绑定仍须匹配，已关闭的 Session 保持关闭。旧 Job、Shell 和在途请求沿用各自的恢复规则。
 
 原所有者也可省略 Recorder，调用 `read_session_summary`、`list_session_messages` 读取历史，或直接关闭 Session。若未保存 ID，可用完整的 Project ID 调用 `list_sessions`。Server 重启后需要 Runner 注册以重新确认归属。若 Server 仍持有可验证的 Runner 归属，Runner 离线期间也可读取历史或关闭 Session。

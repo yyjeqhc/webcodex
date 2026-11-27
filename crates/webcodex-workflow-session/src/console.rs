@@ -5,9 +5,9 @@
 //! arguments/output. Correlation is presentation-only via `call_id`.
 
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use super::events::{build_interactions, normalize_observed_project_path, Interaction};
+use super::events::normalize_observed_project_path;
 use super::model::{
     SessionEvent, SessionMessageKind, SessionRecord, DEFAULT_MAX_SESSIONS,
     DEFAULT_RECENT_EVENT_LIMIT,
@@ -207,6 +207,13 @@ pub struct WorkflowSessionConsoleActivity {
     pub group_kinds: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub group_tools: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+struct Interaction<'a> {
+    start: Option<&'a SessionEvent>,
+    finish: Option<&'a SessionEvent>,
+    sequence: usize,
 }
 
 struct OrderedActivity {
@@ -634,6 +641,53 @@ fn is_groupable_exploration(activity: &WorkflowSessionConsoleActivity) -> bool {
             activity.kind.as_str(),
             "Read" | "Searched" | "Navigated" | "Explored"
         )
+}
+
+fn build_interactions(record: &SessionRecord) -> Vec<Interaction<'_>> {
+    let mut correlated: HashMap<&str, Interaction<'_>> = HashMap::new();
+    let mut legacy_finished = Vec::new();
+
+    for (sequence, event) in record.events.iter().enumerate() {
+        let event = event.as_ref();
+        match event.kind.as_str() {
+            "tool_call_started" => {
+                let Some(call_id) = event.call_id.as_deref() else {
+                    // A legacy start cannot safely be labelled "running": its
+                    // matching finish predates call correlation. Do not guess.
+                    continue;
+                };
+                correlated.entry(call_id).or_insert(Interaction {
+                    start: Some(event),
+                    finish: None,
+                    sequence,
+                });
+            }
+            "tool_call_finished" => {
+                let Some(call_id) = event.call_id.as_deref() else {
+                    legacy_finished.push(Interaction {
+                        start: None,
+                        finish: Some(event),
+                        sequence,
+                    });
+                    continue;
+                };
+                correlated
+                    .entry(call_id)
+                    .and_modify(|interaction| interaction.finish = Some(event))
+                    .or_insert(Interaction {
+                        start: None,
+                        finish: Some(event),
+                        sequence,
+                    });
+            }
+            _ => {}
+        }
+    }
+
+    let mut interactions: Vec<_> = correlated.into_values().collect();
+    interactions.extend(legacy_finished);
+    interactions.sort_by_key(|interaction| interaction.sequence);
+    interactions
 }
 
 fn activity_preview(

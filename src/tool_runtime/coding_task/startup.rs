@@ -109,7 +109,12 @@ impl ToolRuntime {
         };
         let resume_session_project = match resume_session_id.as_deref() {
             Some(session_id) => match self
-                .explicit_coding_session_project(session_id, startup.tool_name, auth)
+                .explicit_coding_session_project(
+                    session_id,
+                    Some(&project),
+                    startup.tool_name,
+                    auth,
+                )
                 .await
             {
                 Ok(project) => project,
@@ -131,6 +136,19 @@ impl ToolRuntime {
                 .unwrap_or(project)
         } else {
             project
+        };
+        let trusted_recording_session_resolved_project = match (
+            trusted_recording_session_id,
+            trusted_recording_session_project,
+        ) {
+            (Some(id), Some(_)) => match self
+                .explicit_coding_session_project(id, Some(&project), startup.tool_name, auth)
+                .await
+            {
+                Ok(resolved) => resolved,
+                Err(result) => return result,
+            },
+            _ => None,
         };
         let project_source = match resolve_project_source(project, client_id, path) {
             Ok(source) => source,
@@ -155,19 +173,6 @@ impl ToolRuntime {
             };
             worktree.resume_project_id = Some(project_id.to_string());
         }
-        let trusted_recording_session_resolved_project = match (
-            trusted_recording_session_id,
-            trusted_recording_session_project,
-        ) {
-            (Some(id), Some(_)) => match self
-                .explicit_coding_session_project(id, startup.tool_name, auth)
-                .await
-            {
-                Ok(resolved) => resolved,
-                Err(result) => return result,
-            },
-            _ => None,
-        };
         let title = match title {
             Some(title) => {
                 let title = title.trim().to_string();

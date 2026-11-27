@@ -232,18 +232,20 @@ async fn project_active_job_query_is_not_truncated_and_unregister_fences_starts(
 }
 
 #[tokio::test]
-async fn legacy_session_grant_observes_jobs_and_pending_requests_without_dispatching() {
+async fn legacy_session_binding_observes_jobs_and_pending_requests_without_dispatching() {
     let registry = RunnerRegistry::default();
     let access = auth_context(Some("alice"), false);
     register_with_instance(&registry, "oe", "instance").await;
     let project = "agent:oe:repo";
     let session = "session-a";
+    let mut registered = project_summary("repo", "/fixture");
+    registered.registration_incarnation = Some(uuid::Uuid::new_v4().to_string());
     registry
-        .upsert_runner_project_for_instance("oe", "instance", project_summary("repo", "/fixture"))
+        .upsert_runner_project_for_instance("oe", "instance", registered)
         .await
         .unwrap();
     let busy =
-        || registry.with_live_session_registration(&access, project, Some(session), |_, busy| busy);
+        || registry.with_live_session_registration(Some(&access), project, session, |_, busy| busy);
     assert_eq!(busy().await, Some(false));
     let mut request = shell_job_start_request("oe", "echo fixture", Some(60));
     request.context.project_id = Some(project.into());
@@ -269,4 +271,21 @@ async fn legacy_session_grant_observes_jobs_and_pending_requests_without_dispatc
         assert!(!inner.pending_by_id.remove(&request_id).unwrap().dispatched);
     }
     assert_eq!(busy().await, Some(false));
+    // A recoverable Job that missed its reconciliation deadline becomes Lost
+    // even if no operator has inspected it since the restart.
+    {
+        let mut inner = registry.inner.lock().await;
+        let job = inner.jobs_by_id.get_mut(&job.job_id).unwrap();
+        job.lifecycle = crate::state::JobLifecycleState::Running;
+        job.recovery = crate::state::JobRecoveryState {
+            phase: Some(crate::state::JobRecoveryPhase::Recovering),
+            recovering_since: Some(now_ts() - job_recovery_grace_secs() - 1),
+            ..Default::default()
+        };
+    }
+    assert_eq!(busy().await, Some(false));
+    assert_eq!(
+        registry.inner.read().await.jobs_by_id[&job.job_id].lifecycle,
+        crate::state::JobLifecycleState::Lost
+    );
 }

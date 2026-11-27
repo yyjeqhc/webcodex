@@ -497,7 +497,7 @@ async fn local_dev_session_keeps_live_access_and_retired_history_without_auth_co
         .to_string();
     assert!(
         runtime
-            .authorize_session_target(&session_id, "update_session_context", None)
+            .authorize_session_target(&session_id, "update_session_context", None, None)
             .await
             .is_ok(),
         "the original registration must remain usable"
@@ -519,7 +519,7 @@ async fn local_dev_session_keeps_live_access_and_retired_history_without_auth_co
     );
     assert!(
         runtime
-            .authorize_session_target(&session_id, "update_session_context", None)
+            .authorize_session_target(&session_id, "update_session_context", None, None)
             .await
             .is_err(),
         "retired Project cannot be used for live mutation"
@@ -565,7 +565,7 @@ async fn local_dev_session_rejects_reused_project_registration_without_auth_cont
     // Local/dev's canonical authority must be subject to the *same*
     // registration fence as authenticated callers, before any tool policy.
     let denied = runtime
-        .authorize_session_target(&session_id, "update_session_context", None)
+        .authorize_session_target(&session_id, "update_session_context", None, None)
         .await
         .err()
         .expect("the replaced registration must reject a local-dev Session");
@@ -886,4 +886,76 @@ async fn project_grant_history_stays_in_its_partition_after_unregister() {
             assert_eq!(visible.result.unwrap().output["total"], 1);
         }
     }
+}
+
+#[tokio::test]
+async fn failed_legacy_binding_rejects_the_live_request_until_sqlite_recovers() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("webcodex.db");
+    let legacy = directory.path().join("sessions.json");
+    let runtime = test_runtime()
+        .with_session_database(&database, &legacy)
+        .unwrap();
+    let auth = owner(false);
+    register(&runtime, "alice", Some("/original-root")).await;
+    let id = runtime
+        .sessions
+        .start_session_with_options(
+            SessionCreateOptions::new(
+                Some(PROJECT.into()),
+                None,
+                SessionMode::Normal,
+                SessionGuards::default(),
+            )
+            .with_owner_authority_fingerprint(Some(
+                workflow_session_authority_fingerprint(Some(&auth)).unwrap(),
+            )),
+        )
+        .unwrap()
+        .session_id;
+    runtime.sessions.flush().await.unwrap();
+
+    let post = || {
+        call(
+            &runtime,
+            Some(&auth),
+            "post_session_message",
+            json!({"session_id": id, "kind": "decision", "message": "After commit"}),
+            None,
+        )
+    };
+    runtime.sessions.set_persistence_failure_for_test(true);
+    let result = post().await;
+    assert!(!result.success);
+    assert_eq!(
+        result.result.unwrap().output["error_kind"],
+        "session_storage_unavailable"
+    );
+    assert_eq!(runtime.sessions.session_project_identity(&id), Some(None));
+    let restored = test_runtime()
+        .with_session_database(&database, &legacy)
+        .unwrap();
+    assert_eq!(restored.sessions.session_project_identity(&id), Some(None));
+    drop(restored);
+
+    runtime.sessions.set_persistence_failure_for_test(false);
+    assert!(post().await.success);
+    let history = call(
+        &runtime,
+        Some(&auth),
+        "list_session_messages",
+        json!({"session_id": id}),
+        None,
+    )
+    .await;
+    let messages = history.result.unwrap().output["messages"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(messages.len(), 1);
+    assert!(runtime
+        .sessions
+        .session_project_identity(&id)
+        .unwrap()
+        .is_some());
 }

@@ -1,9 +1,9 @@
 //! Bounded recovery pointers and advisory repeated-failure diagnostics.
 //! No workspace reads, execution, scheduling, or authority is owned here.
-use crate::events::unknown_execution;
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashSet};
 use webcodex_core::validation_identity::is_validation_execution_identity;
+use webcodex_core::workflow_session_contract::is_safe_job_id;
 use webcodex_tool_contracts::{lookup_tool_definition, ToolActivityPresentation};
 
 use crate::continuation::ContinuationToolFailureSnapshot;
@@ -249,6 +249,60 @@ fn has_pagination(value: &Value, depth: usize) -> bool {
             .any(|item| has_pagination(item, depth + 1)),
         _ => false,
     }
+}
+
+fn unknown_execution(event: &SessionEvent) -> bool {
+    let states = [
+        event
+            .effect_evidence
+            .as_ref()
+            .and_then(|e| e.execution_state.as_deref()),
+        event
+            .persistent_shell
+            .as_ref()
+            .and_then(|e| e.execution_state.as_deref()),
+        event
+            .validation_output_summary
+            .as_ref()
+            .and_then(|value| value.get("execution_state"))
+            .and_then(Value::as_str),
+    ];
+    // Producers can retain uncertainty as a structured failure kind without
+    // effect evidence. An accepted Job must never mask explicit uncertainty.
+    if [
+        event.failure_kind.as_deref(),
+        event.error_kind.as_deref(),
+        event.actual_failure_kind.as_deref(),
+    ]
+    .contains(&Some("outcome_unknown"))
+        || states
+            .iter()
+            .any(|state| matches!(state, Some("outcome_unknown" | "unknown" | "recovering")))
+    {
+        return true;
+    }
+    let pending =
+        |state: Option<&str>| matches!(state, Some("queued" | "pending" | "started" | "running"));
+    if event.status.as_deref() == Some("succeeded")
+        && event.job_id.as_deref().is_some_and(is_safe_job_id)
+        && states.iter().copied().any(pending)
+    {
+        // This immutable event records successful asynchronous acceptance, not
+        // an unknown outcome. Active/recovering/terminal Jobs are already owned
+        // by the canonical Job projection; do not create a permanent recovery
+        // requirement from its historical command_completed=false receipt.
+        return false;
+    }
+    event.effect_evidence.as_ref().is_some_and(|evidence| {
+        pending(evidence.execution_state.as_deref())
+            || (evidence.command_started == Some(true) && evidence.command_completed != Some(true))
+    }) || event.persistent_shell.as_ref().is_some_and(|evidence| {
+        pending(evidence.execution_state.as_deref())
+            || (evidence.command_started == Some(true) && evidence.command_completed != Some(true))
+    }) || event
+        .validation_output_summary
+        .as_ref()
+        .is_some_and(|value| pending(value.get("execution_state").and_then(Value::as_str)))
 }
 
 fn retained_operation_identity(event: &SessionEvent) -> Option<&str> {

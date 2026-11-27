@@ -640,7 +640,7 @@ impl ToolRuntime {
         // immutable creation fingerprint and any bound Project before touching Goal
         // durable state; the Store receives only the validated canonical identity.
         if let Err(result) = self
-            .authorize_session_target(&session_id, "prepare_goal_workflow", auth)
+            .authorize_session_target(&session_id, "prepare_goal_workflow", None, auth)
             .await
         {
             return result;
@@ -821,7 +821,7 @@ impl ToolRuntime {
         let mut candidate_windows = BTreeSet::new();
         for correlation in correlations {
             let Ok(Some(resolved_project)) = self
-                .authorize_session_target(
+                .observe_bound_session_target(
                     &correlation.reference_id,
                     "goal_activity_observation",
                     Some(auth),
@@ -1212,7 +1212,7 @@ impl ToolRuntime {
             return ineligible("session_authority_missing");
         };
         let resolved = match self
-            .authorize_session_target(session_id, "sync_goal_plan", auth)
+            .observe_bound_session_target(session_id, "sync_goal_plan", auth)
             .await
         {
             Ok(Some(resolved)) => resolved,
@@ -1551,7 +1551,7 @@ impl ToolRuntime {
         // This is the existing authoritative Session fence: it verifies the immutable
         // creation-time authority fingerprint and independently re-authorizes a bound Project.
         if let Err(result) = self
-            .authorize_session_target(&session_id, "associate_goal_workflow_session", auth)
+            .authorize_session_target(&session_id, "associate_goal_workflow_session", None, auth)
             .await
         {
             return result;

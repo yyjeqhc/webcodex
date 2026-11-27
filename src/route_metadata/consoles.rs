@@ -238,15 +238,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         AuthMiddleware,
     ),
     route(
-        RuntimeConsoleWorkflowSessionReauthorize,
-        Post,
-        "/api/runtime-console/workflow-session-reauthorize",
-        Require(SCOPE_SESSION_COLLABORATE),
-        RuntimeConsole,
-        Other,
-        AuthMiddleware,
-    ),
-    route(
         RuntimeConsoleWorkflowSessionMessages,
         Post,
         "/api/runtime-console/workflow-session-messages",

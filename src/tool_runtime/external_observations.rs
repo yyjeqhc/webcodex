@@ -90,9 +90,14 @@ impl ToolRuntime {
     ) -> ToolResult {
         let is_record = input.is_some();
         let authorization = if is_record {
-            self.authorize_session_target(&session_id, "record_external_observation", auth)
-                .await
-                .map(|_| ())
+            self.authorize_session_target(
+                &session_id,
+                "record_external_observation",
+                Some(&project),
+                auth,
+            )
+            .await
+            .map(|_| ())
         } else {
             self.authorize_session_record(&session_id, "list_external_observations", auth)
                 .await

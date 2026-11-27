@@ -123,7 +123,7 @@ impl ToolRuntime {
             // Fence that exact Session before lifecycle/guard inheritance,
             // project mismatch logic, or any ledger mutation.
             if let Err(mut result) = self
-                .authorize_session_target(session_id, call.tool_name(), auth)
+                .authorize_session_target(session_id, call.tool_name(), call.project(), auth)
                 .await
             {
                 decorate_structured_execution_prestart_denial(
@@ -274,7 +274,7 @@ impl ToolRuntime {
             *result_projection = ModelFacingProjectionPlan::capture(&call);
             if let Some(session_id) = session_id.as_deref() {
                 if let Err(mut denial) = self
-                    .authorize_session_target(session_id, "run_shell", auth)
+                    .authorize_session_target(session_id, "run_shell", call.project(), auth)
                     .await
                 {
                     decorate_structured_execution_prestart_denial(

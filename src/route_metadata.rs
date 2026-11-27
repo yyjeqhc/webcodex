@@ -105,7 +105,6 @@ pub(crate) enum RouteId {
     RuntimeConsoleWorkflowSessions,
     RuntimeConsoleWorkflowSessionLocate,
     RuntimeConsoleWorkflowSession,
-    RuntimeConsoleWorkflowSessionReauthorize,
     RuntimeConsoleWorkflowSessionMessages,
     RuntimeConsoleWorkflowSessionObserve,
     RuntimeConsoleWorkflowSessionPostMessage,
@@ -610,7 +609,6 @@ mod tests {
         let mutations = [
             RuntimeConsoleWindowLabel,
             RuntimeConsoleWindowCollaborationPost,
-            RuntimeConsoleWorkflowSessionReauthorize,
             RuntimeConsoleWorkflowSessionPostMessage,
             RuntimeConsoleWorkflowSessionWithdrawMessage,
             RuntimeConsoleWorkflowSessionReplaceMessage,

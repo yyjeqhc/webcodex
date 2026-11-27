@@ -107,21 +107,21 @@ mod allow_patch_projection_tests {
 
 impl RunnerRegistry {
     /// Keep registration, current Runner ownership, and Session-bound work stable
-    /// through a synchronous operator decision. A preview has no work to admit.
+    /// while staging the first binding of a v0.5.0 Session.
     pub async fn with_live_session_registration<R>(
         &self,
-        access: &crate::RunnerAccess,
+        access: Option<&crate::RunnerAccess>,
         runtime_project: &str,
-        session: Option<&str>,
-        decide: impl FnOnce(&RunnerProjectSummary, bool) -> R,
+        session: &str,
+        decide: impl FnOnce(&str, bool) -> R,
     ) -> Option<R> {
         use webcodex_core::runner_operation::RunnerOperation;
         let (client, project) = runtime_project.strip_prefix("agent:")?.split_once(':')?;
-        let inner = self.inner.read().await;
+        let mut inner = self.inner.lock().await;
         let runner = inner.runners.get(client)?;
         let now = crate::now_ts();
-        if !self.runner_visible_for_snapshot(Some(access), &inner, runner, now)
-            || assert_runner_access(Some(access), runner).is_err()
+        if !self.runner_visible_for_snapshot(access, &inner, runner, now)
+            || (access.is_some() && assert_runner_access(access, runner).is_err())
             || now.saturating_sub(runner.last_seen) > crate::RUNNER_ONLINE_WINDOW_SECS
             || runner.project_inventory.status.sync_state != "complete"
             || inner.unregistering_projects.contains_key(runtime_project)
@@ -132,28 +132,36 @@ impl RunnerRegistry {
             .projects
             .iter()
             .find(|p| p.id == project && !p.disabled)?;
-        let busy = session.is_some_and(|id| {
-            inner.jobs_by_id.has_active_session(id)
-                || inner
-                    .pending_by_id
-                    .values()
-                    .any(|pending| match &pending.operation {
-                        RunnerOperation::PersistentShell(op) => {
-                            op.request.workflow_session_id == id
-                        }
-                        RunnerOperation::RunShell(op) => {
-                            op.job_context
-                                .as_ref()
-                                .and_then(|c| c.workflow_session_id.as_deref())
-                                == Some(id)
-                        }
-                        RunnerOperation::Job(op) => {
-                            op.context().and_then(|c| c.workflow_session_id.as_deref()) == Some(id)
-                        }
-                        _ => false,
-                    })
-        });
-        Some(decide(registered, busy))
+        let identity = webcodex_core::runner_protocol::workflow_project_identity(
+            registered.root_fingerprint.as_deref(),
+            &registered.path,
+            registered.registration_incarnation.as_deref(),
+        )?;
+        // Refresh matching active Jobs through the normal recovery deadline.
+        // Retained receipts and Session ledger entries do not own running work.
+        let busy = inner.jobs_by_id.active_ids().into_iter().any(|id| {
+            if inner.jobs_by_id[&id].session_id.as_deref() != Some(session) {
+                return false;
+            }
+            crate::jobs::refresh_job_status_locked(&mut inner, &id);
+            inner.jobs_by_id[&id].lifecycle.is_active()
+        }) || inner
+            .pending_by_id
+            .values()
+            .any(|pending| match &pending.operation {
+                RunnerOperation::PersistentShell(op) => op.request.workflow_session_id == session,
+                RunnerOperation::RunShell(op) => {
+                    op.job_context
+                        .as_ref()
+                        .and_then(|c| c.workflow_session_id.as_deref())
+                        == Some(session)
+                }
+                RunnerOperation::Job(op) => {
+                    op.context().and_then(|c| c.workflow_session_id.as_deref()) == Some(session)
+                }
+                _ => false,
+            });
+        Some(decide(&identity, busy))
     }
 
     /// Authorize historical data against the current credential partition and

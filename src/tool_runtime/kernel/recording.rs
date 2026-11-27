@@ -44,8 +44,29 @@ impl PreparedInvocation {
         // not a ledger address. Authorize it before any lifecycle/guard lookup,
         // project mismatch computation, provenance derivation, or ledger write.
         if let Some(recorder_session_id) = context.session_id {
+            // Scope-denial audits on already-bound recorders keep their existing
+            // ordering. A denied request cannot choose a legacy recorder's first binding.
+            if runtime
+                .sessions
+                .session_project_identity(recorder_session_id)
+                == Some(None)
+            {
+                check_runtime_tool_scope(context.auth, &request.tool_name)
+                    .and_then(|_| {
+                        check_session_message_resolution_scope(
+                            context.auth,
+                            recorder_metadata.session_message_resolution.is_some(),
+                        )
+                    })
+                    .map_err(ToolCallOutcome::rejected)?;
+            }
             if let Err(mut result) = runtime
-                .authorize_session_target(recorder_session_id, &request.tool_name, context.auth)
+                .authorize_session_target(
+                    recorder_session_id,
+                    &request.tool_name,
+                    concrete_arguments.get("project").and_then(Value::as_str),
+                    context.auth,
+                )
                 .await
             {
                 crate::tool_runtime::dispatch::decorate_structured_execution_prestart_denial(
@@ -115,7 +136,12 @@ impl PreparedInvocation {
                 // None/None safe while rejecting either mixed scoped/unscoped
                 // direction without any cross-project escape.
                 if let Err(result) = runtime
-                    .authorize_session_target(target_session_id, &request.tool_name, context.auth)
+                    .authorize_session_target(
+                        target_session_id,
+                        &request.tool_name,
+                        None,
+                        context.auth,
+                    )
                     .await
                 {
                     return Err(ToolCallOutcome::rejected_result(result));
@@ -478,7 +504,7 @@ impl ToolRuntime {
             return None;
         }
         if self
-            .authorize_session_target(&affinity.workflow_session_id, tool_name, auth)
+            .observe_bound_session_target(&affinity.workflow_session_id, tool_name, auth)
             .await
             .is_err()
         {

@@ -126,13 +126,13 @@ pub enum SessionCloseError {
     UnknownSession,
 }
 
-/// Denials from the conditional, owner-scoped legacy execution grant.
+/// Conditional first registration binding for an existing Session.
 #[derive(Debug, PartialEq, Eq)]
-pub enum SessionReauthorizationError {
+pub enum SessionBindingError {
     UnknownSession,
     Closed,
     DifferentRegistration,
-    UnresolvedExecution,
+    ExecutionBusy,
     StorageUnavailable,
 }
 
@@ -151,7 +151,7 @@ pub struct SessionRecord {
     pub(crate) durable: Option<ColdSessionRecord>,
     pub session_id: String,
     pub project: Option<String>,
-    /// Execution binding captured at creation or explicitly granted once for a legacy Session.
+    /// Execution binding captured at creation or on first authorized live use after v0.5.0.
     pub project_identity: Option<String>,
     /// Domain-separated SHA-256 of the canonical creation-time authority group.
     /// The historical field name is retained only in persistence; in-memory

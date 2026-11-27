@@ -5,7 +5,6 @@ import { AlertTriangle, CircleDot, GitBranch, Monitor } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { absoluteTime, projectDisplayName, relativeTime } from "../model/format.js";
 import type { ProjectRow, SessionDetail } from "../model/types.js";
-import type { RuntimeV2Client } from "../api/client.js";
 import type { WorkItem } from "../model/work.js";
 import { activitySignals } from "../model/work.js";
 import type { SessionLocation } from "../state/useSessionWorkspace.js";
@@ -14,8 +13,6 @@ import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 
 type Props = {
-  client: RuntimeV2Client;
-  refresh: () => void;
   item: WorkItem;
   location: SessionLocation;
   detail: SessionDetail | null;
@@ -26,7 +23,6 @@ type Props = {
 };
 
 export function SessionInspector({
-  client, refresh,
   item,
   location,
   detail,
@@ -168,9 +164,6 @@ export function SessionInspector({
               <div><dt>{t("Created")}</dt><dd>{absoluteTime(detail?.created_at)}</dd></div>
               <div><dt>{t("Updated")}</dt><dd>{absoluteTime(detail?.updated_at || item.updatedAt)}</dd></div>
             </dl>
-            <SessionRegistration key={JSON.stringify([client.authorityRevision, location.projectId, location.sessionId])}
-              client={client} refresh={refresh} location={location} language={language}
-              target={detailAvailability === "available" ? detail?.legacy_registration : undefined} />
           </section>
 
           <section className="inspector-section">
@@ -204,33 +197,4 @@ export function SessionInspector({
         </div>
     </aside>
   );
-}
-
-
-function SessionRegistration({ client, refresh, location, language, target }: Pick<Props, "client" | "refresh" | "location" | "language"> & {
-  target: SessionDetail["legacy_registration"];
-}) {
-  const [notice, setNotice] = useState("");
-  const [pending, setPending] = useState(false);
-  const t = (text: string) => translate(text, language);
-  const authorityRevision = client.authorityRevision;
-  async function confirm() {
-    if (!target || pending) return;
-    const question = [t("Authorize future calls from this Session on this Project registration?"),
-      location.sessionId, location.projectId, target.path, target.registration_incarnation, target.project_identity].join("\n");
-    if (!window.confirm(question) || client.authorityRevision !== authorityRevision) return;
-    setPending(true);
-    const response = await client.post<{ changed?: boolean; error?: string }>("workflow-session-reauthorize", {
-      project: location.projectId, session_id: location.sessionId, expected_project_identity: target.project_identity,
-    });
-    setPending(false);
-    if (!response) return;
-    setNotice(response.ok ? "Session authorized. Resume with its original ID or Ref."
-      : response.data?.error || "Check the original Session summary before confirming again.");
-    refresh();
-  }
-  return <>
-    {target && <button type="button" disabled={pending} onClick={() => void confirm()}>{t("Reauthorize legacy Session")}</button>}
-    {notice && <p role="status">{t(notice)}</p>}
-  </>;
 }

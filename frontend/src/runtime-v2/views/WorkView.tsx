@@ -159,7 +159,6 @@ export function WorkView({
 
       {!sessionDenied && selectedItem && selected && (
         <SessionInspector
-          client={client} refresh={session.refresh}
           item={selectedItem}
           location={selected}
           detail={session.detail}

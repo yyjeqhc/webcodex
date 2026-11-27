@@ -38,7 +38,6 @@ mod communication;
 mod goals;
 mod job_projection;
 mod overview_primary;
-mod session_reauthorization;
 mod store_read;
 mod trace;
 mod window_inventory;
@@ -143,10 +142,6 @@ pub(crate) fn routes() -> Router {
         .push(
             Router::with_path(api_path(RouteId::RuntimeConsoleWorkflowSession))
                 .post(workflow_session),
-        )
-        .push(
-            Router::with_path(api_path(RouteId::RuntimeConsoleWorkflowSessionReauthorize))
-                .post(session_reauthorization::reauthorize),
         )
         .push(
             Router::with_path(api_path(RouteId::RuntimeConsoleWorkflowSessionMessages))
@@ -605,8 +600,6 @@ struct RuntimeConsoleWorkspaceActivity {
 
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleWorkflowSessionDetail {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    legacy_registration: Option<session_reauthorization::RegistrationPreview>,
     #[serde(flatten)]
     session: crate::tool_runtime::sessions::WorkflowSessionConsoleDetail,
     window_activity_available: bool,
@@ -1147,7 +1140,7 @@ async fn authorize_runtime_session_project(
 ) -> Result<(), RuntimeConsoleError> {
     check_runtime_session_project(runtime, project, session_id)?;
     runtime
-        .authorize_session_target(session_id, tool_name, Some(auth))
+        .authorize_session_target(session_id, tool_name, Some(project), Some(auth))
         .await
         .map(|_| ())
         .map_err(|_| RuntimeConsoleError::NotFound)
@@ -1742,7 +1735,6 @@ async fn workflow_session_detail_with_windows(
     let session = workflow_session_for_auth(runtime, auth, project, session_id, limit).await?;
     if !auth.has_scope(SCOPE_RUNTIME_READ) {
         return Ok(RuntimeConsoleWorkflowSessionDetail {
-            legacy_registration: None,
             session,
             window_activity_available: false,
             linked_windows: Vec::new(),
@@ -1851,8 +1843,6 @@ async fn workflow_session_detail_with_windows(
         gap_activity.drain(0..gap_activity.len() - MAX_WINDOW_ACTIVITY_LIMIT);
     }
     Ok(RuntimeConsoleWorkflowSessionDetail {
-        legacy_registration: session_reauthorization::preview(runtime, auth, project, session_id)
-            .await,
         session,
         window_activity_available: true,
         linked_windows,

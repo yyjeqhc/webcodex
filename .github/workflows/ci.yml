@@ -658,6 +658,24 @@ jobs:
             echo "version=$version"
             echo "built_at=$built_at"
           } >> "$GITHUB_OUTPUT"
+      - name: Resume Workflow Sessions across official Runtime upgrades
+        run: |
+          set -euo pipefail
+          for version in 0.5.0 0.5.1; do
+            dir="$RUNNER_TEMP/session-upgrade/$version"
+            mkdir -p "$dir"
+            archive="webcodex-v$version-darwin-arm64.tar.gz"
+            curl --fail --location --retry 3 --output "$dir/$archive" \
+              "https://github.com/yyjeqhc/webcodex/releases/download/v$version/$archive"
+            case "$version" in
+              0.5.0) digest=777976ddbb32dae8058781ac236f66c4fab0682f41ddc13bd95e4eb921df4e26 ;;
+              0.5.1) digest=bc4bbaf03f5e3bb41ab81174835429f4d1b3d0fbf7e6f6acfdda64d88c4d19af ;;
+            esac
+            (cd "$dir" && echo "$digest  $archive" | shasum -a 256 -c -)
+            tar -xzf "$dir/$archive" -C "$dir" webcodex-server webcodex-runner
+          done
+          python3 scripts/e2e_session_upgrade.py --v050 "$RUNNER_TEMP/session-upgrade/0.5.0" \
+            --v051 "$RUNNER_TEMP/session-upgrade/0.5.1" --candidate target/dogfood
       - name: Stage exact runtime for native macOS Desktop
         id: desktop_bundle
         run: |

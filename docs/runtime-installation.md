@@ -68,12 +68,8 @@ Use the exact saved UUID reported in `view.upgrade.operation_id` for recovery, f
 
 ## Resuming a v0.5.0 Workflow Session
 
-v0.5.0 stored the Session owner, ID and history. The Runner first assigned a registration UUID during the upgrade to v0.5.1. Until the owner grants execution on the current registration, live resume returns `session_project_identity_changed`.
+After upgrading, continue in your usual client with the original Session ID or Ref. This works for existing authorized OAuth clients and for upgrades both directly from v0.5.0 and via v0.5.1. No additional steps are required.
 
-1. Open the hosted Runtime Console (`/runtime`) using the original owner's direct credential with `runtime:read`, `project:read` and `session:collaborate`. A managed OAuth user can use their own personal API token. Connect the Runner and wait for its complete Project inventory.
-2. Select the original Session in Work and open **Evidence → Reauthorize legacy Session**. The confirmation shows the exact Session ID, canonical Project ID, registered path and registration UUID. Confirm only after checking this target. If the registration changes, refresh and review it again.
-3. Resume with `work_on_project` using the original ID or Ref. The grant and its single `session_project_reauthorized` event persist together. If acknowledgement is lost, read `read_session_summary` on the original ID with no recorder and check the event before confirming again. If storage is unavailable, restore access to the Session database first.
-
-Only active Sessions with a missing registration binding are eligible. An existing binding to a different registration stays fenced. If execution is unresolved, inspect the original calls, Jobs and Shells before continuing. A grant preserves history, instructions, messages, Todo, validation and Session guards. It dispatches no requests or Jobs, opens no Shell, and sends no collaboration acknowledgement.
+v0.5.0 omitted the Project registration identity. On the owner's first live request for an active Session, WebCodex checks current Project access, saves the online registration for the original Project ID in SQLite, and continues the same request. History, messages, Todos, validation and Session settings are preserved. Existing bindings must still match and closed Sessions stay closed. Previous Jobs, Shells and pending requests retain their own recovery rules.
 
 The original owner can also read `read_session_summary` and `list_session_messages` without a recorder, or close the Session. Use `list_sessions` with the exact Project ID to find a missing ID. After a Server restart the Runner must register to establish its access partition. A disconnected Runner with a retained authorized partition can stay offline for historical reads and close.

@@ -425,7 +425,7 @@ impl ToolRuntime {
                         Err(error) => return browser_session_selector_error(error),
                     };
                 if let Err(result) = self
-                    .authorize_session_target(&session_id, "control_browser", auth)
+                    .authorize_session_target(&session_id, "control_browser", None, auth)
                     .await
                 {
                     return result;
@@ -477,7 +477,7 @@ impl ToolRuntime {
                         Err(error) => return browser_session_selector_error(error),
                     };
                 if let Err(result) = self
-                    .authorize_session_target(&session_id, "control_browser", auth)
+                    .authorize_session_target(&session_id, "control_browser", None, auth)
                     .await
                 {
                     return result;

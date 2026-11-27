@@ -98,7 +98,7 @@ impl ResolvedProject {
         self.require_workflow_project_identity()
     }
 
-    fn registration_identity_unavailable() -> ToolResult {
+    pub(super) fn registration_identity_unavailable() -> ToolResult {
         ToolResult::err_with_output(
             "project_registration_identity_unavailable",
             json!({"error_kind": "project_registration_identity_unavailable", "state_changed": false,

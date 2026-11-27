@@ -250,7 +250,7 @@ impl ToolRuntime {
             };
             if resolved.resolved_id != project
                 || self
-                    .authorize_session_target(&session_id, "read_session_handoff", auth)
+                    .observe_bound_session_target(&session_id, "read_session_handoff", auth)
                     .await
                     .is_err()
             {

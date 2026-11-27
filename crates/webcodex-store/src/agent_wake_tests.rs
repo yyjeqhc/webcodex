@@ -1,8 +1,10 @@
 use super::agent_task::NewAgentTask;
 use super::agent_wake::{AgentWakeAttemptState, AgentWakeState};
+const STALE_INBOX_DELIVERY_UNKNOWN_MS: i64 = 15 * 60_000;
 use super::communication::{
     ConversationAccess, NewAgentEndpoint, NewAgentIdentity, NewConversation, NewConversationMessage,
 };
+use super::store_primitives::now_unix_ms;
 use super::store_primitives::CommunicationPrincipal;
 use super::Database;
 use rusqlite::params;
@@ -265,6 +267,463 @@ fn inbox_wake_consume_does_not_modify_task_attempt_lease() {
             .lease_expires_at_unix_ms,
         initial_lease,
         "inbox_changed takeover must never promote an AgentTask lease"
+    );
+}
+
+#[test]
+fn stale_unknown_inbox_wake_yields_to_new_durable_work_without_resending_old_host_message() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("inbox-host-wake-recovery.db")).unwrap();
+    let fixture = create_fixture(&db, '8');
+    post_to_receiver(
+        &db,
+        &fixture,
+        "first durable request",
+        "inbox-unknown-first",
+    );
+    let endpoint = attach_wake_endpoint(&db, &fixture, "ChatGPT", "inbox-unknown-endpoint");
+    let old = db
+        .claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .unwrap();
+    db.prepare_agent_wake_dispatch(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &old.wake.wake_id,
+        &old.attempt.attempt_id,
+        &old.claim_fence,
+        &old.consume_token,
+    )
+    .unwrap();
+    db.mark_agent_wake_delivery_unknown(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &old.wake.wake_id,
+        &old.attempt.attempt_id,
+        &old.claim_fence,
+    )
+    .unwrap();
+
+    // A fresh human request is a separate pending Wake, not an implicit retry.
+    post_to_receiver(&db, &fixture, "new durable request", "inbox-unknown-second");
+    assert_eq!(
+        queued_delivery_ids(&db, &fixture.receiver_agent_id).len(),
+        2
+    );
+    assert_eq!(
+        db.agent_wake(&old.wake.wake_id).unwrap().unwrap().state,
+        AgentWakeState::DeliveryUnknown
+    );
+
+    let current = now_unix_ms();
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_wakes SET updated_at_unix_ms = ?2 WHERE wake_id = ?1",
+            params![
+                old.wake.wake_id,
+                current - STALE_INBOX_DELIVERY_UNKNOWN_MS + 10_000
+            ],
+        )
+        .unwrap();
+    assert!(
+        db.claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .is_none(),
+        "uncertain Host delivery must retain its grace and never be resent"
+    );
+
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_wakes SET updated_at_unix_ms = ?2 WHERE wake_id = ?1",
+            params![
+                old.wake.wake_id,
+                current - STALE_INBOX_DELIVERY_UNKNOWN_MS - 10_000
+            ],
+        )
+        .unwrap();
+    let bootstrap = db
+        .bootstrap_agent_conversation(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_ne!(bootstrap.wake.unwrap().wake_id, old.wake.wake_id);
+    let stale_explicit = db
+        .bootstrap_agent_conversation(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            None,
+            Some(&old.wake.wake_id),
+        )
+        .unwrap();
+    assert!(
+        stale_explicit.wake.is_none(),
+        "expired old Host projection must not take priority"
+    );
+
+    let successor = db
+        .claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .expect("new pending work must be able to proceed after bounded grace");
+    assert_eq!(successor.wake.trigger_kind, "inbox_changed");
+    assert_ne!(successor.wake.wake_id, old.wake.wake_id);
+    assert_eq!(
+        db.agent_wake(&old.wake.wake_id).unwrap().unwrap().state,
+        AgentWakeState::Retired
+    );
+    assert_eq!(
+        db.agent_wake_attempts(&old.wake.wake_id).unwrap()[0].state,
+        AgentWakeAttemptState::Revoked
+    );
+    assert!(
+        db.consume_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &old.wake.wake_id,
+            &old.consume_token,
+        )
+        .is_err(),
+        "late old Host turn cannot consume a retired Wake"
+    );
+    assert_eq!(
+        queued_delivery_ids(&db, &fixture.receiver_agent_id).len(),
+        2,
+        "no Inbox message may be dropped or silently consumed"
+    );
+}
+
+#[test]
+fn stale_unknown_inbox_wake_without_successor_keeps_old_host_token_and_queued_delivery() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("inbox-host-unknown-no-successor.db")).unwrap();
+    let fixture = create_fixture(&db, '9');
+    post_to_receiver(&db, &fixture, "no duplicate message", "inbox-only-first");
+    let endpoint = attach_wake_endpoint(&db, &fixture, "ChatGPT", "inbox-only-endpoint");
+    let old = db
+        .claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .unwrap();
+    db.prepare_agent_wake_dispatch(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &old.wake.wake_id,
+        &old.attempt.attempt_id,
+        &old.claim_fence,
+        &old.consume_token,
+    )
+    .unwrap();
+    db.mark_agent_wake_delivery_unknown(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &old.wake.wake_id,
+        &old.attempt.attempt_id,
+        &old.claim_fence,
+    )
+    .unwrap();
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_wakes SET updated_at_unix_ms = ?2 WHERE wake_id = ?1",
+            params![
+                old.wake.wake_id,
+                now_unix_ms() - STALE_INBOX_DELIVERY_UNKNOWN_MS - 10_000
+            ],
+        )
+        .unwrap();
+    assert!(
+        db.claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .is_none(),
+        "no successor means the uncertain Host dispatch cannot be retried"
+    );
+    assert_eq!(
+        db.agent_wake(&old.wake.wake_id).unwrap().unwrap().state,
+        AgentWakeState::DeliveryUnknown
+    );
+    assert_eq!(
+        queued_delivery_ids(&db, &fixture.receiver_agent_id).len(),
+        1
+    );
+    db.consume_agent_wake(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &old.wake.wake_id,
+        &old.consume_token,
+    )
+    .expect("a valid late exact Host turn retains its consume authority");
+}
+
+#[test]
+fn old_unknown_inbox_dispatch_cannot_starve_new_endpoint_agent_task_after_grace() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("inbox-blocks-task.db")).unwrap();
+    let fixture = create_fixture(&db, 'a');
+    post_to_receiver(
+        &db,
+        &fixture,
+        "original unknown host turn",
+        "inbox-before-task",
+    );
+    let endpoint = attach_wake_endpoint(&db, &fixture, "ChatGPT", "inbox-before-task-endpoint");
+    let old = db
+        .claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .unwrap();
+    db.prepare_agent_wake_dispatch(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &old.wake.wake_id,
+        &old.attempt.attempt_id,
+        &old.claim_fence,
+        &old.consume_token,
+    )
+    .unwrap();
+    db.mark_agent_wake_delivery_unknown(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &old.wake.wake_id,
+        &old.attempt.attempt_id,
+        &old.claim_fence,
+    )
+    .unwrap();
+
+    let task = db
+        .create_agent_task(
+            &fixture.owner,
+            NewAgentTask {
+                title: "Unblocked endpoint work".to_string(),
+                instruction: "Execute a real pending agent task".to_string(),
+                assignee_agent_id: Some(fixture.receiver_agent_id.clone()),
+                source_conversation_id: None,
+                source_message_id: None,
+                referenced_project_id: None,
+                idempotency_key: "after-unknown-inbox-task".to_string(),
+            },
+        )
+        .unwrap()
+        .task
+        .summary
+        .task_id;
+    let started = db
+        .start_agent_task_attempt(
+            &fixture.owner,
+            &task,
+            &fixture.receiver_agent_id,
+            "after-unknown-inbox-attempt",
+        )
+        .unwrap();
+    let execution = db
+        .start_agent_task_endpoint_continuation_at(
+            &fixture.owner,
+            &task,
+            &started.attempt.attempt_id,
+            &fixture.receiver_agent_id,
+            &started.attempt_fence,
+            1,
+            now_unix_ms(),
+        )
+        .unwrap();
+    // The old Host dispatch is outcome-unknown: no successor model turn may
+    // start, but the successor must survive its 60-second default lease.
+    let queued_lease: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT lease_expires_at_unix_ms FROM wc_agent_task_attempts WHERE attempt_id = ?1",
+            [&started.attempt.attempt_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        queued_lease >= now_unix_ms() + STALE_INBOX_DELIVERY_UNKNOWN_MS + 5 * 60_000,
+        "queued Task Wake must outlive the predecessor's Host uncertainty window"
+    );
+    assert!(
+        db.claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app"
+        )
+        .unwrap()
+        .is_none(),
+        "the predecessor still owns exclusive Host dispatch"
+    );
+    assert_eq!(
+        db.agent_wake(&execution.execution.wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::Pending
+    );
+    let replay = db
+        .start_agent_task_endpoint_continuation_at(
+            &fixture.owner,
+            &task,
+            &started.attempt.attempt_id,
+            &fixture.receiver_agent_id,
+            &started.attempt_fence,
+            1,
+            now_unix_ms() + 90_000,
+        )
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(
+        queued_lease,
+        db.conn_for_tests()
+            .query_row(
+                "SELECT lease_expires_at_unix_ms FROM wc_agent_task_attempts WHERE attempt_id = ?1",
+                [&started.attempt.attempt_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        "exact queue replay must never slide its one-shot deadline"
+    );
+
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_wakes SET updated_at_unix_ms = ?2 WHERE wake_id = ?1",
+            params![
+                old.wake.wake_id,
+                now_unix_ms() - STALE_INBOX_DELIVERY_UNKNOWN_MS - 10_000
+            ],
+        )
+        .unwrap();
+    let recovered = db
+        .claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .expect("new executable Task Wake must outrank abandoned Inbox delivery");
+    assert_eq!(recovered.wake.wake_id, execution.execution.wake_id);
+    assert_eq!(recovered.wake.trigger_kind, "agent_task_attempt");
+    let dispatch_lease: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT lease_expires_at_unix_ms FROM wc_agent_task_attempts WHERE attempt_id = ?1",
+            [&started.attempt.attempt_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        dispatch_lease < queued_lease,
+        "claim must drop the long queue-only lease"
+    );
+    assert!(
+        dispatch_lease >= now_unix_ms() + 4 * 60_000,
+        "claim retains the ordinary bounded Host dispatch window"
+    );
+    assert_eq!(
+        db.agent_wake(&old.wake.wake_id).unwrap().unwrap().state,
+        AgentWakeState::Retired,
+    );
+    assert_eq!(
+        queued_delivery_ids(&db, &fixture.receiver_agent_id).len(),
+        1
+    );
+    db.prepare_agent_wake_dispatch(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &recovered.wake.wake_id,
+        &recovered.attempt.attempt_id,
+        &recovered.claim_fence,
+        &recovered.consume_token,
+    )
+    .unwrap();
+    db.consume_agent_wake(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &recovered.wake.wake_id,
+        &recovered.consume_token,
+    )
+    .expect("new Task's Host continuation can consume its own exact Wake");
+    assert!(
+        db.conn_for_tests()
+            .query_row(
+                "SELECT lease_expires_at_unix_ms FROM wc_agent_task_attempts WHERE attempt_id = ?1",
+                [&started.attempt.attempt_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > now_unix_ms() + 29 * 60_000,
+        "only exact consume promotes the Attempt to the active model-turn lease"
+    );
+    assert!(
+        db.consume_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &old.wake.wake_id,
+            &old.consume_token
+        )
+        .is_err(),
+        "retired old Host token must never execute again"
     );
 }
 

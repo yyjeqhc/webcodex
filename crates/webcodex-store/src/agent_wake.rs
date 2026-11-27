@@ -32,6 +32,18 @@ pub(crate) const AGENT_WAKE_CLAIM_FENCE_PREFIX: &str = "wc_wake_claim_";
 pub const AGENT_WAKE_CONSUME_TOKEN_PREFIX: &str = "wc_wake_consume_";
 
 const DEFAULT_WAKE_CLAIM_LEASE_MS: i64 = 30_000;
+// A Host dispatch with no outcome must never be blindly retried. However,
+// an abandoned *notification* cannot fence unrelated future AgentTask work
+// forever. Once the bounded Host scheduling grace has elapsed, retire that
+// exact attention Wake and revoke its consume token; preserve the source
+// event and immutable attempt history for subsequent Goal recovery.
+pub(crate) const STALE_ATTENTION_DELIVERY_UNKNOWN_MS: i64 = 15 * 60_000;
+// An uncertain Inbox wake has no live execution lease, but a newer distinct
+// pending Wake is required before it can safely yield its dispatch fence.
+pub(crate) const STALE_INBOX_DELIVERY_UNKNOWN_MS: i64 = 15 * 60_000;
+// A Task Wake needs both a bounded Host scheduling window and an expired
+// exact source Attempt before its uncertain delivery may be retired.
+pub(crate) const STALE_TASK_DELIVERY_UNKNOWN_MS: i64 = 15 * 60_000;
 const MAX_ADAPTER_KIND_CHARS: usize = 64;
 const WAKE_TRIGGER_INBOX_CHANGED: &str = "inbox_changed";
 pub(crate) const WAKE_TRIGGER_AGENT_TASK_ATTEMPT: &str = "agent_task_attempt";
@@ -542,6 +554,9 @@ impl Database {
         }
         release_expired_claims_for_agent(&transaction, agent_id, now)?;
         retire_stale_agent_task_wakes_for_agent(&transaction, agent_id, now)?;
+        retire_stale_unknown_attention_wakes_for_agent(&transaction, agent_id, now)?;
+        retire_stale_unknown_task_wakes_for_agent(&transaction, agent_id, now)?;
+        retire_stale_unknown_inbox_wakes_for_agent(&transaction, agent_id, now)?;
         let blocked: bool = transaction
             .query_row(
                 "SELECT EXISTS(
@@ -561,7 +576,8 @@ impl Database {
             .query_row(
                 "SELECT wake_id FROM wc_agent_wakes
                  WHERE target_agent_id = ?1 AND state = 'pending'
-                 ORDER BY created_at_unix_ms, wake_id LIMIT 1",
+                 ORDER BY CASE WHEN trigger_kind = 'agent_task_attempt' THEN 0 ELSE 1 END,
+                          created_at_unix_ms, wake_id LIMIT 1",
                 params![agent_id],
                 |row| row.get(0),
             )
@@ -1475,23 +1491,71 @@ impl Database {
                 .ok_or_else(|| {
                     CommunicationStoreError::new("wake_not_found", "Agent Wake does not exist")
                 })?;
+            let observed_at = now_unix_ms();
+            let stale_task = wake.trigger_kind == WAKE_TRIGGER_AGENT_TASK_ATTEMPT
+                && wake.state == AgentWakeState::DeliveryUnknown
+                && wake.updated_at_unix_ms
+                    <= observed_at.saturating_sub(STALE_TASK_DELIVERY_UNKNOWN_MS)
+                && agent_task_wake_source_terminal(&conn, &wake, observed_at)?;
+            let stale_inbox = wake.trigger_kind == WAKE_TRIGGER_INBOX_CHANGED
+                && wake.state == AgentWakeState::DeliveryUnknown
+                && wake.updated_at_unix_ms
+                    <= observed_at.saturating_sub(STALE_INBOX_DELIVERY_UNKNOWN_MS)
+                && conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM wc_agent_wakes
+                         WHERE target_agent_id = ?1 AND wake_id != ?2 AND state = 'pending')",
+                        params![agent_id, wake.wake_id],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(store_error)?;
+            let stale_attention = wake.trigger_kind == WAKE_TRIGGER_ATTENTION_EVENT
+                && wake.state == AgentWakeState::DeliveryUnknown
+                && wake.updated_at_unix_ms
+                    <= observed_at.saturating_sub(STALE_ATTENTION_DELIVERY_UNKNOWN_MS);
             (!matches!(
                 wake.state,
                 AgentWakeState::Consumed | AgentWakeState::Retired
-            ))
-            .then_some(wake)
+            ) && !stale_attention
+                && !stale_task
+                && !stale_inbox)
+                .then_some(wake)
         } else {
             let selected_wake_id: Option<String> = conn
                 .query_row(
                     "SELECT wake_id FROM wc_agent_wakes
                      WHERE target_agent_id = ?1 AND state NOT IN ('consumed', 'retired')
+                       AND NOT (trigger_kind = 'attention_event'
+                           AND state = 'delivery_unknown' AND updated_at_unix_ms <= ?2)
+                       AND NOT (trigger_kind = 'inbox_changed'
+                           AND state = 'delivery_unknown' AND updated_at_unix_ms <= ?5
+                           AND EXISTS (
+                               SELECT 1 FROM wc_agent_wakes successor
+                               WHERE successor.target_agent_id = wc_agent_wakes.target_agent_id
+                                 AND successor.wake_id != wc_agent_wakes.wake_id
+                                 AND successor.state = 'pending'
+                           ))
+                       AND NOT (trigger_kind = 'agent_task_attempt'
+                           AND state = 'delivery_unknown' AND updated_at_unix_ms <= ?3
+                           AND EXISTS (
+                               SELECT 1 FROM wc_agent_task_attempts a
+                               WHERE a.attempt_id = source_task_attempt_id
+                                 AND (a.state != 'active' OR a.lease_expires_at_unix_ms <= ?4)
+                           ))
                      ORDER BY CASE
                          WHEN state IN ('prepared', 'delivered', 'delivery_unknown') THEN 0
                          WHEN state = 'claimed' THEN 1
                          ELSE 2
-                     END, created_at_unix_ms, wake_id
+                     END, CASE WHEN trigger_kind = 'agent_task_attempt' THEN 0 ELSE 1 END,
+                     created_at_unix_ms, wake_id
                      LIMIT 1",
-                    params![agent_id],
+                    params![
+                        agent_id,
+                        now_unix_ms().saturating_sub(STALE_ATTENTION_DELIVERY_UNKNOWN_MS),
+                        now_unix_ms().saturating_sub(STALE_TASK_DELIVERY_UNKNOWN_MS),
+                        now_unix_ms(),
+                        now_unix_ms().saturating_sub(STALE_INBOX_DELIVERY_UNKNOWN_MS),
+                    ],
                     |row| row.get(0),
                 )
                 .optional()
@@ -2001,6 +2065,163 @@ fn materialize_agent_task_wake_expiry(
     Ok(())
 }
 
+/// An uncertain Inbox notification must not permanently block *new* work.
+/// Only after Host scheduling grace and only with a distinct pending successor
+/// may the old dispatch fence be retired. No old Host message is resent and no
+/// queued Inbox Delivery is consumed; a late old token is revoked atomically.
+fn retire_stale_unknown_inbox_wakes_for_agent(
+    transaction: &Transaction<'_>,
+    agent_id: &str,
+    now: i64,
+) -> Result<(), CommunicationStoreError> {
+    let cutoff = now.saturating_sub(STALE_INBOX_DELIVERY_UNKNOWN_MS);
+    transaction
+        .execute(
+            "UPDATE wc_agent_wake_attempts
+             SET state = 'revoked', revoked_at_unix_ms = COALESCE(revoked_at_unix_ms, ?3)
+             WHERE state = 'delivery_unknown' AND wake_id IN (
+                 SELECT old.wake_id FROM wc_agent_wakes old
+                 WHERE old.target_agent_id = ?1 AND old.trigger_kind = 'inbox_changed'
+                   AND old.state = 'delivery_unknown' AND old.updated_at_unix_ms <= ?2
+                   AND EXISTS (
+                       SELECT 1 FROM wc_agent_wakes successor
+                       WHERE successor.target_agent_id = old.target_agent_id
+                         AND successor.wake_id != old.wake_id AND successor.state = 'pending'
+                   )
+             )",
+            params![agent_id, cutoff, now],
+        )
+        .map_err(store_error)?;
+    transaction
+        .execute(
+            "UPDATE wc_agent_wakes
+             SET state = 'retired', revision = revision + 1,
+                 updated_at_unix_ms = MAX(updated_at_unix_ms, ?3),
+                 claimed_attempt_id = NULL, claimed_endpoint_id = NULL,
+                 claimed_controller_generation = NULL, claim_lease_expires_at_unix_ms = NULL
+             WHERE target_agent_id = ?1 AND trigger_kind = 'inbox_changed'
+               AND state = 'delivery_unknown' AND updated_at_unix_ms <= ?2
+               AND EXISTS (
+                   SELECT 1 FROM wc_agent_wakes successor
+                   WHERE successor.target_agent_id = wc_agent_wakes.target_agent_id
+                     AND successor.wake_id != wc_agent_wakes.wake_id
+                     AND successor.state = 'pending'
+               )",
+            params![agent_id, cutoff, now],
+        )
+        .map_err(store_error)?;
+    Ok(())
+}
+
+/// Resolve only old, outcome-unknown *attention notifications*. This never
+/// resends a Host message or touches pending inbox, AgentWait, or executable
+/// AgentTask wakes. The SQLite transaction serializes a racing exact consume:
+/// consumed wins unchanged, or retirement wins and late consume fails closed.
+fn retire_stale_unknown_attention_wakes_for_agent(
+    transaction: &Transaction<'_>,
+    agent_id: &str,
+    now: i64,
+) -> Result<(), CommunicationStoreError> {
+    let cutoff = now.saturating_sub(STALE_ATTENTION_DELIVERY_UNKNOWN_MS);
+    transaction
+        .execute(
+            "UPDATE wc_agent_wake_attempts
+             SET state = 'revoked', revoked_at_unix_ms = COALESCE(revoked_at_unix_ms, ?3)
+             WHERE state = 'delivery_unknown' AND wake_id IN (
+                 SELECT wake_id FROM wc_agent_wakes
+                 WHERE target_agent_id = ?1 AND trigger_kind = 'attention_event'
+                   AND state = 'delivery_unknown' AND updated_at_unix_ms <= ?2
+             )",
+            params![agent_id, cutoff, now],
+        )
+        .map_err(store_error)?;
+    transaction
+        .execute(
+            "UPDATE wc_agent_wakes
+             SET state = 'retired', revision = revision + 1,
+                 updated_at_unix_ms = MAX(updated_at_unix_ms, ?3),
+                 claimed_attempt_id = NULL, claimed_endpoint_id = NULL,
+                 claimed_controller_generation = NULL, claim_lease_expires_at_unix_ms = NULL
+             WHERE target_agent_id = ?1 AND trigger_kind = 'attention_event'
+               AND state = 'delivery_unknown' AND updated_at_unix_ms <= ?2",
+            params![agent_id, cutoff, now],
+        )
+        .map_err(store_error)?;
+    Ok(())
+}
+
+/// A stale Task-origin dispatch must never be retried or silently promoted.
+/// Retire only after the old exact Attempt is terminal or its lease expired;
+/// a racing exact consume wins or fails closed in the same SQLite transaction.
+fn agent_task_wake_source_terminal(
+    conn: &Connection,
+    wake: &AgentWakeRecord,
+    now: i64,
+) -> Result<bool, CommunicationStoreError> {
+    let Some(attempt_id) = wake.source_task_attempt_id.as_deref() else {
+        return Ok(false);
+    };
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM wc_agent_task_attempts
+         WHERE attempt_id = ?1 AND (state != 'active' OR lease_expires_at_unix_ms <= ?2))",
+        params![attempt_id, now],
+        |row| row.get(0),
+    )
+    .map_err(store_error)
+}
+
+fn retire_stale_unknown_task_wakes_for_agent(
+    transaction: &Transaction<'_>,
+    agent_id: &str,
+    now: i64,
+) -> Result<(), CommunicationStoreError> {
+    let cutoff = now.saturating_sub(STALE_TASK_DELIVERY_UNKNOWN_MS);
+    let wake_ids = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT w.wake_id FROM wc_agent_wakes w
+                 JOIN wc_agent_task_attempts a ON a.attempt_id = w.source_task_attempt_id
+                 WHERE w.target_agent_id = ?1 AND w.trigger_kind = 'agent_task_attempt'
+                   AND w.state = 'delivery_unknown' AND w.updated_at_unix_ms <= ?2
+                   AND (a.state != 'active' OR a.lease_expires_at_unix_ms <= ?3)",
+            )
+            .map_err(store_error)?;
+        let rows = statement
+            .query_map(params![agent_id, cutoff, now], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(store_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(store_error)?;
+        rows
+    };
+    for wake_id in wake_ids {
+        let wake = load_wake(transaction, &wake_id)?.expect("selected Task Wake must exist");
+        materialize_agent_task_wake_expiry(transaction, &wake, now)?;
+        transaction
+            .execute(
+                "UPDATE wc_agent_wake_attempts
+                 SET state = 'revoked', revoked_at_unix_ms = COALESCE(revoked_at_unix_ms, ?2)
+                 WHERE wake_id = ?1 AND state = 'delivery_unknown'",
+                params![wake_id, now],
+            )
+            .map_err(store_error)?;
+        clear_agent_task_wake_carrier(transaction, &wake_id, now)?;
+        transaction
+            .execute(
+                "UPDATE wc_agent_wakes
+                 SET state = 'retired', revision = revision + 1,
+                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?2),
+                     claimed_attempt_id = NULL, claimed_endpoint_id = NULL,
+                     claimed_controller_generation = NULL, claim_lease_expires_at_unix_ms = NULL
+                 WHERE wake_id = ?1 AND state = 'delivery_unknown'",
+                params![wake_id, now],
+            )
+            .map_err(store_error)?;
+    }
+    Ok(())
+}
+
 fn retire_agent_task_wake_pre_dispatch(
     transaction: &Transaction<'_>,
     wake_id: &str,
@@ -2143,6 +2364,21 @@ fn bind_agent_task_wake_carrier(
         attempt_controller_generation,
     )?;
     replace_agent_task_attempt_controller_in_transaction(transaction, principal, authority, now)?;
+    // This pending Wake has claimed the single-flight Host carrier. Drop
+    // its long queue-only reservation to the ordinary pre-consume dispatch
+    // window; only the exact new model-turn consume grants active-turn time.
+    transaction
+        .execute(
+            "UPDATE wc_agent_task_attempts
+             SET lease_expires_at_unix_ms = MIN(lease_expires_at_unix_ms, ?3)
+             WHERE attempt_id = ?1 AND task_id = ?2 AND state = 'active'",
+            params![
+                task_attempt_id,
+                task_id,
+                now.saturating_add(AGENT_TASK_ENDPOINT_DISPATCH_GRACE_MS),
+            ],
+        )
+        .map_err(store_error)?;
     let changed = transaction
         .execute(
             "UPDATE wc_agent_task_endpoint_executions

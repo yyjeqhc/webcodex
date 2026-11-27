@@ -37,8 +37,12 @@ pub(crate) const MAX_AGENT_TASK_PROJECT_REF_CHARS: usize = 256;
 pub const MAX_AGENT_TASK_LIST_LIMIT: usize = 100;
 pub(crate) const DEFAULT_AGENT_TASK_ATTEMPT_LEASE_MS: i64 = 60_000;
 pub(crate) const AGENT_TASK_ENDPOINT_DISPATCH_GRACE_MS: i64 = 5 * 60_000;
+// A Task Wake queued behind an uncertain Host dispatch is not executing yet.
+// Cover the 15-minute delivery safety window, 5-minute possible prior
+// dispatch grace, and a final 60-second margin. This applies only while
+// another post-dispatch Wake holds the Agent's single-flight slot.
+pub(crate) const AGENT_TASK_ENDPOINT_QUEUED_WAKE_LEASE_MS: i64 = 21 * 60_000;
 pub(crate) const AGENT_TASK_ENDPOINT_TAKEOVER_LEASE_MS: i64 = 30 * 60_000;
-
 const OP_CREATE_AGENT_TASK: &str = "create_agent_task";
 const OP_START_AGENT_TASK_ATTEMPT: &str = "start_agent_task_attempt";
 const OP_COMPLETE_AGENT_TASK_ATTEMPT: &str = "complete_agent_task_attempt";

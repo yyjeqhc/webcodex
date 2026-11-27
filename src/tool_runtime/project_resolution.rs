@@ -16,6 +16,7 @@ pub(crate) struct ProjectResolverCandidate {
     pub(crate) allow_patch: bool,
     pub(crate) root_fingerprint: Option<String>,
     pub(crate) registration_incarnation: Option<String>,
+    pub(crate) runner_instance_id: String,
     pub(crate) lineage: Option<RunnerProjectLineage>,
     pub(crate) connected: bool,
     pub(crate) status: String,
@@ -67,9 +68,43 @@ pub(crate) struct ResolvedProject {
     /// access by itself.
     pub(crate) root_fingerprint: Option<String>,
     pub(crate) registration_incarnation: Option<String>,
+    pub(crate) runner_instance_id: String,
+    pub(crate) runner_connected: bool,
     /// Descriptive Runner-owned lineage only. It never changes execution cwd,
     /// ProjectConfig, Session authority, Plugin placement, or tool permission.
     pub(crate) knowledge_association: Option<RunnerProjectLineage>,
+}
+
+impl ResolvedProject {
+    pub(crate) fn workflow_project_identity(&self) -> Option<String> {
+        webcodex_core::runner_protocol::workflow_project_identity(
+            self.root_fingerprint.as_deref(),
+            &self.config.path,
+            self.registration_incarnation.as_deref(),
+        )
+    }
+
+    /// A complete retained inventory can identify a registration for fresh
+    /// startup diagnostics, but does not grant live Session authority.
+    pub(crate) fn require_workflow_project_identity(&self) -> Result<String, ToolResult> {
+        self.workflow_project_identity()
+            .ok_or_else(Self::registration_identity_unavailable)
+    }
+
+    pub(crate) fn require_live_workflow_project_identity(&self) -> Result<String, ToolResult> {
+        if !self.runner_connected {
+            return Err(Self::registration_identity_unavailable());
+        }
+        self.require_workflow_project_identity()
+    }
+
+    pub(super) fn registration_identity_unavailable() -> ToolResult {
+        ToolResult::err_with_output(
+            "project_registration_identity_unavailable",
+            json!({"error_kind": "project_registration_identity_unavailable", "state_changed": false,
+                "recovery": "Reconnect the Runner and wait for its complete Project inventory. A legacy Runner must be upgraded before it can attest the registration."}),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -452,7 +487,15 @@ impl ToolRuntime {
             path: project.path.clone(),
             allow_patch: project.allow_patch,
             root_fingerprint: project.root_fingerprint.clone(),
-            registration_incarnation: project.registration_incarnation.clone(),
+            // Keep the registration identity from the last complete inventory
+            // across a disconnect. An incomplete inventory proves no binding.
+            registration_incarnation: project.registration_incarnation.clone().filter(|_| {
+                client
+                    .project_inventory
+                    .as_ref()
+                    .is_some_and(|i| i.sync_state == "complete")
+            }),
+            runner_instance_id: client.runner_instance_id.clone(),
             lineage: project.lineage.clone(),
             connected: client.connected,
             status: client.status.clone(),
@@ -478,6 +521,8 @@ impl ToolRuntime {
             config: Self::project_config_from_candidate(candidate),
             root_fingerprint: candidate.root_fingerprint.clone(),
             registration_incarnation: candidate.registration_incarnation.clone(),
+            runner_instance_id: candidate.runner_instance_id.clone(),
+            runner_connected: candidate.connected,
             knowledge_association: candidate.lineage.clone(),
         }
     }

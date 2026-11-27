@@ -500,7 +500,7 @@ impl ToolRuntime {
         let mut resolved_session_project = None;
         if let Some(session_id) = recording_session_id {
             match self
-                .authorize_session_target(session_id, external_tool_name, auth)
+                .authorize_session_target(session_id, external_tool_name, target_project, auth)
                 .await
             {
                 Ok(resolved) => {

@@ -186,6 +186,13 @@ impl Default for CodingAgentServerState {
 }
 
 impl CodingAgentServerState {
+    pub(crate) async fn has_active_recorder(&self, session_id: &str) -> bool {
+        self.runs.lock().await.values().any(|binding| {
+            binding.recording_session_id.as_deref() == Some(session_id)
+                && !binding.snapshot.state.terminal()
+        })
+    }
+
     pub(crate) async fn active_runs_for_maintenance(&self, client_id: Option<&str>) -> usize {
         self.runs
             .lock()

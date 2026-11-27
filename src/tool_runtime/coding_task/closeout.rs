@@ -41,7 +41,7 @@ impl ToolRuntime {
         let include_validation_summary = include_validation_summary.unwrap_or(true);
 
         if let Err(result) = self
-            .authorize_session_target(&session_id, "finish_coding_task", auth)
+            .authorize_session_target(&session_id, "finish_coding_task", Some(&project), auth)
             .await
         {
             return result;

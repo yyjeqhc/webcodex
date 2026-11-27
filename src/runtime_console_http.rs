@@ -1110,6 +1110,27 @@ fn messages_from_result(
         .collect()
 }
 
+// The routed message handlers authorize the exact Session independently.
+fn check_runtime_session_project(
+    runtime: &ToolRuntime,
+    project: &str,
+    session_id: &str,
+) -> Result<(), RuntimeConsoleError> {
+    if !valid_project_id(project) || !is_valid_session_id(session_id) {
+        return Err(RuntimeConsoleError::Invalid);
+    }
+    if runtime
+        .sessions
+        .session_project(session_id)
+        .flatten()
+        .as_deref()
+        != Some(project)
+    {
+        return Err(RuntimeConsoleError::NotFound);
+    }
+    Ok(())
+}
+
 async fn authorize_runtime_session_project(
     runtime: &ToolRuntime,
     auth: &AuthContext,
@@ -1117,18 +1138,12 @@ async fn authorize_runtime_session_project(
     session_id: &str,
     tool_name: &str,
 ) -> Result<(), RuntimeConsoleError> {
-    if !valid_project_id(project) || !is_valid_session_id(session_id) {
-        return Err(RuntimeConsoleError::Invalid);
-    }
-    let resolved = runtime
-        .authorize_session_target(session_id, tool_name, Some(auth))
+    check_runtime_session_project(runtime, project, session_id)?;
+    runtime
+        .authorize_session_target(session_id, tool_name, Some(project), Some(auth))
         .await
-        .map_err(|_| RuntimeConsoleError::NotFound)?;
-    if resolved.as_ref().map(|value| value.resolved_id.as_str()) == Some(project) {
-        Ok(())
-    } else {
-        Err(RuntimeConsoleError::NotFound)
-    }
+        .map(|_| ())
+        .map_err(|_| RuntimeConsoleError::NotFound)
 }
 
 fn add_console_aggregate(
@@ -2100,14 +2115,7 @@ async fn session_messages_for_auth(
     input: WorkflowSessionMessagesInput,
 ) -> Result<RuntimeConsoleMessages, RuntimeConsoleError> {
     require_runtime_read(auth)?;
-    authorize_runtime_session_project(
-        runtime,
-        auth,
-        &input.project,
-        &input.session_id,
-        "list_session_messages",
-    )
-    .await?;
+    check_runtime_session_project(runtime, &input.project, &input.session_id)?;
     let limit = input
         .limit
         .unwrap_or(DEFAULT_MESSAGE_LIMIT)
@@ -2137,14 +2145,6 @@ async fn session_observe_for_auth(
     input: WorkflowSessionObserveInput,
 ) -> Result<RuntimeConsoleObservation, RuntimeConsoleError> {
     require_runtime_read(auth)?;
-    authorize_runtime_session_project(
-        runtime,
-        auth,
-        &input.project,
-        &input.session_id,
-        "observe_session_messages",
-    )
-    .await?;
     if input
         .after_observation_token
         .as_ref()
@@ -2156,6 +2156,7 @@ async fn session_observe_for_auth(
     {
         return Err(RuntimeConsoleError::Invalid);
     }
+    check_runtime_session_project(runtime, &input.project, &input.session_id)?;
     let limit = input
         .limit
         .unwrap_or(DEFAULT_MESSAGE_LIMIT)

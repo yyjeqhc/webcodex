@@ -52,7 +52,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(result) = self
-            .authorize_session_target(&session_id, "read_validation_summary", auth)
+            .authorize_session_target(&session_id, "read_validation_summary", Some(&project), auth)
             .await
         {
             return result;

@@ -65,3 +65,11 @@ webcodex environment update rollback --operation-id OPERATION_ID --yes
 ```
 
 Use the exact saved UUID reported in `view.upgrade.operation_id` for recovery, from a Linux TTY and the original user's environment. These commands delegate to existing Environment finish/rollback guards; they do not launch a second installer or infer that uncertain replacement is safe to retry. Keep journals and private backups when recovery is required. An update affects only this machine's installed package and owned environment; it does not upgrade a remote central Server or other Runners through the connection. Native installation and recovery acceptance still need the platform-specific checks linked above.
+
+## Resuming a v0.5.0 Workflow Session
+
+After upgrading, continue in your usual client with the original Session ID or Ref. This works for existing authorized OAuth clients and for upgrades both directly from v0.5.0 and via v0.5.1. No additional steps are required.
+
+v0.5.0 omitted the Project registration identity. On the owner's first live request for an active Session, WebCodex checks current Project access, saves the online registration for the original Project ID in SQLite, and continues the same request. History, messages, Todos, validation and Session settings are preserved. Existing bindings must still match and closed Sessions stay closed. Previous Jobs, Shells and pending requests retain their own recovery rules.
+
+The original owner can also read `read_session_summary` and `list_session_messages` without a recorder, or close the Session. Use `list_sessions` with the exact Project ID to find a missing ID. After a Server restart the Runner must register to establish its access partition. A disconnected Runner with a retained authorized partition can stay offline for historical reads and close.

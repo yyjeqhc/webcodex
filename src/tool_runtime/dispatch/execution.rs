@@ -129,7 +129,13 @@ impl ToolRuntime {
             | ToolCall::SessionShellExec { .. }
             | ToolCall::SessionShellStatus { .. }
             | ToolCall::CloseSessionShell { .. }) => {
-                self.dispatch_session_shell_tool(call, ssh_resource).await
+                let resolved = match project_resolution {
+                    Some(Ok(project)) => project,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("persistent shell requires a resolved Project"),
+                };
+                self.dispatch_session_shell_tool(call, ssh_resource, resolved, auth)
+                    .await
             }
 
             call @ (ToolCall::ApplyPatch { .. } | ToolCall::ApplyUnifiedDiff { .. }) => {

@@ -1279,6 +1279,7 @@ fn active_session_survives_capacity_churn_and_keeps_exact_identity_and_fences() 
                 SessionMode::ReadOnly,
                 guards,
             )
+            .with_project_identity(Some("c".repeat(64)))
             .with_owner_authority_fingerprint(Some(owner_authority.to_string())),
         )
         .unwrap();
@@ -1311,7 +1312,7 @@ fn active_session_survives_capacity_churn_and_keeps_exact_identity_and_fences() 
     store.record_tool_call_finished(Some(start), true, &json!({"ok": true}), None, None);
 
     let resume = |project: &str, authority_fingerprint: &str| CodingSessionRequest {
-        project_identity: None,
+        project_identity: Some("c".repeat(64)),
         project: project.to_string(),
         authority_fingerprint: authority_fingerprint.to_string(),
         resume_session_id: Some(canonical_id.clone()),
@@ -1363,7 +1364,7 @@ fn active_session_survives_persistence_restart_after_capacity_churn() {
     let owner_authority = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let request =
         |resume_session_id: Option<String>, project: &str, authority: &str| CodingSessionRequest {
-            project_identity: None,
+            project_identity: Some("c".repeat(64)),
             project: project.to_string(),
             authority_fingerprint: authority.to_string(),
             resume_session_id,

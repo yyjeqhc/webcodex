@@ -106,6 +106,85 @@ mod allow_patch_projection_tests {
 }
 
 impl RunnerRegistry {
+    /// Keep registration, current Runner ownership, and Session-bound work stable
+    /// while staging the first binding of a v0.5.0 Session.
+    pub async fn with_live_session_registration<R>(
+        &self,
+        access: Option<&crate::RunnerAccess>,
+        runtime_project: &str,
+        session: &str,
+        decide: impl FnOnce(&str, bool) -> R,
+    ) -> Option<R> {
+        use webcodex_core::runner_operation::RunnerOperation;
+        let (client, project) = runtime_project.strip_prefix("agent:")?.split_once(':')?;
+        let mut inner = self.inner.lock().await;
+        let runner = inner.runners.get(client)?;
+        let now = crate::now_ts();
+        if !self.runner_visible_for_snapshot(access, &inner, runner, now)
+            || (access.is_some() && assert_runner_access(access, runner).is_err())
+            || now.saturating_sub(runner.last_seen) > crate::RUNNER_ONLINE_WINDOW_SECS
+            || runner.project_inventory.status.sync_state != "complete"
+            || inner.unregistering_projects.contains_key(runtime_project)
+        {
+            return None;
+        }
+        let registered = runner
+            .projects
+            .iter()
+            .find(|p| p.id == project && !p.disabled)?;
+        let identity = webcodex_core::runner_protocol::workflow_project_identity(
+            registered.root_fingerprint.as_deref(),
+            &registered.path,
+            registered.registration_incarnation.as_deref(),
+        )?;
+        // Refresh matching active Jobs through the normal recovery deadline.
+        // Retained receipts and Session ledger entries do not own running work.
+        let busy = inner.jobs_by_id.active_ids().into_iter().any(|id| {
+            if inner.jobs_by_id[&id].session_id.as_deref() != Some(session) {
+                return false;
+            }
+            crate::jobs::refresh_job_status_locked(&mut inner, &id);
+            inner.jobs_by_id[&id].lifecycle.is_active()
+        }) || inner
+            .pending_by_id
+            .values()
+            .any(|pending| match &pending.operation {
+                RunnerOperation::PersistentShell(op) => op.request.workflow_session_id == session,
+                RunnerOperation::RunShell(op) => {
+                    op.job_context
+                        .as_ref()
+                        .and_then(|c| c.workflow_session_id.as_deref())
+                        == Some(session)
+                }
+                RunnerOperation::Job(op) => {
+                    op.context().and_then(|c| c.workflow_session_id.as_deref()) == Some(session)
+                }
+                _ => false,
+            });
+        Some(decide(&identity, busy))
+    }
+
+    /// Authorize historical data against the current credential partition and
+    /// Runner owner. A disabled Project remains hidden. A removed Project
+    /// does not invalidate an owned Session.
+    pub async fn project_history_visible(
+        &self,
+        access: Option<&crate::RunnerAccess>,
+        client_id: &str,
+        project_id: &str,
+    ) -> bool {
+        let inner = self.inner.read().await;
+        let Some(runner) = inner.runners.get(client_id) else {
+            return false;
+        };
+        self.runner_visible_for_snapshot(access, &inner, runner, crate::now_ts())
+            && (access.is_none() || assert_runner_access(access, runner).is_ok())
+            && !runner
+                .projects
+                .iter()
+                .any(|project| project.id == project_id && project.disabled)
+    }
+
     /// Return an immutable clone of the canonical feature truth for one
     /// registered Runner. This is an internal semantic query, never a wire
     /// projection.

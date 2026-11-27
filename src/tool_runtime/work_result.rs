@@ -300,7 +300,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> Result<(String, SessionSummary), ToolResult> {
         if let Err(result) = self
-            .authorize_session_target(session_id, tool_name, auth)
+            .authorize_session_target(session_id, tool_name, Some(project), auth)
             .await
         {
             return Err(result);

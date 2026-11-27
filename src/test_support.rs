@@ -20,11 +20,7 @@ pub(crate) async fn registered_session_project_identity(
         .resolve_project_input_for_auth(project, auth)
         .await
         .ok()?;
-    crate::tool_runtime::workflow_project_identity(
-        resolved.root_fingerprint.as_deref(),
-        &resolved.config.path,
-        resolved.registration_incarnation.as_deref(),
-    )
+    resolved.workflow_project_identity()
 }
 
 /// Create a test temp directory on the Cargo build filesystem.

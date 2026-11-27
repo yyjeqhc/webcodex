@@ -168,7 +168,7 @@ impl ToolRuntime {
                     Err(_) => return error("resource_unavailable"),
                 };
                 if self
-                    .authorize_session_target(&id, "read_session_summary", auth)
+                    .authorize_session_target(&id, "read_session_summary", project.as_deref(), auth)
                     .await
                     .is_err()
                 {
@@ -463,7 +463,12 @@ impl ToolRuntime {
                         Err(_) => return error("resource_unavailable"),
                     };
                     if self
-                        .authorize_session_target(&session, "read_session_summary", auth)
+                        .authorize_session_target(
+                            &session,
+                            "read_session_summary",
+                            Some(&resolved.resolved_id),
+                            auth,
+                        )
                         .await
                         .is_err()
                     {

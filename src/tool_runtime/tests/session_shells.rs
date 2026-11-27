@@ -26,7 +26,7 @@ async fn setup(
             ..Default::default()
         },
         vec![RunnerProjectSummary {
-            registration_incarnation: None,
+            registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
             id: PROJECT_ID.to_string(),
             name: Some(PROJECT_ID.to_string()),
             path: root.to_string_lossy().to_string(),
@@ -732,6 +732,66 @@ async fn session_close_transitions_first_and_cleans_the_active_runner_shell() {
 }
 
 #[tokio::test]
+async fn session_close_never_dispatches_cleanup_to_a_replacement_project() {
+    let temp = tempfile::tempdir().unwrap();
+    for replace_after_enqueue in [false, true] {
+        let (runtime, project, session) = setup(temp.path(), true, SessionMode::Normal, None).await;
+        let id = session.session_id;
+        let shell = open_active_shell(&runtime, &project, &id).await;
+        let replace = || async {
+            let replacement = registered_project(PROJECT_ID, temp.path().to_str().unwrap());
+            runtime
+                .runner_registry
+                .upsert_runner_project_for_instance(CLIENT, "inst", replacement)
+                .await
+                .unwrap();
+        };
+        if !replace_after_enqueue {
+            replace().await;
+        }
+        let closing = dispatch(
+            runtime.clone(),
+            ToolCall::CloseSession {
+                session_id: id.clone(),
+            },
+        );
+        if replace_after_enqueue {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while runtime
+                    .runner_registry
+                    .get_runner_view(CLIENT)
+                    .await
+                    .unwrap()
+                    .pending_requests
+                    == 0
+                {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("cleanup was queued for original registration");
+            replace().await;
+        }
+        assert!(probe_patch_agent_request(&runtime, CLIENT).await.is_none());
+        let result = closing.await.unwrap();
+        assert!(result.success, "{result:?}");
+        assert_eq!(result.output["persistent_shells_closed"], 0);
+        assert_eq!(result.output["persistent_shells_unconfirmed"], 1);
+        let summary = runtime.sessions.summary(&id, None).unwrap();
+        let evidence = summary
+            .events
+            .iter()
+            .find(|e| e.kind == "session_closed")
+            .unwrap()
+            .persistent_shell
+            .as_ref()
+            .unwrap();
+        assert_eq!(evidence.shell_id.as_deref(), Some(shell.as_str()));
+        assert_eq!(evidence.shell_state.as_deref(), Some("lost"));
+    }
+}
+
+#[tokio::test]
 async fn session_close_racing_open_releases_the_late_runner_shell() {
     let temp = tempfile::tempdir().unwrap();
     let (runtime, project, session) = setup(temp.path(), true, SessionMode::Normal, None).await;
@@ -798,6 +858,37 @@ async fn session_close_racing_open_releases_the_late_runner_shell() {
 }
 
 #[tokio::test]
+async fn runner_lost_shell_receipt_cannot_confirm_session_cleanup() {
+    let temp = tempfile::tempdir().unwrap();
+    let (runtime, project, session) = setup(temp.path(), true, SessionMode::Normal, None).await;
+    open_active_shell(&runtime, &project, &session.session_id).await;
+    let closing = dispatch(
+        runtime.clone(),
+        ToolCall::CloseSession {
+            session_id: session.session_id.clone(),
+        },
+    );
+    let request = next_persistent_request(&runtime).await;
+    complete(&runtime, &request, "lost", "already_closed", "", None, None).await;
+    let result = closing.await.unwrap();
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["persistent_shells_closed"], 0);
+    assert_eq!(result.output["persistent_shells_unconfirmed"], 1);
+    let summary = runtime.sessions.summary(&session.session_id, None).unwrap();
+    let evidence = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "session_closed")
+        .and_then(|event| event.persistent_shell.as_ref())
+        .unwrap();
+    assert_eq!(evidence.shell_state.as_deref(), Some("lost"));
+    assert_eq!(
+        evidence.error_code.as_deref(),
+        Some("persistent_shell_stale")
+    );
+}
+
+#[tokio::test]
 async fn runner_disconnect_converges_server_status_to_lost() {
     let temp = tempfile::tempdir().unwrap();
     let (runtime, project, session) = setup(temp.path(), true, SessionMode::Normal, None).await;
@@ -835,6 +926,18 @@ async fn runner_disconnect_converges_server_status_to_lost() {
     let status = runtime
         .dispatch_with_auth(
             ToolCall::SessionShellStatus {
+                project: project.clone(),
+                session_id: session.session_id.clone(),
+                shell_id: shell_id.clone(),
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(status.success, "{status:?}");
+    assert_eq!(status.output["shell_state"], "lost");
+    let close = runtime
+        .dispatch_with_auth(
+            ToolCall::CloseSessionShell {
                 project,
                 session_id: session.session_id,
                 shell_id,
@@ -842,8 +945,9 @@ async fn runner_disconnect_converges_server_status_to_lost() {
             Some(&auth),
         )
         .await;
-    assert!(status.success, "{status:?}");
-    assert_eq!(status.output["shell_state"], "lost");
+    assert!(!close.success);
+    assert_eq!(close.output["shell_state"], "lost");
+    assert_ne!(close.output["already_closed"], true);
 }
 
 #[tokio::test]
@@ -1030,7 +1134,7 @@ async fn setup_ssh_with_capabilities(
             ..Default::default()
         },
         vec![RunnerProjectSummary {
-            registration_incarnation: None,
+            registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
             id: PROJECT_ID.to_string(),
             name: Some(PROJECT_ID.to_string()),
             path: root.to_string_lossy().to_string(),

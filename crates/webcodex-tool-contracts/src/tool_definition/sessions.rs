@@ -68,7 +68,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             shell_like: false,
             session_evidence: super::ToolSessionEvidencePolicy::NONE,
         }.define().with_activity(super::ToolActivityPresentation::Support, super::ToolActivityInteraction::NonMeaningful),
-        "Read-only recovery discovery when the exact Session id is missing, including a new Host window or account using the same WebCodex authority. Requires an authorized exact Project and lists only that caller's creation-time Session authority group, including retained Closed history. Lifecycle filter is optional; offset defaults to 0, limit to 10 and is normalized to 1..20. Titles are redacted/bounded and output is capped at 32 KiB. Counts exclude foreign authority groups. Inventory pagination is not a frozen snapshot. Explicitly choose a returned session_id/session_ref, then read read_session_handoff. Active work needs explicit bootstrap with the selected Session; Closed is historical only. Discovery never infers current/recent work, resumes a Session, grants authority, or restores hidden chat context.",
+        "Read-only recovery discovery when the exact Session id is missing, including a new Host window or account using the same WebCodex authority. Requires an authorized exact Project and lists only that caller's creation-time Session authority group, including retained Closed history. Lifecycle filter is optional; offset defaults to 0, limit to 10 and is normalized to 1..20. Titles are redacted/bounded and output is capped at 32 KiB. Counts exclude foreign authority groups. Inventory pagination is not a frozen snapshot. Choose an exact returned session_id/session_ref. Use read_session_summary without a recorder for retired Project history, or read_session_handoff for a current registration. Active work needs explicit bootstrap with the selected Session; Closed is historical only. Discovery never infers current/recent work, resumes a Session, grants authority, or restores hidden chat context.",
     ), &[RUNTIME_READ, PROJECT_READ]),
 
     requires_explicit_business_session(model_spec(
@@ -344,7 +344,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(RUNTIME_READ),
             false,
         ),
-        "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, guards, and lifecycle. Uses durable ledger data where session persistence is configured.",
+        "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, guards, and lifecycle. For an offline, retired or replaced Project, use the original Session ID or Ref with the owning credential and omit the recorder. Current credential and Runner access still apply.",
     )),
     requires_explicit_business_session(permission_risk(
         model_spec(
@@ -394,7 +394,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 shell_like: false,
                 session_evidence: super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Close).lifecycle(super::ToolSessionLifecycleEffect::IdempotentClose),
             }.define(),
-            "Explicitly close a workflow session (Active to Closed) for a required session_id. Query remains available; write/shell/mutation tools are denied. Idempotent when already closed; unknown ids fail without create. finish_coding_task does not close.",
+            "Explicitly close a workflow session (Active to Closed) for a required session_id. Query remains available; write/shell/mutation tools are denied. Idempotent when already closed. For a retired Project, omit the recorder. Success confirms the stored lifecycle. persistent_shells_unconfirmed reports cleanup attempts lacking confirmation. Retry an uncertain storage result with the exact Session ID. Unknown ids fail without create. finish_coding_task does not close.",
         ),
         PERMISSION_RISK_WRITE,
     )),

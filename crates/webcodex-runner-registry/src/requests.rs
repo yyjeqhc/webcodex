@@ -2337,12 +2337,13 @@ impl RunnerRegistry {
     /// `ssh_shell` remains the separate one-shot/background SSH capability.
     pub async fn enqueue_persistent_shell(
         &self,
-        client_id: String,
+        target: &crate::PersistentShellTarget,
         request: PersistentShellRequest,
         job_context: Option<ShellJobContext>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<PersistentShellResult>), String> {
-        validate_id(&client_id, "client_id")?;
+        let client_id = &target.client_id;
+        validate_id(client_id, "client_id")?;
         validate_id(&request.shell_id, "shell_id")?;
         validate_id(&request.workflow_session_id, "workflow_session_id")?;
         if request.runtime_project_id.trim().is_empty() {
@@ -2375,17 +2376,12 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let wire_request = encode_runner_operation(
-            &request_id,
-            &client_id,
-            requested_by,
-            RunnerOperation::PersistentShell(RunnerPersistentShellOperation {
-                request,
-                job_context: job_context.clone(),
-            }),
-        )?;
+        let operation = RunnerOperation::PersistentShell(RunnerPersistentShellOperation {
+            request,
+            job_context: job_context.clone(),
+        });
         let mut inner = self.inner.lock().await;
-        let Some(runner) = inner.runners.get(&client_id) else {
+        let Some(runner) = inner.runners.get(client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
         };
         if !runner
@@ -2410,17 +2406,24 @@ impl RunnerRegistry {
                 "agent_capability_unavailable: runner {client_id} does not support {RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL}"
             ));
         }
-        enqueue_pending_request_locked(
+        let fence = PendingDispatchFence::PersistentShell(target.clone());
+        if let Some(error) = fence.synchronous_rejection(&operation, Some(runner)) {
+            return Err(error);
+        }
+        let wire_request =
+            encode_runner_operation(&request_id, client_id, requested_by, operation)?;
+        enqueue_pending_request_with_fence_locked(
             self.telemetry.as_ref(),
             &mut inner,
-            &client_id,
+            client_id,
             request_id.clone(),
             wire_request,
             None,
             None,
+            fence,
         )?;
         inner.persistent_waiters.insert(request_id.clone(), tx);
-        notify_runner_locked(&inner, &client_id);
+        notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))
     }
 

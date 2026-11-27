@@ -109,7 +109,12 @@ impl ToolRuntime {
         };
         let resume_session_project = match resume_session_id.as_deref() {
             Some(session_id) => match self
-                .explicit_coding_session_project(session_id, startup.tool_name, auth)
+                .explicit_coding_session_project(
+                    session_id,
+                    Some(&project),
+                    startup.tool_name,
+                    auth,
+                )
                 .await
             {
                 Ok(project) => project,
@@ -131,6 +136,19 @@ impl ToolRuntime {
                 .unwrap_or(project)
         } else {
             project
+        };
+        let trusted_recording_session_resolved_project = match (
+            trusted_recording_session_id,
+            trusted_recording_session_project,
+        ) {
+            (Some(id), Some(_)) => match self
+                .explicit_coding_session_project(id, Some(&project), startup.tool_name, auth)
+                .await
+            {
+                Ok(resolved) => resolved,
+                Err(result) => return result,
+            },
+            _ => None,
         };
         let project_source = match resolve_project_source(project, client_id, path) {
             Ok(source) => source,
@@ -155,18 +173,6 @@ impl ToolRuntime {
             };
             worktree.resume_project_id = Some(project_id.to_string());
         }
-        let trusted_recording_session_resolved_project = match (
-            trusted_recording_session_id,
-            trusted_recording_session_project,
-        ) {
-            (Some(_), Some(project)) => {
-                match self.resolve_project_input_for_auth(project, auth).await {
-                    Ok(resolved) => Some(resolved),
-                    Err(error) => return error.into_tool_result(),
-                }
-            }
-            _ => None,
-        };
         let title = match title {
             Some(title) => {
                 let title = title.trim().to_string();
@@ -212,45 +218,6 @@ impl ToolRuntime {
             }
         };
         project_resolution.resolved_project = resolved.resolved_id.clone();
-        if let Some(session_id) = resume_session_id.as_deref() {
-            if resume_session_project
-                .as_ref()
-                .map(|project| project.resolved_id.as_str())
-                != Some(resolved.resolved_id.as_str())
-            {
-                return attach_project_resolution(
-                    session_project_mismatch_result(
-                        session_id,
-                        startup.tool_name,
-                        &SessionProjectMismatch {
-                            session_project: resume_session_project
-                                .as_ref()
-                                .map(|project| project.resolved_id.clone())
-                                .unwrap_or_else(|| "<unscoped>".to_string()),
-                            request_project: resolved.resolved_id.clone(),
-                        },
-                    ),
-                    &project_resolution,
-                );
-            }
-        }
-        if let Some(recording_session_id) = trusted_recording_session_id {
-            if trusted_recording_session_project != Some(resolved.resolved_id.as_str()) {
-                return attach_project_resolution(
-                    session_project_mismatch_result(
-                        recording_session_id,
-                        startup.tool_name,
-                        &SessionProjectMismatch {
-                            session_project: trusted_recording_session_project
-                                .unwrap_or("<unscoped>")
-                                .to_string(),
-                            request_project: resolved.resolved_id.clone(),
-                        },
-                    ),
-                    &project_resolution,
-                );
-            }
-        }
         // Reject already-closed exact resumes before startup observations. The
         // Store repeats lifecycle/authority checks when recording the resume,
         // so closing during observation cannot revive the Session either.
@@ -264,6 +231,57 @@ impl ToolRuntime {
                             lifecycle: sessions::SessionLifecycle::Closed,
                         },
                         mode,
+                    ),
+                    &project_resolution,
+                );
+            }
+        }
+        // Fresh startup must still return the established blocked diagnostic
+        // for an offline Runner with a known registration. Resumes and
+        // recorder-bound requests require a current live binding.
+        let binding = if resume_session_id.is_some() || trusted_recording_session_id.is_some() {
+            resolved.require_live_workflow_project_identity()
+        } else {
+            resolved.require_workflow_project_identity()
+        };
+        let project_identity = match binding {
+            Ok(identity) => identity,
+            Err(result) => return attach_project_resolution(result, &project_resolution),
+        };
+        for (id, initial_project) in [
+            (
+                resume_session_id.as_deref(),
+                resume_session_project.as_ref(),
+            ),
+            (
+                trusted_recording_session_id,
+                trusted_recording_session_resolved_project.as_ref(),
+            ),
+        ] {
+            let Some(id) = id else { continue };
+            let initial_id = initial_project.map(|project| project.resolved_id.as_str());
+            if initial_id != Some(resolved.resolved_id.as_str()) {
+                return attach_project_resolution(
+                    session_project_mismatch_result(
+                        id,
+                        startup.tool_name,
+                        &SessionProjectMismatch {
+                            session_project: initial_id.unwrap_or("<unscoped>").to_owned(),
+                            request_project: resolved.resolved_id.clone(),
+                        },
+                    ),
+                    &project_resolution,
+                );
+            }
+            if initial_project
+                .and_then(|p| p.workflow_project_identity())
+                .as_ref()
+                != Some(&project_identity)
+            {
+                return attach_project_resolution(
+                    crate::tool_runtime::session_tools::session_project_identity_changed_result(
+                        id,
+                        startup.tool_name,
                     ),
                     &project_resolution,
                 );
@@ -367,20 +385,6 @@ impl ToolRuntime {
                 );
             }
         };
-        let project_identity = workflow_project_identity(
-            resolved.root_fingerprint.as_deref(),
-            &resolved.config.path,
-            resolved.registration_incarnation.as_deref(),
-        );
-        if project_identity.is_none() {
-            return attach_project_resolution(
-                ToolResult::err_with_output(
-                    "project_registration_identity_unavailable",
-                    json!({"error_kind": "project_registration_identity_unavailable", "state_changed": false}),
-                ),
-                &project_resolution,
-            );
-        }
         if self.sessions.prepare_request().await.is_err() {
             return attach_project_resolution(
                 crate::tool_runtime::session_tools::session_storage_unavailable_result(),
@@ -390,7 +394,7 @@ impl ToolRuntime {
         let session_outcome = match self.sessions.ensure_coding_session_with_git_baseline(
             sessions::CodingSessionRequest {
                 project: resolved.resolved_id.clone(),
-                project_identity,
+                project_identity: Some(project_identity),
                 authority_fingerprint,
                 resume_session_id: resume_session_id.clone(),
                 instruction: title.clone(),
@@ -822,16 +826,9 @@ fn coding_session_start_error(
             )
         }
         sessions::CodingSessionError::ResumeProjectIdentityChanged { session_id } => {
-            ToolResult::err_with_output(
-                "session_project_identity_changed: existing Session is not bound to the current Project registration",
-                json!({
-                    "error_kind": "session_project_identity_changed",
-                    "failure_kind": "session_project_identity_changed",
-                    "session_id": session_id,
-                    "resume_requested": true,
-                    "state_changed": false,
-                }),
-            )
+            let mut result = crate::tool_runtime::session_tools::session_project_identity_changed_result(&session_id, "work_on_project");
+            result.output["resume_requested"] = json!(true);
+            result
         }
         sessions::CodingSessionError::ResumeAuthorityMismatch { session_id } => {
             ToolResult::err_with_output(

@@ -20,6 +20,16 @@ pub(super) struct McpGatewayDispatchFence {
     pub(super) provider_instance_id: String,
 }
 
+/// Process and registration which own an in-memory Shell. All later Shell
+/// operations, including cleanup after Session close, reuse the open-time pin.
+#[derive(Debug, Clone)]
+pub struct PersistentShellTarget {
+    pub client_id: String,
+    pub runner_instance_id: String,
+    pub project_identity: String,
+    pub access: Option<crate::RunnerAccess>,
+}
+
 /// One request has one applicable identity constraint. A provider or project
 /// fence cannot be partially filled, or combined with an unrelated fence.
 /// Admission validates it against the existing canonical RunnerOperation before
@@ -28,6 +38,7 @@ pub(super) struct McpGatewayDispatchFence {
 pub(super) enum PendingDispatchFence {
     Unfenced,
     Project(ProjectDispatchFence),
+    PersistentShell(PersistentShellTarget),
     McpGateway(McpGatewayDispatchFence),
     RunnerInstruction {
         runner_instance_id: String,
@@ -56,11 +67,20 @@ impl PendingDispatchFence {
             (Self::Unfenced, operation) => !matches!(
                 operation,
                 RunnerOperation::McpGateway(_)
+                    | RunnerOperation::PersistentShell(_)
                     | RunnerOperation::RunnerInstruction(_)
                     | RunnerOperation::RunnerConfig(_)
                     | RunnerOperation::SshResource(_)
                     | RunnerOperation::Skill(_)
             ),
+            (Self::PersistentShell(target), RunnerOperation::PersistentShell(shell)) => {
+                !target.runner_instance_id.is_empty()
+                    && !target.project_identity.is_empty()
+                    && shell
+                        .request
+                        .runtime_project_id
+                        .starts_with(&format!("agent:{}:", target.client_id))
+            }
             (Self::Project(fence), RunnerOperation::File(_)) => {
                 !fence.project_id.is_empty()
                     && !fence.cwd.is_empty()
@@ -219,6 +239,35 @@ impl PendingDispatchFence {
                 let needs_observation = matches!(operation, RunnerOperation::Computer(op) if op.control_epoch.is_none());
                 (!runner.supports(feature) || (needs_observation && !runner.supports(RunnerFeature::ComputerAccessibilityObserve)))
                     .then(|| "capability_unavailable: Computer action or post-observation is unavailable before dispatch".into())
+            }
+            Self::PersistentShell(target) => {
+                let RunnerOperation::PersistentShell(shell) = operation else {
+                    unreachable!()
+                };
+                let valid = runner.is_some_and(|runner| {
+                    runner.client_id == target.client_id
+                        && runner.runner_instance_id == target.runner_instance_id
+                        && crate::now_ts().saturating_sub(runner.last_seen)
+                            <= crate::RUNNER_ONLINE_WINDOW_SECS
+                        && runner.project_inventory.status.sync_state == "complete"
+                        && target.access.as_ref().is_none_or(|access| {
+                            super::access_control::assert_runner_access(Some(access), runner)
+                                .is_ok()
+                        })
+                        && runner.projects.iter().any(|project| {
+                            !project.disabled
+                                && shell.request.runtime_project_id
+                                    == format!("agent:{}:{}", runner.client_id, project.id)
+                                && webcodex_core::runner_protocol::workflow_project_identity(
+                                    project.root_fingerprint.as_deref(),
+                                    &project.path,
+                                    project.registration_incarnation.as_deref(),
+                                )
+                                .as_ref()
+                                    == Some(&target.project_identity)
+                        })
+                });
+                (!valid).then(|| "persistent_shell_target_unavailable: original Runner or Project registration unavailable".into())
             }
             Self::Project(fence) => fence.rejection(operation, runner),
             Self::Skill { runner_instance_id } => {

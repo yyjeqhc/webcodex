@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use webcodex_runner_registry::PersistentShellTarget;
 
 const SERVER_MAX_PERSISTENT_SHELLS: usize = 64;
 const SERVER_MAX_TERMINAL_SHELLS: usize = 128;
@@ -20,7 +21,7 @@ struct SessionShellRecord {
     workflow_session_id: String,
     runtime_project_id: String,
     executor: String,
-    client_id: Option<String>,
+    target: PersistentShellTarget,
     /// Named SSH resource this shell is bound to, if any. `None` for local and
     /// plain Runner shells. Bound at open and never re-derived from Session
     /// context, so a later context change cannot redirect an open shell.
@@ -88,7 +89,7 @@ impl SessionShellRegistry {
         workflow_session_id: &str,
         runtime_project_id: &str,
         executor: &str,
-        client_id: Option<String>,
+        target: PersistentShellTarget,
         resource: Option<String>,
         shell: &str,
         initial_cwd: &str,
@@ -126,7 +127,7 @@ impl SessionShellRegistry {
                 workflow_session_id: workflow_session_id.to_string(),
                 runtime_project_id: runtime_project_id.to_string(),
                 executor: executor.to_string(),
-                client_id,
+                target,
                 resource,
                 shell: shell.to_string(),
                 profile: None,
@@ -217,10 +218,11 @@ impl SessionShellRegistry {
         } else {
             result.shell_state.clone()
         };
-        // Results can arrive out of order across concurrent exec/close
-        // requests. A terminal shell id is never reusable, so no late result
-        // may change the authoritative terminal state in the Server registry.
-        if !record.is_active() {
+        // Out-of-order replies cannot revive a terminal Shell. A confirmed
+        // close for this exact Shell can settle an earlier lost result.
+        let confirmed_close =
+            next_state == "closed" && result.error_code.is_none() && result.error.is_none();
+        if !record.is_active() && !(record.state == "lost" && confirmed_close) {
             record.busy.store(false, Ordering::SeqCst);
             return;
         }
@@ -266,7 +268,7 @@ impl SessionShellRegistry {
 
     async fn mark_lost(&self, shell_id: &str, reason: &str) {
         let mut state = self.state.lock().await;
-        if let Some(record) = state.records.get_mut(shell_id) {
+        if let Some(record) = state.records.get_mut(shell_id).filter(|r| r.is_active()) {
             record.state = "lost".to_string();
             record.busy.store(false, Ordering::SeqCst);
             record.close_reason = Some(reason.to_string());
@@ -276,6 +278,15 @@ impl SessionShellRegistry {
             }
             prune_terminal_records(&mut state);
         }
+    }
+
+    pub(crate) async fn has_active_shell(&self, session_id: &str) -> bool {
+        self.state
+            .lock()
+            .await
+            .records
+            .values()
+            .any(|record| record.workflow_session_id == session_id && record.is_active())
     }
 
     async fn active_for_session(&self, session_id: &str) -> Vec<SessionShellRecord> {
@@ -320,6 +331,8 @@ impl ToolRuntime {
         &self,
         call: super::ToolCall,
         ssh_resource: Option<&str>,
+        resolved: super::ResolvedProject,
+        auth: Option<&crate::auth::AuthContext>,
     ) -> ToolResult {
         let session_id = call
             .session_id()
@@ -337,24 +350,24 @@ impl ToolRuntime {
         }
         match call {
             super::ToolCall::OpenSessionShell {
-                project,
                 session_id,
                 cwd,
                 shell,
+                ..
             } => {
-                self.open_session_shell(project, session_id, cwd, shell, ssh_resource)
+                self.open_session_shell(resolved, session_id, cwd, shell, ssh_resource, auth)
                     .await
             }
             super::ToolCall::SessionShellExec {
-                project,
                 session_id,
                 shell_id,
                 command,
                 timeout_secs,
                 purpose,
+                ..
             } => {
                 self.session_shell_exec(
-                    project,
+                    resolved,
                     session_id,
                     shell_id,
                     command,
@@ -364,19 +377,19 @@ impl ToolRuntime {
                 .await
             }
             super::ToolCall::SessionShellStatus {
-                project,
                 session_id,
                 shell_id,
+                ..
             } => {
-                self.session_shell_status(project, session_id, shell_id)
+                self.session_shell_status(resolved, session_id, shell_id)
                     .await
             }
             super::ToolCall::CloseSessionShell {
-                project,
                 session_id,
                 shell_id,
+                ..
             } => {
-                self.close_session_shell(project, session_id, shell_id)
+                self.close_session_shell(resolved, session_id, shell_id)
                     .await
             }
             _ => unreachable!("non-persistent-shell tool routed to persistent-shell dispatcher"),
@@ -385,15 +398,33 @@ impl ToolRuntime {
 
     async fn open_session_shell(
         &self,
-        project: String,
+        resolved: super::ResolvedProject,
         session_id: String,
         cwd: Option<String>,
         shell: Option<ExecutionShell>,
         ssh_resource: Option<&str>,
+        auth: Option<&crate::auth::AuthContext>,
     ) -> ToolResult {
-        let resolved = match self.resolve_project_input(&project).await {
-            Ok(resolved) => resolved,
-            Err(error) => return error.into_tool_result(),
+        let project_identity = match resolved.require_live_workflow_project_identity() {
+            Ok(identity) => identity,
+            Err(result) => return result,
+        };
+        if self
+            .sessions
+            .session_project_identity(&session_id)
+            .flatten()
+            .is_some_and(|id| id != project_identity)
+        {
+            return super::session_tools::session_project_identity_changed_result(
+                &session_id,
+                "open_session_shell",
+            );
+        }
+        let target = PersistentShellTarget {
+            client_id: resolved.config.client_id.clone(),
+            runner_instance_id: resolved.runner_instance_id.clone(),
+            project_identity,
+            access: crate::runner_http::runner_access_from_auth(auth),
         };
         let runtime_project_id = resolved.resolved_id;
         let project_config = resolved.config;
@@ -403,7 +434,6 @@ impl ToolRuntime {
         // An SSH persistent shell still runs through the owning Runner (the
         // Runner opens the remote shell on its host).
         if let Some(resource) = ssh_resource {
-            let client_id = project_config.client_id.clone();
             // Remote cwd: explicit open cwd > Session default_cwd (already
             // validated remote-path-shaped) > Runner resource default_cwd /
             // remote login default (filled by the Runner). It is NOT constrained
@@ -418,7 +448,7 @@ impl ToolRuntime {
                     &session_id,
                     &runtime_project_id,
                     "ssh",
-                    Some(client_id.clone()),
+                    target.clone(),
                     Some(resource.to_string()),
                     shell_name,
                     effective_cwd.as_deref().unwrap_or(""),
@@ -453,7 +483,7 @@ impl ToolRuntime {
                 purpose: None,
             };
             let result = match self
-                .run_runner_persistent_shell(&client_id, request, Some(job_context), 35)
+                .run_runner_persistent_shell(&target, request, Some(job_context), 35)
                 .await
             {
                 Ok(result) => result,
@@ -487,7 +517,6 @@ impl ToolRuntime {
                 None,
             );
         }
-        let client_id = project_config.client_id.clone();
         let effective_cwd = match resolve_runner_cwd(&project_config, cwd.as_deref()) {
             Ok(cwd) => cwd,
             Err(error) => return shell_tool_error("persistent_shell_cwd_invalid", error, None),
@@ -498,7 +527,7 @@ impl ToolRuntime {
                 &session_id,
                 &runtime_project_id,
                 "agent",
-                Some(client_id.clone()),
+                target.clone(),
                 None,
                 shell_name,
                 &effective_cwd,
@@ -520,7 +549,7 @@ impl ToolRuntime {
             purpose: None,
         };
         let result = match self
-            .run_runner_persistent_shell(&client_id, request, None, 35)
+            .run_runner_persistent_shell(&target, request, None, 35)
             .await
         {
             Ok(result) => result,
@@ -557,17 +586,13 @@ impl ToolRuntime {
 
     async fn session_shell_exec(
         &self,
-        project: String,
+        resolved: super::ResolvedProject,
         session_id: String,
         shell_id: String,
         command: String,
         timeout_secs: Option<u64>,
         purpose: Option<ExecutionPurpose>,
     ) -> ToolResult {
-        let resolved = match self.resolve_project_input(&project).await {
-            Ok(resolved) => resolved,
-            Err(error) => return error.into_tool_result(),
-        };
         let runtime_project_id = resolved.resolved_id;
         let project_config = resolved.config;
         if command.len() > RAW_SHELL_COMMAND_MAX_BYTES {
@@ -597,7 +622,6 @@ impl ToolRuntime {
             );
         }
         let timeout_secs = requested_timeout_secs.min(3_600);
-        let client_id = record.client_id.as_deref().unwrap_or_default();
         let request = PersistentShellRequest {
             action: "exec".to_string(),
             shell_id: shell_id.clone(),
@@ -610,7 +634,12 @@ impl ToolRuntime {
             purpose: purpose.map(|purpose| purpose.as_str().to_string()),
         };
         let result = self
-            .run_runner_persistent_shell(client_id, request, record.job_context(), timeout_secs + 5)
+            .run_runner_persistent_shell(
+                &record.target,
+                request,
+                record.job_context(),
+                timeout_secs + 5,
+            )
             .await;
         let result = match result {
             Ok(result) => result,
@@ -635,14 +664,10 @@ impl ToolRuntime {
 
     async fn session_shell_status(
         &self,
-        project: String,
+        resolved: super::ResolvedProject,
         session_id: String,
         shell_id: String,
     ) -> ToolResult {
-        let resolved = match self.resolve_project_input(&project).await {
-            Ok(resolved) => resolved,
-            Err(error) => return error.into_tool_result(),
-        };
         let runtime_project_id = resolved.resolved_id;
         let project_config = resolved.config;
         let record = match self
@@ -658,7 +683,7 @@ impl ToolRuntime {
         }
         let result = self
             .run_runner_persistent_shell(
-                record.client_id.as_deref().unwrap_or_default(),
+                &record.target,
                 PersistentShellRequest {
                     action: "status".to_string(),
                     shell_id: shell_id.clone(),
@@ -697,14 +722,10 @@ impl ToolRuntime {
 
     async fn close_session_shell(
         &self,
-        project: String,
+        resolved: super::ResolvedProject,
         session_id: String,
         shell_id: String,
     ) -> ToolResult {
-        let resolved = match self.resolve_project_input(&project).await {
-            Ok(resolved) => resolved,
-            Err(error) => return error.into_tool_result(),
-        };
         let runtime_project_id = resolved.resolved_id;
         let project_config = resolved.config;
         let record = match self
@@ -715,6 +736,15 @@ impl ToolRuntime {
             Ok(record) => record,
             Err(error) => return shell_tool_error_from_message(error, Some(&shell_id)),
         };
+        if matches!(record.state.as_str(), "lost" | "unknown") {
+            return shell_tool_error_with_state(
+                "persistent_shell_stale",
+                "The Runner has not confirmed cleanup of this Shell",
+                Some(&shell_id),
+                "lost",
+                "lost",
+            );
+        }
         if !record.is_active() {
             return persistent_record_to_tool(record, &project_config, "close");
         }
@@ -745,23 +775,42 @@ impl ToolRuntime {
         record: &SessionShellRecord,
         reason: &str,
     ) -> Result<PersistentShellResult, String> {
-        self.run_runner_persistent_shell(
-            record.client_id.as_deref().unwrap_or_default(),
-            PersistentShellRequest {
-                action: "close".to_string(),
-                shell_id: record.shell_id.clone(),
-                workflow_session_id: record.workflow_session_id.clone(),
-                runtime_project_id: record.runtime_project_id.clone(),
-                cwd: None,
-                shell: None,
-                command: None,
-                timeout_secs: None,
-                purpose: Some(reason.to_string()),
-            },
-            record.job_context(),
-            10,
-        )
-        .await
+        let result = self
+            .run_runner_persistent_shell(
+                &record.target,
+                PersistentShellRequest {
+                    action: "close".to_string(),
+                    shell_id: record.shell_id.clone(),
+                    workflow_session_id: record.workflow_session_id.clone(),
+                    runtime_project_id: record.runtime_project_id.clone(),
+                    cwd: None,
+                    shell: None,
+                    command: None,
+                    timeout_secs: None,
+                    purpose: Some(reason.to_string()),
+                },
+                record.job_context(),
+                10,
+            )
+            .await?;
+        if result.error_code.is_some()
+            || result.error.is_some()
+            || !matches!(
+                result.shell_state.as_str(),
+                "closed" | "exited" | "poisoned"
+            )
+        {
+            let code = result
+                .error_code
+                .as_deref()
+                .unwrap_or("persistent_shell_stale");
+            let message = result
+                .error
+                .as_deref()
+                .unwrap_or("Runner did not confirm Shell cleanup");
+            return Err(format!("{code}: {message}"));
+        }
+        Ok(result)
     }
 
     async fn reconcile_active_shell_before_open(&self, session_id: &str, runtime_project_id: &str) {
@@ -772,7 +821,7 @@ impl ToolRuntime {
         {
             let result = self
                 .run_runner_persistent_shell(
-                    record.client_id.as_deref().unwrap_or_default(),
+                    &record.target,
                     PersistentShellRequest {
                         action: "status".to_string(),
                         shell_id: record.shell_id.clone(),
@@ -817,31 +866,12 @@ impl ToolRuntime {
             .record_for_operation(session_id, runtime_project_id, shell_id)
             .await
         {
-            match self
-                .close_record(&record, "workflow_session_closed_during_open")
-                .await
-            {
-                Ok(result) => {
-                    self.session_shells.apply_result(&result).await;
-                    self.record_session_close_shell_result(session_id, &result);
-                }
-                Err(error) => {
-                    self.session_shells.mark_lost(shell_id, &error).await;
-                    self.sessions
-                        .record_session_close_persistent_shell_evidence(
-                            session_id,
-                            shell_id,
-                            "lost",
-                            "lost",
-                            Some(shell_error_code(&error)),
-                            false,
-                        );
-                }
-            }
+            self.close_shell_for_session(&record, "workflow_session_closed_during_open")
+                .await;
         }
         Some(shell_tool_error(
             "persistent_shell_session_inactive",
-            "Workflow Session closed while the persistent shell was opening; the shell was released",
+            "Workflow Session closed while the persistent shell was opening",
             Some(shell_id),
         ))
     }
@@ -853,15 +883,7 @@ impl ToolRuntime {
         original_error: &str,
     ) {
         match self.close_record(record, reason).await {
-            Ok(result) => {
-                let close_failed = result.error_code.is_some();
-                self.session_shells.apply_result(&result).await;
-                if close_failed {
-                    self.session_shells
-                        .mark_lost(&record.shell_id, original_error)
-                        .await;
-                }
-            }
+            Ok(result) => self.session_shells.apply_result(&result).await,
             Err(_) => {
                 self.session_shells
                     .mark_lost(&record.shell_id, original_error)
@@ -870,35 +892,47 @@ impl ToolRuntime {
         }
     }
 
-    pub(crate) async fn close_persistent_shells_for_session(&self, session_id: &str) -> usize {
+    pub(crate) async fn close_persistent_shells_for_session(
+        &self,
+        session_id: &str,
+    ) -> (usize, usize) {
         let records = self.session_shells.active_for_session(session_id).await;
+        let attempted = records.len();
         let mut closed = 0usize;
         for record in records {
-            match self.close_record(&record, "workflow_session_closed").await {
-                Ok(result) => {
-                    self.session_shells.apply_result(&result).await;
-                    self.record_session_close_shell_result(session_id, &result);
-                    if result.error_code.is_none() {
-                        closed = closed.saturating_add(1);
-                    }
-                }
-                Err(error) => {
-                    self.session_shells
-                        .mark_lost(&record.shell_id, &error)
-                        .await;
-                    self.sessions
-                        .record_session_close_persistent_shell_evidence(
-                            session_id,
-                            &record.shell_id,
-                            "lost",
-                            "lost",
-                            Some(shell_error_code(&error)),
-                            false,
-                        );
-                }
+            if self
+                .close_shell_for_session(&record, "workflow_session_closed")
+                .await
+            {
+                closed += 1;
             }
         }
-        closed
+        (closed, attempted - closed)
+    }
+
+    async fn close_shell_for_session(&self, record: &SessionShellRecord, reason: &str) -> bool {
+        match self.close_record(record, reason).await {
+            Ok(result) => {
+                self.session_shells.apply_result(&result).await;
+                self.record_session_close_shell_result(&record.workflow_session_id, &result);
+                result.shell_state == "closed"
+            }
+            Err(error) => {
+                self.session_shells
+                    .mark_lost(&record.shell_id, &error)
+                    .await;
+                self.sessions
+                    .record_session_close_persistent_shell_evidence(
+                        &record.workflow_session_id,
+                        &record.shell_id,
+                        "lost",
+                        "lost",
+                        Some(shell_error_code(&error)),
+                        false,
+                    );
+                false
+            }
+        }
     }
 
     fn record_session_close_shell_result(&self, session_id: &str, result: &PersistentShellResult) {
@@ -916,19 +950,14 @@ impl ToolRuntime {
 
     async fn run_runner_persistent_shell(
         &self,
-        client_id: &str,
+        target: &PersistentShellTarget,
         request: PersistentShellRequest,
         job_context: Option<ShellJobContext>,
         wait_secs: u64,
     ) -> Result<PersistentShellResult, String> {
         let (request_id, receiver) = self
             .runner_registry
-            .enqueue_persistent_shell(
-                client_id.to_string(),
-                request,
-                job_context,
-                "tool_runtime".to_string(),
-            )
+            .enqueue_persistent_shell(target, request, job_context, "tool_runtime".to_string())
             .await?;
         match tokio::time::timeout(Duration::from_secs(wait_secs), receiver).await {
             Ok(Ok(result)) => Ok(result),

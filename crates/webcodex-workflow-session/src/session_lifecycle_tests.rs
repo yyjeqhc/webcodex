@@ -526,6 +526,14 @@ fn close_cleanup_evidence_commits_before_returning_to_cold_residency() {
         None
     );
 
+    store.record_session_close_persistent_shell_evidence(
+        &session.session_id,
+        "wc_shell_cold_close",
+        "lost",
+        "lost",
+        Some("result_lost"),
+        false,
+    );
     let restored = flush_and_restore(&store, ledger);
     assert!(restored
         .cold_payload_bytes_for_test(&session.session_id)
@@ -904,4 +912,92 @@ fn closed_session_does_not_reopen() {
     assert!(again.already_closed);
     assert_eq!(again.summary.lifecycle, SessionLifecycle::Closed);
     assert!(!again.summary.lifecycle.allows_mutation());
+}
+
+#[tokio::test]
+async fn legacy_binding_is_invisible_until_sqlite_commit_and_survives_cold_reload() {
+    use crate::{
+        SessionBindingError as Error, TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT as OWNER,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let id = store
+        .start_session_with_guards(
+            Some("project".into()),
+            Some("Original".into()),
+            SessionMode::ReadOnly,
+            SessionGuards::default(),
+        )
+        .session_id;
+    store.flush().await.unwrap();
+    drop(store);
+    let store = persistent_store(ledger.clone());
+    assert_eq!(store.status().active_cold_sessions, 1);
+    let original_events = store.summary(&id, None).unwrap().events;
+    let identity = "a".repeat(64);
+    let bind =
+        |owner, project, busy| store.bind_legacy_project(&id, project, owner, &identity, busy);
+    assert_eq!(
+        bind("foreign", "project", false),
+        Err(Error::UnknownSession)
+    );
+    assert_eq!(bind(OWNER, "other", false), Err(Error::UnknownSession));
+    assert_eq!(bind(OWNER, "project", true), Err(Error::ExecutionBusy));
+    store.set_persistence_failure_for_test(true);
+    assert_eq!(bind(OWNER, "project", false), Ok(()));
+    assert!(store.flush().await.is_err());
+    assert_eq!(store.session_project_identity(&id), Some(None));
+    assert_eq!(
+        store.bind_legacy_project(&id, "project", OWNER, &"b".repeat(64), false),
+        Err(Error::DifferentRegistration)
+    );
+    store.set_persistence_failure_for_test(false);
+    store.flush().await.unwrap();
+    assert_eq!(bind(OWNER, "project", false), Ok(()));
+    drop(store);
+    let store = persistent_store(ledger);
+    assert_eq!(store.session_project_identity(&id), Some(Some(identity)));
+    let summary = store.summary(&id, None).unwrap();
+    assert_eq!(summary.mode, SessionMode::ReadOnly);
+    assert!(summary.guards.deny_shell_tools);
+    assert_eq!(summary.title.as_deref(), Some("Original"));
+    assert_eq!(json!(summary.events), json!(original_events));
+}
+
+#[test]
+fn legacy_binding_ignores_retained_unfinished_call_and_serializes_with_close() {
+    use crate::{
+        SessionBindingError as Error, TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT as OWNER,
+    };
+    let store = SessionStore::default();
+    let id = store.start_session(Some("project".into()), None).session_id;
+    let bind = || store.bind_legacy_project(&id, "project", OWNER, &"a".repeat(64), false);
+    store
+        .record_tool_call_started(
+            Some(&id),
+            SessionTransport::Api,
+            "run_shell",
+            &json!({"project":"project"}),
+            session_tool_contract("run_shell"),
+        )
+        .unwrap();
+    assert_eq!(bind(), Ok(()));
+    let racing_id = store.start_session(Some("project".into()), None).session_id;
+    let bind = || store.bind_legacy_project(&racing_id, "project", OWNER, &"a".repeat(64), false);
+    let barrier = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        let close = scope.spawn(|| {
+            barrier.wait();
+            store.close_session(&racing_id).unwrap()
+        });
+        barrier.wait();
+        assert!(matches!(bind(), Ok(()) | Err(Error::Closed)));
+        close.join().unwrap();
+    });
+    assert_eq!(
+        store.lifecycle_state(&racing_id),
+        Some(SessionLifecycle::Closed)
+    );
+    assert_eq!(bind(), Err(Error::Closed));
 }

@@ -547,7 +547,12 @@ impl ControlExecution {
         // Its canonical dispatch still owns permissions and lifecycle guards.
         if let Some(session_id) = call.session_id() {
             runtime
-                .authorize_session_target(session_id, call.tool_name(), context.auth)
+                .authorize_session_target(
+                    session_id,
+                    call.tool_name(),
+                    call.project(),
+                    context.auth,
+                )
                 .await
                 .map_err(rejection_result)?;
         }

@@ -450,9 +450,19 @@ fn serve(listener: TcpListener, config: Rendezvous, weak: Weak<State>) {
     }
 }
 fn serve_peer(mut stream: TcpStream, config: &Rendezvous, state: &State) {
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(200)));
-    let _ = stream.set_nodelay(true);
+    // Windows inherits the listener's nonblocking mode. Idle peer reads must
+    // wait for their timeout, not retry WouldBlock continuously.
+    if stream.set_nonblocking(false).is_err()
+        || stream
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .is_err()
+        || stream
+            .set_write_timeout(Some(Duration::from_millis(200)))
+            .is_err()
+        || stream.set_nodelay(true).is_err()
+    {
+        return;
+    }
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut frames = FrameReader::new(4096);
     let hello = loop {

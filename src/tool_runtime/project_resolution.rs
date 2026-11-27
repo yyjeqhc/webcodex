@@ -69,6 +69,7 @@ pub(crate) struct ResolvedProject {
     pub(crate) root_fingerprint: Option<String>,
     pub(crate) registration_incarnation: Option<String>,
     pub(crate) runner_instance_id: String,
+    pub(crate) runner_connected: bool,
     /// Descriptive Runner-owned lineage only. It never changes execution cwd,
     /// ProjectConfig, Session authority, Plugin placement, or tool permission.
     pub(crate) knowledge_association: Option<RunnerProjectLineage>,
@@ -83,12 +84,26 @@ impl ResolvedProject {
         )
     }
 
+    /// A complete retained inventory can identify a registration for fresh
+    /// startup diagnostics, but does not grant live Session authority.
     pub(crate) fn require_workflow_project_identity(&self) -> Result<String, ToolResult> {
-        self.workflow_project_identity().ok_or_else(|| ToolResult::err_with_output(
+        self.workflow_project_identity()
+            .ok_or_else(Self::registration_identity_unavailable)
+    }
+
+    pub(crate) fn require_live_workflow_project_identity(&self) -> Result<String, ToolResult> {
+        if !self.runner_connected {
+            return Err(Self::registration_identity_unavailable());
+        }
+        self.require_workflow_project_identity()
+    }
+
+    fn registration_identity_unavailable() -> ToolResult {
+        ToolResult::err_with_output(
             "project_registration_identity_unavailable",
             json!({"error_kind": "project_registration_identity_unavailable", "state_changed": false,
                 "recovery": "Reconnect the Runner and wait for its complete Project inventory. A legacy Runner must be upgraded before it can attest the registration."}),
-        ))
+        )
     }
 }
 
@@ -472,14 +487,13 @@ impl ToolRuntime {
             path: project.path.clone(),
             allow_patch: project.allow_patch,
             root_fingerprint: project.root_fingerprint.clone(),
-            // A retained offline or partially synchronized catalog is suitable for
-            // discovery, but cannot attest a current execution binding.
+            // Keep the registration identity from the last complete inventory
+            // across a disconnect. An incomplete inventory proves no binding.
             registration_incarnation: project.registration_incarnation.clone().filter(|_| {
-                client.connected
-                    && client
-                        .project_inventory
-                        .as_ref()
-                        .is_some_and(|i| i.sync_state == "complete")
+                client
+                    .project_inventory
+                    .as_ref()
+                    .is_some_and(|i| i.sync_state == "complete")
             }),
             runner_instance_id: client.runner_instance_id.clone(),
             lineage: project.lineage.clone(),
@@ -508,6 +522,7 @@ impl ToolRuntime {
             root_fingerprint: candidate.root_fingerprint.clone(),
             registration_incarnation: candidate.registration_incarnation.clone(),
             runner_instance_id: candidate.runner_instance_id.clone(),
+            runner_connected: candidate.connected,
             knowledge_association: candidate.lineage.clone(),
         }
     }

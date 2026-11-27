@@ -231,7 +231,15 @@ impl ToolRuntime {
                 );
             }
         }
-        let project_identity = match resolved.require_workflow_project_identity() {
+        // Fresh startup must still return the established blocked diagnostic
+        // for an offline Runner with a known registration. Resumes and
+        // recorder-bound requests require a current live binding.
+        let binding = if resume_session_id.is_some() || trusted_recording_session_id.is_some() {
+            resolved.require_live_workflow_project_identity()
+        } else {
+            resolved.require_workflow_project_identity()
+        };
+        let project_identity = match binding {
             Ok(identity) => identity,
             Err(result) => return attach_project_resolution(result, &project_resolution),
         };

@@ -767,6 +767,19 @@ async fn offline_owner_can_read_history_without_recording_ack_or_resolution() {
         assert!(result.success, "{tool}: {result:?}");
     }
     let before = runtime.sessions.summary(&id, None).unwrap();
+    let resume = call(
+        &runtime,
+        Some(&auth),
+        "work_on_project",
+        json!({"session_id":id, "instruction":"resume offline work"}),
+        None,
+    )
+    .await;
+    assert!(!resume.success, "{resume:?}");
+    assert_eq!(
+        resume.result.unwrap().output["error_kind"],
+        "project_registration_identity_unavailable"
+    );
     let denied = runtime
         .call_tool_with_invocation_metadata(
             ToolCallRequest {

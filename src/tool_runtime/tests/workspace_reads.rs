@@ -13,6 +13,7 @@ fn resolved() -> ResolvedProject {
         },
         root_fingerprint: Some("root-incarnation".into()),
         runner_instance_id: "inst".into(),
+        runner_connected: true,
         registration_incarnation: None,
         knowledge_association: None,
     }

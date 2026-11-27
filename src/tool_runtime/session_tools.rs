@@ -341,7 +341,7 @@ impl ToolRuntime {
         };
         let project_identity = match resolved
             .as_ref()
-            .map(|project| project.require_workflow_project_identity())
+            .map(|project| project.require_live_workflow_project_identity())
             .transpose()
         {
             Ok(identity) => identity,
@@ -695,7 +695,7 @@ impl ToolRuntime {
                 return Err(session_authority_denied_result(session_id, tool_name));
             }
             if let Some(resolved) = resolved.as_ref() {
-                let identity = resolved.require_workflow_project_identity()?;
+                let identity = resolved.require_live_workflow_project_identity()?;
                 if self
                     .sessions
                     .session_project_identity(session_id)

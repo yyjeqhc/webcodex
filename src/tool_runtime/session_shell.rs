@@ -396,7 +396,7 @@ impl ToolRuntime {
         ssh_resource: Option<&str>,
         auth: Option<&crate::auth::AuthContext>,
     ) -> ToolResult {
-        let project_identity = match resolved.require_workflow_project_identity() {
+        let project_identity = match resolved.require_live_workflow_project_identity() {
             Ok(identity) => identity,
             Err(result) => return result,
         };

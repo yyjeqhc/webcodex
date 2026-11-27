@@ -772,6 +772,7 @@ mod tests {
                 },
                 root_fingerprint: None,
                 runner_instance_id: "inst".into(),
+                runner_connected: true,
                 registration_incarnation: None,
                 knowledge_association: None,
             }

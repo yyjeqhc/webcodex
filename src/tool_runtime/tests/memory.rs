@@ -25,6 +25,7 @@ fn resolved(id: &str, client: &str, root: &str) -> ResolvedProject {
         },
         root_fingerprint: None,
         runner_instance_id: "inst".into(),
+        runner_connected: true,
         registration_incarnation: None,
         knowledge_association: None,
     }

@@ -280,6 +280,15 @@ impl SessionShellRegistry {
         }
     }
 
+    pub(crate) async fn has_active_shell(&self, session_id: &str) -> bool {
+        self.state
+            .lock()
+            .await
+            .records
+            .values()
+            .any(|record| record.workflow_session_id == session_id && record.is_active())
+    }
+
     async fn active_for_session(&self, session_id: &str) -> Vec<SessionShellRecord> {
         self.state
             .lock()

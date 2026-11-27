@@ -66,10 +66,14 @@ webcodex environment update rollback --operation-id OPERATION_ID --yes
 
 恢复时使用 `view.upgrade.operation_id` 报告的准确已保存 UUID，在 Linux TTY 中以原用户操作其环境。这些命令复用已有 Environment 完成/回滚保护，不会启动第二个安装程序，也不会推断不确定的替换可以安全重试。需要恢复时保留日志与私有备份。更新只影响本机已安装软件包及其拥有的环境，不会通过连接升级远端中央 Server 或其他 Runner。原生安装与恢复仍需完成上方链接中的平台验收。
 
-## 恢复 v0.5.0 的 Workflow Session 历史
+## 续接 v0.5.0 的 Workflow Session
 
-在包含本次生命周期修复的版本中，使用原所有者仍有效且具备相应权限的凭据。将原 Session ID 或 Ref 作为参数调用 `read_session_summary` 和 `list_session_messages`，省略 Recorder。若未保存 ID，可用完整的 Project ID 调用 `list_sessions`。Server 重启后，需要 Runner 注册以重新确认其归属。若 Server 仍保有可验证的 Runner 归属，Runner 离线期间也可读取历史。
+v0.5.0 保存了 Session 的所有者、ID 和历史。Runner 在升级至 v0.5.1 时才首次为旧注册分配 UUID。原所有者向当前注册实例授权前，实时续接会返回 `session_project_identity_changed`。
 
-v0.5.0 已保存 Session 的所有者和历史，但 Project 注册文件与 Session 记录中没有共同的注册实例凭证。v0.5.1 在升级时才生成 Runner 侧的 UUID。即使有旧记录的备份、路径和所有者都一致，也无法识别升级前发生过的注销和重新注册。Server 保留原记录，实时续接会返回 `session_project_identity_changed`。
+1. 使用原所有者具备 `runtime:read`、`project:read` 和 `session:collaborate` 权限的直接凭据打开 Runtime Console（`/runtime`）。托管 OAuth 用户可使用自己的个人 API Token。连接 Runner，等待 Project Inventory 完整同步。
+2. 在工作视图中选中原 Session，打开 **证据 → 重新授权旧 Session**。确认框显示原 Session ID、完整 Project ID、注册路径和注册 UUID。核对目标后确认。如果注册实例已变化，刷新并重新核对。
+3. 使用原 ID 或 Ref 调用 `work_on_project` 续接。授权和唯一一条 `session_project_reauthorized` 事件在同一次持久化中提交。若未收到确认，先用原 ID 调用 `read_session_summary`（省略 Recorder）核对该事件，再决定是否重新确认。若存储不可用，先恢复 Session 数据库访问。
 
-需要继续工作时，确认当前 Project，查看原 Session 的决策和结果未明的操作，再用该 Project 和核实过的任务说明调用 `work_on_project`。省略 `session_id` 以创建新 Session，并保存返回的 ID。若创建结果未确认，先用 `list_sessions` 核实。交接完成后，可用原 ID 或 Ref 调用 `close_session`。此流程不会重放待执行请求、Shell、ACK 或验证任务。
+仅缺少注册绑定的 Active Session 可以恢复。已有绑定与当前注册不匹配时继续拒绝。若有执行状态未决，请先核对原调用、Job 和 Shell。授权保留历史、指令、消息、Todo、验证记录和 Session 限制，也不会派发旧请求、重跑 Job、打开 Shell 或发送协作回执。
+
+原所有者也可省略 Recorder，调用 `read_session_summary`、`list_session_messages` 读取历史，或直接关闭 Session。若未保存 ID，可用完整的 Project ID 调用 `list_sessions`。Server 重启后需要 Runner 注册以重新确认归属。若 Server 仍持有可验证的 Runner 归属，Runner 离线期间也可读取历史或关闭 Session。

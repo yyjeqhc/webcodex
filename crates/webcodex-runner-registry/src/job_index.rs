@@ -65,6 +65,15 @@ impl JobRecords {
         }
     }
 
+    /// Read after registry publication, when the active index is reconciled.
+    pub(crate) fn has_active_session(&self, session_id: &str) -> bool {
+        self.active.iter().any(|id| {
+            self.records.get(id).is_some_and(|job| {
+                job.lifecycle.is_active() && job.session_id.as_deref() == Some(session_id)
+            })
+        })
+    }
+
     pub(crate) fn active_ids(&mut self) -> Vec<String> {
         self.reconcile_active();
         self.active.iter().cloned().collect()

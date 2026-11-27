@@ -4,6 +4,10 @@ export { RUNTIME_LANGUAGES, type RuntimeLanguage } from "./runtime_locales.js";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Reauthorize legacy Session": "重新授权旧 Session",
+  "Authorize future calls from this Session on this Project registration?": "允许此 Session 在以下 Project 注册实例上发起后续调用？",
+  "Session authorized. Resume with its original ID or Ref.": "已授权。可用原 Session ID 或 Ref 续接。",
+  "Check the original Session summary before confirming again.": "请先核对原 Session 摘要，再决定是否重新确认。",
   "Named": "已命名",
   "Window name": "窗口名称",
   "Rename Window": "重命名窗口",

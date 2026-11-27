@@ -126,6 +126,16 @@ pub enum SessionCloseError {
     UnknownSession,
 }
 
+/// Denials from the conditional, owner-scoped legacy execution grant.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SessionReauthorizationError {
+    UnknownSession,
+    Closed,
+    DifferentRegistration,
+    UnresolvedExecution,
+    StorageUnavailable,
+}
+
 /// Lifecycle-based tool denial (orthogonal to mode/guards).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionLifecycleDenial {
@@ -141,8 +151,7 @@ pub struct SessionRecord {
     pub(crate) durable: Option<ColdSessionRecord>,
     pub session_id: String,
     pub project: Option<String>,
-    /// Immutable identity of the Project root captured at Session creation.
-    /// None marks legacy/unproven identity and never authorizes retargeting.
+    /// Execution binding captured at creation or explicitly granted once for a legacy Session.
     pub project_identity: Option<String>,
     /// Domain-separated SHA-256 of the canonical creation-time authority group.
     /// The historical field name is retained only in persistence; in-memory
@@ -273,7 +282,13 @@ impl StoredSession {
 
     pub fn project_identity(&self) -> Option<&str> {
         match self {
-            Self::Hot(record) => record.project_identity.as_deref(),
+            // A restored legacy row can acquire its first binding only through
+            // a committed SQLite write. Keep live admissions on the last
+            // acknowledged binding even if a write fails or is still queued.
+            Self::Hot(record) => match &record.durable {
+                Some(committed) => committed.project_identity.as_deref(),
+                None => record.project_identity.as_deref(),
+            },
             Self::Cold(record) => record.project_identity.as_deref(),
         }
     }

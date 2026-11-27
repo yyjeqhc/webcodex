@@ -106,6 +106,56 @@ mod allow_patch_projection_tests {
 }
 
 impl RunnerRegistry {
+    /// Keep registration, current Runner ownership, and Session-bound work stable
+    /// through a synchronous operator decision. A preview has no work to admit.
+    pub async fn with_live_session_registration<R>(
+        &self,
+        access: &crate::RunnerAccess,
+        runtime_project: &str,
+        session: Option<&str>,
+        decide: impl FnOnce(&RunnerProjectSummary, bool) -> R,
+    ) -> Option<R> {
+        use webcodex_core::runner_operation::RunnerOperation;
+        let (client, project) = runtime_project.strip_prefix("agent:")?.split_once(':')?;
+        let inner = self.inner.read().await;
+        let runner = inner.runners.get(client)?;
+        let now = crate::now_ts();
+        if !self.runner_visible_for_snapshot(Some(access), &inner, runner, now)
+            || assert_runner_access(Some(access), runner).is_err()
+            || now.saturating_sub(runner.last_seen) > crate::RUNNER_ONLINE_WINDOW_SECS
+            || runner.project_inventory.status.sync_state != "complete"
+            || inner.unregistering_projects.contains_key(runtime_project)
+        {
+            return None;
+        }
+        let registered = runner
+            .projects
+            .iter()
+            .find(|p| p.id == project && !p.disabled)?;
+        let busy = session.is_some_and(|id| {
+            inner.jobs_by_id.has_active_session(id)
+                || inner
+                    .pending_by_id
+                    .values()
+                    .any(|pending| match &pending.operation {
+                        RunnerOperation::PersistentShell(op) => {
+                            op.request.workflow_session_id == id
+                        }
+                        RunnerOperation::RunShell(op) => {
+                            op.job_context
+                                .as_ref()
+                                .and_then(|c| c.workflow_session_id.as_deref())
+                                == Some(id)
+                        }
+                        RunnerOperation::Job(op) => {
+                            op.context().and_then(|c| c.workflow_session_id.as_deref()) == Some(id)
+                        }
+                        _ => false,
+                    })
+        });
+        Some(decide(registered, busy))
+    }
+
     /// Authorize historical data against the current credential partition and
     /// Runner owner. A disabled Project remains hidden. A removed Project
     /// does not invalidate an owned Session.

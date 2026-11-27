@@ -696,16 +696,13 @@ impl ToolRuntime {
             }
             if let Some(resolved) = resolved.as_ref() {
                 let identity = resolved.require_live_workflow_project_identity()?;
-                if self
-                    .sessions
-                    .session_project_identity(session_id)
-                    .flatten()
-                    .as_ref()
-                    != Some(&identity)
-                {
-                    return Err(session_project_identity_changed_result(
-                        session_id, tool_name,
-                    ));
+                let bound = self.sessions.session_project_identity(session_id).flatten();
+                if bound.as_ref() != Some(&identity) {
+                    let mut result = session_project_identity_changed_result(session_id, tool_name);
+                    if bound.is_none() {
+                        result.output["recovery"] = json!("Ask the original owner to review the current registration in Runtime Console → Session → Evidence and reauthorize this legacy Session. Then resume with the original ID or Ref.");
+                    }
+                    return Err(result);
                 }
             }
         }

@@ -913,3 +913,100 @@ fn closed_session_does_not_reopen() {
     assert_eq!(again.summary.lifecycle, SessionLifecycle::Closed);
     assert!(!again.summary.lifecycle.allows_mutation());
 }
+
+#[tokio::test]
+async fn legacy_authorization_is_invisible_until_sqlite_commit_and_survives_cold_reload() {
+    use crate::{
+        SessionReauthorizationError as Error,
+        TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT as OWNER,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let id = store
+        .start_session_with_guards(
+            Some("project".into()),
+            Some("Original".into()),
+            SessionMode::ReadOnly,
+            SessionGuards::default(),
+        )
+        .session_id;
+    store.flush().await.unwrap();
+    drop(store);
+    let store = persistent_store(ledger.clone());
+    assert_eq!(store.status().active_cold_sessions, 1);
+    let identity = "a".repeat(64);
+    let grant = |owner, project, busy| {
+        store.stage_legacy_project_authorization(&id, project, owner, &identity, busy)
+    };
+    assert_eq!(
+        grant("foreign", "project", false),
+        Err(Error::UnknownSession)
+    );
+    assert_eq!(grant(OWNER, "other", false), Err(Error::UnknownSession));
+    assert_eq!(
+        grant(OWNER, "project", true),
+        Err(Error::UnresolvedExecution)
+    );
+    store.set_persistence_failure_for_test(true);
+    assert_eq!(grant(OWNER, "project", false), Ok(true));
+    assert!(store.flush().await.is_err());
+    assert_eq!(store.session_project_identity(&id), Some(None));
+    assert_eq!(
+        store.stage_legacy_project_authorization(&id, "project", OWNER, &"b".repeat(64), false),
+        Err(Error::DifferentRegistration)
+    );
+    store.set_persistence_failure_for_test(false);
+    store.flush().await.unwrap();
+    assert_eq!(grant(OWNER, "project", false), Ok(false));
+    drop(store);
+    let store = persistent_store(ledger);
+    assert_eq!(store.session_project_identity(&id), Some(Some(identity)));
+    let summary = store.summary(&id, None).unwrap();
+    assert_eq!(summary.mode, SessionMode::ReadOnly);
+    assert!(summary.guards.deny_shell_tools);
+    assert_eq!(summary.title.as_deref(), Some("Original"));
+    assert_eq!(
+        summary
+            .events
+            .iter()
+            .filter(|e| e.kind == "session_project_reauthorized")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn legacy_authorization_rechecks_running_call_and_serializes_with_close() {
+    use crate::{
+        SessionReauthorizationError as Error,
+        TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT as OWNER,
+    };
+    let store = SessionStore::default();
+    let id = store.start_session(Some("project".into()), None).session_id;
+    let grant =
+        || store.stage_legacy_project_authorization(&id, "project", OWNER, &"a".repeat(64), false);
+    let call = store
+        .record_tool_call_started(
+            Some(&id),
+            SessionTransport::Api,
+            "run_shell",
+            &json!({"project":"project"}),
+            session_tool_contract("run_shell"),
+        )
+        .unwrap();
+    assert_eq!(grant(), Err(Error::UnresolvedExecution));
+    store.record_tool_call_finished(Some(call), true, &json!({}), None, None);
+    let barrier = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        let close = scope.spawn(|| {
+            barrier.wait();
+            store.close_session(&id).unwrap()
+        });
+        barrier.wait();
+        assert!(matches!(grant(), Ok(true) | Err(Error::Closed)));
+        close.join().unwrap();
+    });
+    assert_eq!(store.lifecycle_state(&id), Some(SessionLifecycle::Closed));
+    assert_eq!(grant(), Err(Error::Closed));
+}

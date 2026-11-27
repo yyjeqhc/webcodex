@@ -230,3 +230,43 @@ async fn project_active_job_query_is_not_truncated_and_unregister_fences_starts(
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn legacy_session_grant_observes_jobs_and_pending_requests_without_dispatching() {
+    let registry = RunnerRegistry::default();
+    let access = auth_context(Some("alice"), false);
+    register_with_instance(&registry, "oe", "instance").await;
+    let project = "agent:oe:repo";
+    let session = "session-a";
+    registry
+        .upsert_runner_project_for_instance("oe", "instance", project_summary("repo", "/fixture"))
+        .await
+        .unwrap();
+    let busy =
+        || registry.with_live_session_registration(&access, project, Some(session), |_, busy| busy);
+    assert_eq!(busy().await, Some(false));
+    let mut request = shell_job_start_request("oe", "echo fixture", Some(60));
+    request.context.project_id = Some(project.into());
+    request.context.session_id = Some(session.into());
+    let job = registry
+        .start_job(request, "alice".into(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(busy().await, Some(true));
+    let request_id = {
+        let mut inner = registry.inner.lock().await;
+        let job = inner.jobs_by_id.get_mut(&job.job_id).unwrap();
+        job.lifecycle = crate::state::JobLifecycleState::Completed;
+        job.request_id.clone().unwrap()
+    };
+    assert_eq!(
+        busy().await,
+        Some(true),
+        "pending exact request still owns work"
+    );
+    {
+        let mut inner = registry.inner.lock().await;
+        assert!(!inner.pending_by_id.remove(&request_id).unwrap().dispatched);
+    }
+    assert_eq!(busy().await, Some(false));
+}

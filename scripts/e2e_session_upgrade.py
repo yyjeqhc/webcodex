@@ -36,7 +36,7 @@ def run(smoke, released, candidate):
 
     last_instance = None
 
-    def runner():
+    def runner(*, enabled=True):
         nonlocal last_instance
         smoke.runner = smoke.launch("webcodex-runner", ["--config", str(config)], smoke.env)
         deadline = time.monotonic() + 45
@@ -47,7 +47,7 @@ def run(smoke, released, candidate):
             for row in rows:
                 if (row["connected"] and row["runner_instance_id"] != last_instance
                         and row["project_inventory"]["sync_state"] == "complete"
-                        and any(p["id"] == "fixture" for p in row["projects"])):
+                        and (not enabled or any(p["id"] == "fixture" for p in row["projects"]))):
                     last_instance = row["runner_instance_id"]
                     return
             time.sleep(0.1)
@@ -82,6 +82,16 @@ def run(smoke, released, candidate):
         check(resume(selector, True)["session_id"] == session, "original selector failed")
     call("post_session_message", session_id=session, kind="decision", message="Keep fixture data")
     call("run_shell", project=project, session_id=session, command="exit 0", purpose="validation")
+    call("post_session_message", session_id=session, kind="todo", message="Review fixture", requires_ack=True)
+    old_shell = call("open_session_shell", project=project, session_id=session)["shell_id"]
+    call("run_job", project=project, session_id=session, command="echo old-job >> old-job.log")
+    marker = repo / "old-job.log"
+    deadline = time.monotonic() + 10
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    check(marker.read_text() == "old-job\n", "original Job did not execute once")
+    second_legacy = call("start_session", project=project)["session_id"]
+    messages = call("list_session_messages", session_id=ref)["messages"]
     summary = call("read_session_summary", session_id=ref)
     check(any(event.get("tool_name") == "run_shell" and event.get("kind") == "tool_call_finished"
               for event in summary["events"]), "missing v0.5.0 validation event")
@@ -111,23 +121,92 @@ def run(smoke, released, candidate):
             check(foreign.get("success") is False
                   and foreign["output"].get("error_kind") == "unknown_session_id"
                   and "events" not in foreign["output"], "foreign Session ID was not concealed")
-    check(call("list_session_messages", session_id=ref)["messages"][0]["message"]
-          == "Keep fixture data", "lost decision")
-    fresh = call("work_on_project", project=project, instruction="Continue the saved decision")["session_id"]
-    check(fresh != session, "handoff reused stale authority")
+    detail_path = "/api/runtime-console/workflow-session"
+    recover_path = detail_path + "-reauthorize"
+    selected = {"project": project, "session_id": session}
+    def preview(session_id=session):
+        detail = smoke.post(detail_path, selected | {"session_id": session_id}, owner)
+        check("legacy_registration" in detail, "missing operator preview for original Session")
+        return detail["legacy_registration"]
+
+    target = preview()
+    check(Path(target["path"]).samefile(repo) and target["registration_incarnation"] in migrated.decode(),
+          "preview does not identify the selected registration")
+    confirm = selected | {"expected_project_identity": target["project_identity"]}
+    def denied(payload, token, status=409):
+        result = smoke.post(recover_path, payload, token)
+        check(result.get("status") == status, f"expected recovery rejection {status}, got {result.get('status')}")
+    denied(confirm, other, 404)
+    denied(confirm, smoke.pat("owner", ["project:read", "session:collaborate"]), 403)
+    denied(confirm, smoke.pat("owner", ["runtime:read", "session:collaborate"]), 403)
+    denied(confirm | {"project": "agent:upgrade-runner:other"}, owner, 404)
+    denied(confirm | {"expected_project_identity": "0" * 64}, owner)
     stop(smoke.runner)
     smoke.runner = None
     check(call("read_session_summary", session_id=ref)["events"] == summary["events"],
           "offline history changed")
-    check(call("close_session", session_id=ref)["already_closed"] is False, "first close")
+    denied(confirm, owner)
     runner()
-    check(resume(fresh, True)["session_id"] == fresh, "Runner restart changed the binding")
+    # Revocation retains the same registration identity.
+    stop(smoke.runner)
+    smoke.runner = None
+    registration.write_bytes(migrated.replace(b"disabled = false", b"disabled = true") if b"disabled =" in migrated
+                             else b"disabled = true\n" + migrated)
+    runner(enabled=False)
+    denied(confirm, owner)
+    stop(smoke.runner)
+    smoke.runner = None
+    registration.write_bytes(migrated)
+    runner()
+    for changed in (True, False):
+        check(smoke.post(recover_path, confirm, owner).get("changed") is changed,
+              "owner confirmation failed or was not idempotent")
+    recovered = call("read_session_summary", session_id=ref)
+    for key in ("session_id", "session_ref", "created_at", "lifecycle"):
+        check(recovered[key] == summary[key], f"recovery changed {key}")
+    check([e for e in recovered["events"] if e["kind"] != "session_project_reauthorized"]
+          == summary["events"], "recovery changed or replayed historical events")
+    check(sum(e["kind"] == "session_project_reauthorized" for e in recovered["events"]) == 1,
+          "expected exactly one authorization event")
+    check(call("list_session_messages", session_id=ref)["messages"] == messages,
+          "recovery changed the Todo, ACK, or decision history")
+    lost = call("get_session_shell_status", False, project=project, session_id=ref, shell_id=old_shell)
+    check(lost.get("error_code") == "persistent_shell_not_found", "expired Shell became accessible")
+    for selector in (session, ref):
+        check(resume(selector, True)["session_id"] == session, "original selector failed")
+    call("run_shell", project=project, session_id=ref, command="exit 0", purpose="validation")
+    stop(smoke.runner)
+    smoke.runner = None
+    runner()
+    check(resume(ref, True)["session_id"] == session, "original Ref failed after Runner restart")
     restart(candidate)
+    for selector in (session, ref, current_ref):
+        check(resume(selector, True)["session_id"] == (current if selector == current_ref else session),
+              "durable binding changed across restart")
+    stop(smoke.runner)
+    smoke.runner = None
+    check(call("close_session", session_id=ref)["already_closed"] is False, "offline close")
+    restart(candidate)
+    denied(confirm, owner)
     check(call("close_session", session_id=ref)["already_closed"] is True, "durable close")
-    check(resume(fresh, True)["session_id"] == fresh, "new registration did not survive restart")
-    check(call("list_sessions", project=project)["total"] == 3, "duplicate Session")
     check(registration.read_bytes() == migrated, "registration changed across restart")
-    print("Candidate retained history, refused old execution, and resumed the new ID after restart.")
+    pinned = confirm | {"session_id": second_legacy}
+    check(preview(second_legacy) == target, "unexpected target before replacement")
+    stop(smoke.runner)
+    smoke.runner = None
+    registration.write_text(f'id = "fixture"\npath = {json.dumps(str(repo))}\n')
+    runner()
+    replacement = preview(second_legacy)
+    check(replacement["project_identity"] != target["project_identity"], "expected a replacement")
+    denied(pinned, owner)
+    resume(second_legacy, False)
+    denied(confirm | {"session_id": current, "expected_project_identity": replacement["project_identity"]}, owner)
+    resume(current_ref, False)
+    call("close_session", session_id=second_legacy)
+    denied(pinned | {"expected_project_identity": replacement["project_identity"]}, owner)
+    check(call("list_sessions", project=project)["total"] == 3, "duplicate Session")
+    check(marker.read_text() == "old-job\n", "old Job or request replayed")
+    print("Original ID/Ref resumed after owner consent, new validation, and both restarts.")
 
 
 if __name__ == "__main__":

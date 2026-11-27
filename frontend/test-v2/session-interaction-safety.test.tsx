@@ -252,9 +252,34 @@ describe("Session workspace render ownership", () => {
   });
 });
 
+describe("Legacy Session authorization", () => {
+  it("submits only the registration displayed in the owner's confirmation", async () => {
+    const post = vi.fn().mockResolvedValue({ ok: true, status: 200, data: { changed: true } });
+    const client = { authorityRevision: 1, post } as unknown as RuntimeV2Client;
+    const refresh = vi.fn();
+    const target = { project_identity: "a".repeat(64), registration_incarnation: "fixture-registration", path: "/original" };
+    const prompt = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    try {
+      render(<SessionInspector client={client} refresh={refresh} item={workItemFromRecent(recentSession())} location={location}
+        detail={{ ...sessionDetail(), legacy_registration: target }} detailAvailability="available" language="en" />);
+      fireEvent.click(screen.getByRole("tab", { name: "Evidence" }));
+      const button = screen.getByRole("button", { name: "Reauthorize legacy Session" });
+      fireEvent.click(button);
+      expect(post).not.toHaveBeenCalled();
+      fireEvent.click(button);
+      expect(prompt.mock.calls[1][0]).toContain([location.sessionId, location.projectId, target.path, target.registration_incarnation, target.project_identity].join("\n"));
+      expect(post).toHaveBeenCalledWith("workflow-session-reauthorize", {
+        project: location.projectId, session_id: location.sessionId, expected_project_identity: target.project_identity,
+      });
+      await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+      expect(screen.getByRole("status").textContent).toContain("Resume with its original ID or Ref");
+    } finally { prompt.mockRestore(); }
+  });
+});
+
 describe("Session inspector tabs", () => {
   it("links both panels and manages roving focus with arrows and Home/End", () => {
-    render(<SessionInspector item={workItemFromRecent(recentSession())} location={location} detail={null} detailAvailability="available" language="en" />);
+    render(<SessionInspector client={{} as RuntimeV2Client} refresh={vi.fn()} item={workItemFromRecent(recentSession())} location={location} detail={null} detailAvailability="available" language="en" />);
     const context = screen.getByRole("tab", { name: "Context" });
     const evidence = screen.getByRole("tab", { name: "Evidence" });
     for (const tab of [context, evidence]) {

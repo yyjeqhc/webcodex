@@ -177,7 +177,6 @@ pub use runtime::ToolRuntime;
 pub(crate) use runtime_compatibility::build_alignment_name;
 pub use runtime_info::RuntimeInfo;
 pub(crate) use runtime_info::{ListRunnersOptions, RunnerInventoryPage, RunnerInventoryRow};
-#[cfg(test)]
 pub(crate) use session_context::workflow_session_authority_fingerprint;
 #[cfg(test)]
 pub(crate) use sessions::{SessionCreateOptions, SessionGuards, SessionSummary};

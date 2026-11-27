@@ -1303,24 +1303,24 @@ impl SessionStore {
             let Some(persistence) = &inner.persistence else {
                 return Ok(());
             };
-            let pending = inner
-                .sessions
-                .dirty
-                .keys()
-                .filter_map(|id| inner.sessions.get(id).and_then(StoredSession::hot))
-                .fold(inner.sessions.dirty.len() as u64, |total, record| {
-                    total
+            let mut pending = inner.sessions.dirty.len() as u64;
+            persistence.last_persist_error.is_some()
+                || inner.sessions.dirty.keys().any(|id| {
+                    let Some(record) = inner.sessions.get(id).and_then(StoredSession::hot) else {
+                        return false;
+                    };
+                    // A subsequent history read used to reconcile a lost response
+                    // must cross the same commit barrier as the grant itself.
+                    let committed = record.durable.as_ref();
+                    pending = pending
                         .saturating_add(record.pending_events.len() as u64)
-                        .saturating_add(
-                            record.message_observation_revision.saturating_sub(
-                                record
-                                    .durable
-                                    .as_ref()
-                                    .map_or(0, |cold| cold.retained_message_revision),
-                            ),
-                        )
-                });
-            persistence.last_persist_error.is_some() || pending >= 512
+                        .saturating_add(record.message_observation_revision.saturating_sub(
+                            committed.map_or(0, |cold| cold.retained_message_revision),
+                        ));
+                    pending >= 512
+                        || (record.project_identity.is_some()
+                            && committed.is_some_and(|cold| cold.project_identity.is_none()))
+                })
         };
         if needs_flush {
             self.flush().await
@@ -1347,6 +1347,85 @@ impl SessionStore {
             .sessions
             .get(session_id)
             .map(|s| s.project_identity().map(str::to_string))
+    }
+
+    /// Called under the current Project registration fence. The caller awaits
+    /// flush before acknowledging the grant, including an idempotent retry.
+    pub fn stage_legacy_project_authorization(
+        &self,
+        session_id: &str,
+        project: &str,
+        owner: &str,
+        identity: &str,
+        execution_busy: bool,
+    ) -> Result<bool, crate::SessionReauthorizationError> {
+        use crate::SessionReauthorizationError as Error;
+        let mut inner = self.inner.lock().expect("Session store mutex poisoned");
+        let stored = inner
+            .sessions
+            .get(session_id)
+            .ok_or(Error::UnknownSession)?;
+        if stored.project() != Some(project) || stored.owner_authority_fingerprint() != owner {
+            return Err(Error::UnknownSession);
+        }
+        if !stored.lifecycle().allows_mutation() {
+            return Err(Error::Closed);
+        }
+        if !crate::persistence::is_lower_hex_sha256(identity) {
+            return Err(Error::DifferentRegistration);
+        }
+        // The mutation compares staged as well as committed state. A concurrent
+        // confirmation cannot replace an unacknowledged grant or add another event.
+        let existing = match stored {
+            StoredSession::Hot(record) => &record.project_identity,
+            StoredSession::Cold(record) => &record.project_identity,
+        };
+        if let Some(bound) = existing {
+            return if bound == identity {
+                Ok(false)
+            } else {
+                Err(Error::DifferentRegistration)
+            };
+        }
+        if !inner.prepare_record_mutation(session_id) {
+            return Err(Error::StorageUnavailable);
+        }
+        let record = inner
+            .sessions
+            .get(session_id)
+            .and_then(StoredSession::hot)
+            .expect("prepared legacy Session");
+        if execution_busy || crate::events::has_unresolved_execution(record) {
+            return Err(Error::UnresolvedExecution);
+        }
+        let limit = inner.recent_event_limit;
+        let record = inner
+            .sessions
+            .get_mut(session_id)
+            .and_then(StoredSession::hot_mut)
+            .expect("prepared legacy Session");
+        let now = now_ts();
+        let event = SessionEvent {
+            project: Some(project.to_owned()),
+            input_summary: Some(serde_json::json!({"project_identity": identity})),
+            status: Some("succeeded".into()),
+            ..session_event(
+                format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+                session_id.to_owned(),
+                "session_project_reauthorized".into(),
+                now,
+                "api".into(),
+                "reauthorize_workflow_session".into(),
+                "workflow_manage".into(),
+            )
+        };
+        record.project_identity = Some(identity.to_owned());
+        record.updated_at = now;
+        append_event(record, event, limit);
+        inner.touch(session_id);
+        drop(inner);
+        self.persist_after_mutation();
+        Ok(true)
     }
 
     pub fn session_target_authority(&self, session_id: &str) -> Option<(Option<String>, String)> {

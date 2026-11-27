@@ -116,6 +116,7 @@ export type SessionJobActivity = {
 };
 
 export type SessionDetail = SessionListItem & {
+  legacy_registration?: { path: string; registration_incarnation: string; project_identity: string };
   created_at: number;
   activity: SessionActivity[];
   activity_total: number;

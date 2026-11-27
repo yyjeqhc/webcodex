@@ -111,6 +111,66 @@ fn authentication_requires_exact_version_instance_origin_and_secret() {
     assert!(!config.accepts(&hello));
     assert!(native::run(&["chrome-extension://wrong/".into()]).is_err());
 }
+#[cfg(windows)]
+#[test]
+fn native_peer_waits_for_idle_accepted_socket_instead_of_spinning() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut client = TcpStream::connect(address).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    client
+        .set_write_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let (stream, _) = listener.accept().unwrap();
+    let probe = stream.try_clone().unwrap();
+    // Bound this observation even if peer setup regresses. Socket mode is
+    // shared by the clone, so this reads the real worker's configured behavior.
+    probe
+        .set_read_timeout(Some(Duration::from_millis(50)))
+        .unwrap();
+    let config = Rendezvous {
+        version: VERSION,
+        address,
+        instance: "idle-peer-fixture".into(),
+        token: "fixture-secret".into(),
+    };
+    let state = Arc::new(State {
+        registry: Mutex::new(Registry::default()),
+        stop: AtomicBool::new(false),
+        next_channel: AtomicU64::new(1),
+        queued: Arc::new(AtomicUsize::new(0)),
+    });
+    let worker_state = state.clone();
+    let hello = json!({
+        "version": VERSION,
+        "instance": config.instance,
+        "token": config.token,
+        "extension_id": EXTENSION_ID,
+        "parent_pid": std::process::id(),
+    });
+    let worker = std::thread::spawn(move || serve_peer(stream, &config, &worker_state));
+    protocol::write_frame(&mut client, &hello, 4096, false).unwrap();
+    let ready = protocol::read_blocking(&mut client, MAX_RESPONSE, false).unwrap();
+    assert_eq!(ready["kind"], "ready");
+
+    // The ready acknowledgement proves production setup finished. No further
+    // frame is sent; on Windows blocking waits time out, whereas inherited
+    // nonblocking mode immediately returns WouldBlock.
+    let idle = probe.peek(&mut [0]);
+    drop(probe);
+    drop(client);
+    state.stop.store(true, Ordering::Release);
+    worker.join().unwrap();
+    assert_eq!(
+        idle.unwrap_err().kind(),
+        io::ErrorKind::TimedOut,
+        "an idle native peer must wait for its socket timeout, not busy-poll",
+    );
+}
+
 #[test]
 fn unauthenticated_socket_cannot_offer_tabs_and_native_owner_is_exclusive() {
     let (_temp, root) = root();

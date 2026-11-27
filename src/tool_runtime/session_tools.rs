@@ -12,7 +12,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy)]
-enum SessionAccess<'a> {
+pub(super) enum SessionAccess<'a> {
     Record,
     BoundTarget,
     Live { requested_project: Option<&'a str> },
@@ -659,7 +659,7 @@ impl ToolRuntime {
         .await
     }
 
-    async fn authorize_session_access(
+    pub(super) async fn authorize_session_access(
         &self,
         session_id: &str,
         tool_name: &str,
@@ -675,13 +675,25 @@ impl ToolRuntime {
         #[cfg(not(test))]
         let fixture = false;
 
-        if let (Some(project), SessionAccess::Record) = (project.as_deref(), access) {
-            if !(fixture && auth.is_none())
-                && !self.session_project_history_visible(project, auth).await
-            {
-                return Err(super::session_context::unknown_session_result(session_id));
+        let resolved = match (project.as_deref(), access) {
+            _ if fixture && auth.is_none() => None,
+            (None, _) if !fixture && auth.is_some_and(AuthContext::is_open_anonymous) => {
+                return Err(session_authority_denied_result(session_id, tool_name));
             }
-        }
+            (None, _) => None,
+            (Some(project), SessionAccess::Record) => {
+                if !self.session_project_history_visible(project, auth).await {
+                    return Err(super::session_context::unknown_session_result(session_id));
+                }
+                None
+            }
+            (Some(project), _) => Some(
+                self.resolve_session_project(session_id, tool_name, project, project, auth)
+                    .await?,
+            ),
+        };
+        // Resolve the stored Project in the caller's partition first. A caller who
+        // cannot see it gets the usual unknown_project response for the exact ID.
         if !fixture
             && workflow_session_authority_fingerprint(auth).ok().as_deref() != Some(owner.as_str())
         {
@@ -691,62 +703,75 @@ impl ToolRuntime {
             .prepare_request()
             .await
             .map_err(|_| session_storage_unavailable_result())?;
-        let resolved = match (project.as_deref(), access) {
-            _ if fixture && auth.is_none() => None,
-            (None, _) if !fixture && auth.is_some_and(AuthContext::is_open_anonymous) => {
-                return Err(session_authority_denied_result(session_id, tool_name));
-            }
-            (None, _) | (_, SessionAccess::Record) => None,
-            (Some(project), live) => {
-                let bound = self.sessions.session_project_identity(session_id);
-                // A first binding must match the caller's selected Project too.
-                // Bound Sessions retain their normal per-tool mismatch diagnostics.
-                let input = match (&bound, live) {
-                    (
-                        Some(None),
-                        SessionAccess::Live {
-                            requested_project: Some(input),
-                        },
-                    ) if !fixture && !input.trim().is_empty() => input,
-                    _ => project,
-                };
-                let resolved = self
-                    .resolve_project_input_for_auth(input, auth)
-                    .await
-                    .map_err(super::ProjectResolverError::into_tool_result)?;
-                if resolved.resolved_id != project {
-                    return Err(session_project_mismatch_result(
+        let Some(resolved) = resolved else {
+            return Ok(None);
+        };
+        if !fixture {
+            let identity = resolved.require_live_workflow_project_identity()?;
+            match (self.sessions.session_project_identity(session_id), access) {
+                (Some(Some(stored)), _) if stored == identity => {}
+                (Some(None), SessionAccess::Live { requested_project }) => {
+                    if auth.is_some_and(|a| !a.has_scope(crate::auth::SCOPE_PROJECT_READ)) {
+                        return Err(session_authority_denied_result(session_id, tool_name));
+                    }
+                    if let Some(input) = requested_project
+                        .map(str::trim)
+                        .filter(|p| !p.is_empty() && *p != resolved.resolved_id)
+                    {
+                        self.resolve_session_project(
+                            session_id,
+                            tool_name,
+                            &resolved.resolved_id,
+                            input,
+                            auth,
+                        )
+                        .await?;
+                    }
+                    self.bind_legacy_session_project(
                         session_id,
                         tool_name,
-                        &SessionProjectMismatch {
-                            session_project: project.to_owned(),
-                            request_project: resolved.resolved_id,
-                        },
-                    ));
+                        &resolved.resolved_id,
+                        &owner,
+                        &identity,
+                        auth,
+                    )
+                    .await?;
                 }
-                if !fixture {
-                    let identity = resolved.require_live_workflow_project_identity()?;
-                    match (bound, live) {
-                        (Some(Some(stored)), _) if stored == identity => {}
-                        (Some(None), SessionAccess::Live { .. }) => {
-                            if auth.is_some_and(|a| !a.has_scope(crate::auth::SCOPE_PROJECT_READ)) {
-                                return Err(session_authority_denied_result(session_id, tool_name));
-                            }
-                            self.bind_legacy_session_project(
-                                session_id, tool_name, project, &owner, &identity, auth,
-                            )
-                            .await?;
-                        }
-                        _ => {
-                            return Err(session_project_identity_changed_result(
-                                session_id, tool_name,
-                            ))
-                        }
-                    }
+                (Some(None), SessionAccess::BoundTarget) => {
+                    return Err(session_authority_denied_result(session_id, tool_name))
                 }
-                Some(resolved)
+                _ => {
+                    return Err(session_project_identity_changed_result(
+                        session_id, tool_name,
+                    ))
+                }
             }
-        };
+        }
+        Ok(Some(resolved))
+    }
+
+    async fn resolve_session_project(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        stored_project: &str,
+        input: &str,
+        auth: Option<&AuthContext>,
+    ) -> Result<super::project_resolution::ResolvedProject, ToolResult> {
+        let resolved = self
+            .resolve_project_input_for_auth(input, auth)
+            .await
+            .map_err(super::ProjectResolverError::into_tool_result)?;
+        if resolved.resolved_id != stored_project {
+            return Err(session_project_mismatch_result(
+                session_id,
+                tool_name,
+                &SessionProjectMismatch {
+                    session_project: stored_project.to_owned(),
+                    request_project: resolved.resolved_id,
+                },
+            ));
+        }
         Ok(resolved)
     }
 

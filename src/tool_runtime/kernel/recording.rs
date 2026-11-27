@@ -6,6 +6,7 @@ use super::{
     ToolCallOutcome, ToolCallRequest, ToolTransport,
 };
 use crate::auth::AuthContext;
+use crate::tool_runtime::session_tools::SessionAccess;
 use crate::tool_runtime::sessions::{
     self, strip_tool_call_expectation_metadata, SessionAckObservation, ToolCallRecorderMetadata,
     ToolCallStart,
@@ -40,32 +41,34 @@ impl PreparedInvocation {
     ) -> Result<Self, ToolCallOutcome> {
         let mut concrete_arguments =
             strip_tool_call_expectation_metadata(request.arguments.clone());
+        let session_message_resolution = (context.transport == ToolTransport::Mcp)
+            .then(|| recorder_metadata.session_message_resolution.clone())
+            .flatten();
+        let tool_scope = check_runtime_tool_scope(context.auth, &request.tool_name);
+        let resolution_scope = check_session_message_resolution_scope(
+            context.auth,
+            session_message_resolution.is_some(),
+        );
+        // A denied call may still record its denial under the transport's audit
+        // policy. Neither end of that call can establish a first Project binding.
+        let scopes_allow_binding = tool_scope.is_ok() && resolution_scope.is_ok();
+        let recorder_access = |requested_project| {
+            if scopes_allow_binding {
+                SessionAccess::Live { requested_project }
+            } else {
+                SessionAccess::BoundTarget
+            }
+        };
         // A wrapper recording_session_id is authority-bearing internal context,
         // not a ledger address. Authorize it before any lifecycle/guard lookup,
         // project mismatch computation, provenance derivation, or ledger write.
         if let Some(recorder_session_id) = context.session_id {
-            // Scope-denial audits on already-bound recorders keep their existing
-            // ordering. A denied request cannot choose a legacy recorder's first binding.
-            if runtime
-                .sessions
-                .session_project_identity(recorder_session_id)
-                == Some(None)
-            {
-                check_runtime_tool_scope(context.auth, &request.tool_name)
-                    .and_then(|_| {
-                        check_session_message_resolution_scope(
-                            context.auth,
-                            recorder_metadata.session_message_resolution.is_some(),
-                        )
-                    })
-                    .map_err(ToolCallOutcome::rejected)?;
-            }
             if let Err(mut result) = runtime
-                .authorize_session_target(
+                .authorize_session_access(
                     recorder_session_id,
                     &request.tool_name,
-                    concrete_arguments.get("project").and_then(Value::as_str),
                     context.auth,
+                    recorder_access(request.arguments.get("project").and_then(Value::as_str)),
                 )
                 .await
             {
@@ -95,9 +98,6 @@ impl PreparedInvocation {
                 .expect("authorized recording Session must exist");
             recorder_metadata.recording_session_authorized = true;
         }
-        let session_message_resolution = (context.transport == ToolTransport::Mcp)
-            .then(|| recorder_metadata.session_message_resolution.clone())
-            .flatten();
         if session_message_resolution.is_some() && context.session_id.is_none() {
             return Err(ToolCallOutcome::rejected(
                 ToolCallErrorStatus::InvalidArguments {
@@ -105,10 +105,7 @@ impl PreparedInvocation {
                 },
             ));
         }
-        if let Err(error_status) = check_session_message_resolution_scope(
-            context.auth,
-            session_message_resolution.is_some(),
-        ) {
+        if let Err(error_status) = resolution_scope {
             return Err(ToolCallOutcome::rejected(error_status));
         }
         if let Err(error) =
@@ -135,21 +132,21 @@ impl PreparedInvocation {
                 // be independently authorized before comparing scope. This makes
                 // None/None safe while rejecting either mixed scoped/unscoped
                 // direction without any cross-project escape.
+                let recorder_project = runtime
+                    .sessions
+                    .session_project(recorder_session_id)
+                    .expect("authorized recording Session must exist");
                 if let Err(result) = runtime
-                    .authorize_session_target(
+                    .authorize_session_access(
                         target_session_id,
                         &request.tool_name,
-                        None,
                         context.auth,
+                        recorder_access(recorder_project.as_deref()),
                     )
                     .await
                 {
                     return Err(ToolCallOutcome::rejected_result(result));
                 }
-                let recorder_project = runtime
-                    .sessions
-                    .session_project(recorder_session_id)
-                    .expect("authorized recording Session must exist");
                 let target_project = runtime
                     .sessions
                     .session_project(target_session_id)
@@ -233,7 +230,7 @@ impl PreparedInvocation {
         // Session lifecycle/guards are enforced later from ToolCall::session_id().
 
         if !context.record_oauth_scope_denials {
-            if let Err(error_status) = check_runtime_tool_scope(context.auth, &request.tool_name) {
+            if let Err(error_status) = tool_scope {
                 return Err(ToolCallOutcome::rejected(error_status));
             }
         }
@@ -263,7 +260,7 @@ impl PreparedInvocation {
         );
 
         if context.record_oauth_scope_denials {
-            if let Err(error_status) = check_runtime_tool_scope(context.auth, &request.tool_name) {
+            if let Err(error_status) = tool_scope {
                 let error_message = match &error_status {
                     ToolCallErrorStatus::InsufficientScope { description, .. } => {
                         description.as_str()

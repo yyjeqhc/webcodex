@@ -110,6 +110,56 @@ cargo test --locked -p webcodex --lib regular_tunnel_real_process_parent_eof_dur
 这些测试覆盖原生通知与清理边界，不代表实际系统重启验收；真实 Windows 重启时
 仍须单独验证已安装的自动启动行为。
 
+## Windows 服务状态观察
+
+Windows 用户服务的周期性状态读取使用 Task Scheduler COM 和只读进程句柄，
+不会启动 PowerShell、查询 WMI，也不会在原生读取失败后回退到 shell。
+一次本地快照通过同一个 scheduler connection 批量查询 Server、Runner 和 Tunnel；
+完全相同的已保存 service specification 复用同一结果。嵌入式 Tunnel 继续共享其
+Server owner。每批最多 18 个 probe，即 Server、Runner 和 16 个 profile。
+
+Desktop 的 UI 周期观察和托盘观察会合并正在执行的读取。对于持久环境，只要经过
+认证的 HTTP heartbeat 未变化，已发布的原生观察结果可以在三秒内复用；heartbeat
+不会延长这段有效期。heartbeat 变化或失败会触发新的原生读取。显式刷新、操作准入
+或完成，以及 environment / operation generation 变化，都会使展示证据失效。
+Bootstrap、诊断和服务控制保留实时读取路径。三秒是缓存有效期，并不承诺所有外部
+计划任务变化都在三秒内被发现；发现延迟还取决于下一次观察调度和原生查询完成时间。
+
+缓存仅用于展示。启动、停止、重启、安装和卸载继续使用现有控制适配器，独立验证
+已保存任务及实际运行进程的身份。原生观察保留任务元数据、账户 / SID、action 与
+参数、工作目录、trigger 与 settings、instance GUID、进程创建时间，以及直接
+host / child 归属检查。不能确认的 PID 仍保持未确认。命令行读取动态解析
+`NtQueryInformationProcess`；information class 不可用或不兼容时，不会据此授权
+操作进程，也不会触发 PowerShell 回退。
+
+Task Scheduler RPC 可能阻塞。读取器固定使用一个 worker，最多排队八批，每个
+调用者有 55 秒 deadline；过期的排队请求和迟到结果会被丢弃。阻塞 worker 不会被
+新线程替换，此时观察保持不可用，直至所属进程重启。失败不能被解释为无权访问的
+任务不存在，或被解释为该任务属于 WebCodex。
+
+除前面的 frontend 检查外，Windows 聚焦验证命令为：
+Desktop 测试构造 `AppState` 时仍可能自动读取默认 Environment；只给 Desktop state
+传入临时目录并不能隔离它。下面在独立子进程中把 `APPDATA` / `LOCALAPPDATA` 指向
+新的测试目录，不改当前 shell 或系统的环境变量，也不读取已安装的 Environment。
+
+```powershell
+cargo test --locked --profile dogfood -p webcodex-environment --lib service::windows_user
+cargo test --locked --profile dogfood -p webcodex-environment --lib local_status::tests
+powershell -NoLogo -NoProfile -NonInteractive -Command {
+  $testProfile = Join-Path $env:TEMP ('webcodex-observer-' + [guid]::NewGuid())
+  $env:APPDATA = Join-Path $testProfile 'Roaming'
+  $env:LOCALAPPDATA = Join-Path $testProfile 'Local'
+  New-Item -ItemType Directory -Path $env:APPDATA, $env:LOCALAPPDATA | Out-Null
+  cargo test --locked --profile dogfood --manifest-path apps/desktop/src-tauri/Cargo.toml --lib runtime_observation
+  exit $LASTEXITCODE
+}
+if ($LASTEXITCODE -ne 0) { throw 'Desktop observation tests failed' }
+```
+
+Dogfood 时，在可比的空闲时间段对照 PowerShell 启动次数和事件日志记录增长，
+再验证显式刷新和真实服务状态变化。进程 I/O 写入计数还包含非磁盘 I/O，不能直接
+视为 SSD 的实际写入量。这项改动不会关闭 Windows Event Log、审计或 PowerShell 日志。
+
 ## 构建本地 WebCodex runtime
 
 Desktop debug build 默认会到当前仓库的 `target/dogfood` 找三个 binary。因此要从同一个

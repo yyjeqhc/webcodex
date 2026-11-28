@@ -329,6 +329,14 @@ pub async fn refresh_runtime_status(
 }
 
 #[tauri::command]
+pub async fn observe_runtime_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.observe_runtime_status().await)
+}
+
+#[tauri::command]
 pub async fn observe_chatgpt_activity(
     app: AppHandle,
     state: State<'_, AppState>,

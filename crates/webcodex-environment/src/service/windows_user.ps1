@@ -348,82 +348,73 @@ public static class WebCodexTaskProcessWait {
     # Leave headroom inside the Rust adapter's 55-second command deadline.
     $operationDeadline = [DateTime]::UtcNow.AddSeconds(45)
     $task = Read-Task
-    if ($inputData.operation -notin @('inspect', 'running_pid')) {
-        if ($null -ne $task -and !(Owned-Task $task)) { throw 'foreign task' }
-        switch ($inputData.operation) {
-            'install' {
-                if ($null -eq $task) {
-                    $definition = $scheduler.NewTask(0)
-                    $definition.RegistrationInfo.Description = $inputData.description
-                    $definition.Principal.UserId = $inputData.sid
-                    $definition.Principal.LogonType = 3
-                    $definition.Principal.RunLevel = 0
-                    $trigger = $definition.Triggers.Create(9)
-                    $trigger.UserId = $inputData.sid
-                    $trigger.Enabled = $true
-                    $action = $definition.Actions.Create(0)
-                    if ($inputData.host) {
-                        $action.Path = $inputData.host
-                        $action.Arguments = $inputData.host_arguments
-                    } else {
-                        $action.Path = $inputData.program
-                        $action.Arguments = $inputData.arguments
-                    }
-                    $action.WorkingDirectory = $inputData.directory
-                    $definition.Settings.MultipleInstances = 2
-                    $definition.Settings.ExecutionTimeLimit = 'PT0S'
-                    $definition.Settings.AllowHardTerminate = $true
-                    $definition.Settings.DisallowStartIfOnBatteries = $false
-                    $definition.Settings.StopIfGoingOnBatteries = $false
-                    $definition.Settings.StartWhenAvailable = $true
-                    $definition.Settings.RestartCount = 3
-                    $definition.Settings.RestartInterval = 'PT1M'
-                    $definition.Settings.Enabled = $true
-                    $null = $folder.RegisterTaskDefinition($inputData.name, $definition, 2, $inputData.sid, $null, 3, $null)
+    if ($null -ne $task -and !(Owned-Task $task)) { throw 'foreign task' }
+    switch ($inputData.operation) {
+        'install' {
+            if ($null -eq $task) {
+                $definition = $scheduler.NewTask(0)
+                $definition.RegistrationInfo.Description = $inputData.description
+                $definition.Principal.UserId = $inputData.sid
+                $definition.Principal.LogonType = 3
+                $definition.Principal.RunLevel = 0
+                $trigger = $definition.Triggers.Create(9)
+                $trigger.UserId = $inputData.sid
+                $trigger.Enabled = $true
+                $action = $definition.Actions.Create(0)
+                if ($inputData.host) {
+                    $action.Path = $inputData.host
+                    $action.Arguments = $inputData.host_arguments
                 } else {
-                    if ($task.State -in @(1,3)) { $task = Use-ConsoleFreeAction $task }
-                    if (!$task.Enabled) { $task.Enabled = $true }
+                    $action.Path = $inputData.program
+                    $action.Arguments = $inputData.arguments
                 }
+                $action.WorkingDirectory = $inputData.directory
+                $definition.Settings.MultipleInstances = 2
+                $definition.Settings.ExecutionTimeLimit = 'PT0S'
+                $definition.Settings.AllowHardTerminate = $true
+                $definition.Settings.DisallowStartIfOnBatteries = $false
+                $definition.Settings.StopIfGoingOnBatteries = $false
+                $definition.Settings.StartWhenAvailable = $true
+                $definition.Settings.RestartCount = 3
+                $definition.Settings.RestartInterval = 'PT1M'
+                $definition.Settings.Enabled = $true
+                $null = $folder.RegisterTaskDefinition($inputData.name, $definition, 2, $inputData.sid, $null, 3, $null)
+            } else {
+                if ($task.State -in @(1,3)) { $task = Use-ConsoleFreeAction $task }
+                if (!$task.Enabled) { $task.Enabled = $true }
             }
-            'start' {
-                if ($null -eq $task) { throw 'missing task' }
-                if (!$task.Enabled) { throw 'disabled task' }
-                if ($task.State -eq 3) {
-                    $task = Use-ConsoleFreeAction $task
-                    $task = Start-OwnedTask $task $operationDeadline $null
-                } elseif ($task.State -notin @(2,4)) { throw 'start state unknown' }
-            }
-            'stop' {
-                if ($null -eq $task) { throw 'missing task' }
-                $task = Stop-OwnedTask $task $operationDeadline
-            }
-            'restart' {
-                if ($null -eq $task -or !$task.Enabled) { throw 'missing or disabled task' }
-                if ($task.State -notin @(2,3,4)) { throw 'restart state unknown' }
-                $task = Restart-OwnedTask $task $operationDeadline
-            }
-            'uninstall' {
-                if ($null -ne $task) {
-                    if ($task.State -notin @(1,3)) { throw 'stop required' }
-                    $folder.DeleteTask($inputData.name, 0)
-                }
-            }
-            default { throw 'unsupported operation' }
         }
-        $task = Read-Task
+        'start' {
+            if ($null -eq $task) { throw 'missing task' }
+            if (!$task.Enabled) { throw 'disabled task' }
+            if ($task.State -eq 3) {
+                $task = Use-ConsoleFreeAction $task
+                $task = Start-OwnedTask $task $operationDeadline $null
+            } elseif ($task.State -notin @(2,4)) { throw 'start state unknown' }
+        }
+        'stop' {
+            if ($null -eq $task) { throw 'missing task' }
+            $task = Stop-OwnedTask $task $operationDeadline
+        }
+        'restart' {
+            if ($null -eq $task -or !$task.Enabled) { throw 'missing or disabled task' }
+            if ($task.State -notin @(2,3,4)) { throw 'restart state unknown' }
+            $task = Restart-OwnedTask $task $operationDeadline
+        }
+        'uninstall' {
+            if ($null -ne $task) {
+                if ($task.State -notin @(1,3)) { throw 'stop required' }
+                $folder.DeleteTask($inputData.name, 0)
+            }
+        }
+        default { throw 'unsupported operation' }
     }
+    $task = Read-Task
     if ($null -eq $task) { @{ exists=$false } | ConvertTo-Json -Compress }
     else {
         $observation = @{ exists=$true; owned=(Owned-Task $task); enabled=[bool]$task.Enabled; state=[int]$task.State }
         if ($observation.owned -and $task.State -in @(1,3)) {
             $observation.last_task_result = [int64]$task.LastTaskResult
-        }
-        if ($inputData.operation -eq 'running_pid') {
-            $process = Read-ActionProcess $task
-            if ($null -ne $process) {
-                $observation.process_id = $process.process_id
-                $observation.instance_guid = $process.instance_guid
-            }
         }
         $observation | ConvertTo-Json -Compress
     }

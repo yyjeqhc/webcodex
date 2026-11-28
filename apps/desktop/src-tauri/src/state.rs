@@ -22,6 +22,7 @@ mod projectless_tests;
 #[cfg(test)]
 mod reconfiguration_tests;
 mod runner_capability_grant;
+mod runtime_observation;
 mod runtime_shell;
 #[cfg(test)]
 mod shutdown_tests;
@@ -104,6 +105,7 @@ pub struct AppState {
     activity: ActivityLog,
     operations: OperationController,
     refresh_lock: tokio::sync::Mutex<()>,
+    runtime_observation: runtime_observation::RuntimeObservationCache,
     runner_settings_reader: Arc<Mutex<()>>,
     shutdown_signal: CancellationSignal,
     shutdown_started: AtomicBool,

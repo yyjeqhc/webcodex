@@ -33,6 +33,7 @@ impl AppState {
             connections,
             operations: OperationController::new(activity.clone()),
             refresh_lock: tokio::sync::Mutex::new(()),
+            runtime_observation: runtime_observation::RuntimeObservationCache::default(),
             runner_settings_reader: Arc::new(Mutex::new(())),
             activity,
             shutdown_signal: CancellationSignal::new(),
@@ -153,35 +154,11 @@ impl AppState {
         })
     }
 
-    pub async fn refresh_runtime_status(&self) -> DesktopResult<DesktopStateSnapshot> {
-        if self.shutdown_signal.is_cancelled() {
-            return Err(cancelled_error());
-        }
-        if let Some(current) = self.operations.observe()? {
-            return Err(crate::operation::busy_error(&current));
-        }
-        if self.get_state().configuration_issue.is_some() {
-            return Err(DesktopError::new(
-                "configuration_migration_failed",
-                "Configuration could not be migrated",
-                "Open Diagnostics or explicitly restore the previous known-good configuration.",
-            ));
-        }
-
-        let before_generation = self.get_state().state_generation;
-        let _refresh_guard = self.refresh_lock.lock().await;
-        if self.shutdown_signal.is_cancelled() {
-            return Err(cancelled_error());
-        }
-        if let Some(current) = self.operations.observe()? {
-            return Err(crate::operation::busy_error(&current));
-        }
-        // Coalesce overlapping background refreshes: if another refresh already
-        // published a fresher snapshot while we waited, return it directly.
-        if self.get_state().state_generation != before_generation {
-            return Ok(self.get_state());
-        }
-
+    async fn refresh_runtime_status_uncached(
+        &self,
+        before_generation: u64,
+    ) -> DesktopResult<runtime_observation::RefreshOutcome> {
+        use runtime_observation::RefreshOutcome;
         let cancellation =
             CancellationContext::new(CancellationSignal::new(), self.shutdown_signal.clone());
         let start_op_generation = self.operations.generation();
@@ -233,12 +210,12 @@ impl AppState {
             RefreshPlan::QuickShare | RefreshPlan::Unconfigured => {
                 let mut slot = self.core.lock().await;
                 let Some(core) = slot.as_mut() else {
-                    return Ok(self.get_state());
+                    return Ok(RefreshOutcome::superseded(self.get_state()));
                 };
                 if self.operations.current().is_some()
                     || self.operations.generation() != start_op_generation
                 {
-                    return Ok(self.get_state());
+                    return Ok(RefreshOutcome::superseded(self.get_state()));
                 }
                 core.refresh_runtime_status(&cancellation).await?;
                 if operation_completion::reconcile_runtime_errors_after_observation(
@@ -246,7 +223,7 @@ impl AppState {
                 ) {
                     core.publish_snapshot();
                 }
-                Ok(self.get_state())
+                Ok(RefreshOutcome::applied(self.get_state(), None))
             }
             RefreshPlan::Persistent { environment_id } => {
                 let store = environment::store()?;
@@ -260,10 +237,11 @@ impl AppState {
                         Some(self.activity.latest_sequence()),
                     )
                 })?;
+                let heartbeat = runtime_observation::RuntimeHeartbeat::from(&observed.observation);
                 cancellation.check()?;
                 let mut slot = self.core.lock().await;
                 let Some(core) = slot.as_mut() else {
-                    return Ok(self.get_state());
+                    return Ok(RefreshOutcome::superseded(self.get_state()));
                 };
                 if self.operations.current().is_some()
                     || self.operations.generation() != start_op_generation
@@ -271,7 +249,7 @@ impl AppState {
                     || core.config.persistent_environment.as_deref()
                         != Some(environment_id.as_str())
                 {
-                    return Ok(self.get_state());
+                    return Ok(RefreshOutcome::superseded(self.get_state()));
                 }
                 core.project_environment_result(&store, observed).await?;
                 if operation_completion::reconcile_runtime_errors_after_observation(
@@ -279,7 +257,7 @@ impl AppState {
                 ) {
                     core.publish_snapshot();
                 }
-                Ok(self.get_state())
+                Ok(RefreshOutcome::applied(self.get_state(), Some(heartbeat)))
             }
             RefreshPlan::NonPersistent {
                 mut adapter,
@@ -365,14 +343,14 @@ impl AppState {
 
                 let mut slot = self.core.lock().await;
                 let Some(core) = slot.as_mut() else {
-                    return Ok(self.get_state());
+                    return Ok(RefreshOutcome::superseded(self.get_state()));
                 };
                 if self.operations.current().is_some()
                     || self.operations.generation() != start_op_generation
                     || core.config.persistent_environment.is_some()
                     || runner_identity_from_config(&core.config).as_ref() != Some(&identity)
                 {
-                    return Ok(self.get_state());
+                    return Ok(RefreshOutcome::superseded(self.get_state()));
                 }
                 if let Some(binaries) = resolved_binaries {
                     core.snapshot.binaries = Some(binaries.info());
@@ -395,7 +373,7 @@ impl AppState {
                     &mut core.snapshot,
                 );
                 core.publish_snapshot();
-                Ok(self.get_state())
+                Ok(RefreshOutcome::applied(self.get_state(), None))
             }
         }
     }
@@ -709,6 +687,7 @@ impl AppState {
             ));
         }
         let mut operation = self.operations.admit(kind, cancellable)?;
+        self.runtime_observation.invalidate();
         let cancellation = operation.cancellation_context(self.shutdown_signal.clone());
         // Both waits precede dispatch. Cancelling either wait cannot lose the
         // core, leave a queued write, or skip cleanup of an external effect.
@@ -774,6 +753,7 @@ impl AppState {
             core.publish_snapshot();
         }
         *self.core.lock().await = Some(core);
+        self.runtime_observation.invalidate();
         operation.finish(&result);
         match result {
             Ok(_) => Ok(self.get_state()),

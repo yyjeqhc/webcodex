@@ -88,6 +88,7 @@ export const desktopApi = {
   setLaunchAtLogin: (enabled: boolean) =>
     invoke<boolean>("set_launch_at_login", { request: { enabled } }),
   refresh: () => invoke<DesktopState>("refresh_runtime_status"),
+  observeRuntimeStatus: () => invoke<DesktopState>("observe_runtime_status"),
   observeChatgptActivity: () => invoke<DesktopState>("observe_chatgpt_activity"),
   resumeSavedRuntime: () => invoke<DesktopState>("resume_saved_runtime"),
   resumeSavedConnections: () => invoke<DesktopState>("resume_saved_connections"),

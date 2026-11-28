@@ -142,6 +142,7 @@ fn desktop_builder() -> tauri::Builder<tauri::Wry> {
             commands::get_launch_at_login,
             commands::set_launch_at_login,
             commands::refresh_runtime_status,
+            commands::observe_runtime_status,
             commands::observe_chatgpt_activity,
             commands::resume_saved_runtime,
             commands::resume_saved_connections,

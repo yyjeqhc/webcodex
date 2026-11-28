@@ -19,11 +19,11 @@ export function desktopIdentity(state: DesktopState): string {
   ]);
 }
 
-// Refresh probes the runtime. The published state remains available while a
-// mutation owns it and carries the exact operation the user can observe or stop.
-export async function refreshOrObserveDesktopState(): Promise<DesktopState | null> {
+// Explicit refreshes always probe the runtime; periodic observation may share
+// the native display cache. Published state stays readable during a mutation.
+export async function refreshOrObserveDesktopState(mode: "refresh" | "observe" = "refresh"): Promise<DesktopState | null> {
   try {
-    return await desktopApi.refresh();
+    return await (mode === "observe" ? desktopApi.observeRuntimeStatus() : desktopApi.refresh());
   } catch (value) {
     const { code } = normalizeDesktopError(value);
     if (code !== "desktop_operation_busy" && code !== "desktop_operation_unsettled") throw value;

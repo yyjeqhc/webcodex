@@ -125,7 +125,7 @@ impl ToolRuntime {
                 login,
             } => {
                 self.run_shell_with_contract_for_resource(
-                    target,
+                    std::future::ready(Ok(target)),
                     command,
                     timeout_secs,
                     sync_wait_secs,

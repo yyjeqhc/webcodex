@@ -161,6 +161,9 @@ def run(smoke, distro, released):
 
     idle_window()
     local_task()
+    shell = call("run_shell", project=local_id, command="echo verified-shell", timeout_secs=10, sync_wait_secs=10)
+    check("verified-shell" in shell.get("stdout_tail", ""), "Windows shell did not execute")
+    stopped()
     print("PASS: cold Project Ref history, idle inventory and native Windows task", flush=True)
     task(remote_id, "tmp")
     check(name in names("--running"), "explicit WSL task did not start its distribution")

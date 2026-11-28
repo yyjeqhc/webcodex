@@ -338,12 +338,8 @@ impl ToolRuntime {
         purpose: Option<ExecutionPurpose>,
         shell: Option<ExecutionShell>,
     ) -> ToolResult {
-        let project = match self.resolve_project_input(&project).await {
-            Ok(project) => project,
-            Err(error) => return super::process::execution_project_rejected(error),
-        };
         self.run_shell_with_contract_for_resource(
-            project,
+            self.resolve_project_input(&project),
             command,
             timeout_secs,
             sync_wait_secs,
@@ -361,7 +357,8 @@ impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_shell_with_contract_for_resource(
         &self,
-        target: ResolvedProject,
+        target: impl std::future::Future<Output = Result<ResolvedProject, super::ProjectResolverError>>
+            + Send,
         command: String,
         timeout_secs: Option<u64>,
         sync_wait_secs: Option<u64>,
@@ -373,8 +370,6 @@ impl ToolRuntime {
         session_id: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        let project = target.resolved_id;
-        let proj = target.config;
         if login && (shell != Some(ExecutionShell::Bash) || ssh_resource.is_some()) {
             return process_tool_failure_result(
                 "run_shell login=true requires local shell=bash".to_string(),
@@ -430,6 +425,12 @@ impl ToolRuntime {
             );
         }
 
+        let target = match target.await {
+            Ok(target) => target,
+            Err(error) => return super::process::execution_project_rejected(error),
+        };
+        let project = target.resolved_id;
+        let proj = target.config;
         let declared_purpose = purpose.unwrap_or_default();
         let command_summary = command_preview(&command);
         let client_id = proj.client_id.clone();

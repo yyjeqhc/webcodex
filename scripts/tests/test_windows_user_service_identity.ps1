@@ -159,7 +159,7 @@ if ($NativeRoundtrip) {
         operation='install'; name=$name; sid=$identity.User.Value; description=$name
         program=(Join-Path $env:TEMP "$name\missing.exe"); arguments='--identity-fixture'; directory=$env:TEMP
     }
-    function Invoke-ServiceScript($operation) {
+    function Invoke-ServiceScript($operation, [switch]$ExpectFailure) {
         $request.operation=$operation
         $start=New-Object Diagnostics.ProcessStartInfo
         $start.FileName=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -180,15 +180,20 @@ if ($NativeRoundtrip) {
                 $null=$process.WaitForExit(5000)
                 throw 'native service fixture timed out'
             }
-            if ($process.ExitCode -ne 0) { throw "native service fixture failed: $operation" }
-            return ($stdout.GetAwaiter().GetResult() | ConvertFrom-Json)
+            $result=$stdout.GetAwaiter().GetResult() | ConvertFrom-Json
+            if ($ExpectFailure) {
+                if ($process.ExitCode -eq 0 -or $result.error -cne 'native_task_operation_unconfirmed') {
+                    throw 'foreign mutation was not rejected'
+                }
+            } elseif ($process.ExitCode -ne 0) { throw "native service fixture failed: $operation" }
+            return $result
         } finally { $process.Dispose() }
     }
     $scheduler=New-Object -ComObject 'Schedule.Service'
     $scheduler.Connect()
     $folder=$scheduler.GetFolder('\')
     try {
-        foreach ($operation in @('install', 'inspect')) {
+        foreach ($operation in @('install', 'install')) {
             $observed=Invoke-ServiceScript $operation
             if ($observed.exists -ne $true -or $observed.owned -ne $true) { throw "registered task was not owned: $operation" }
         }
@@ -203,8 +208,7 @@ if ($NativeRoundtrip) {
         if (!$observed.owned) { throw 'repeated install changed task ownership' }
         # A changed expected marker must not adopt the registered native task.
         $request.description='foreign'
-        $observed=Invoke-ServiceScript 'inspect'
-        if ($observed.exists -ne $true -or $observed.owned -ne $false) { throw 'native foreign task was accepted' }
+        $null=Invoke-ServiceScript 'install' -ExpectFailure
         $request.description=$name
         $observed=Invoke-ServiceScript 'uninstall'
         if ($observed.exists -ne $false) { throw 'native task uninstall was not confirmed' }
@@ -220,5 +224,5 @@ if ($NativeRoundtrip) {
             $folder.DeleteTask($name, 0)
         }
     }
-    'PASS: native user Task Scheduler install/inspect/foreign/uninstall roundtrip'
+    'PASS: native user Task Scheduler install/idempotence/foreign/uninstall roundtrip'
 }

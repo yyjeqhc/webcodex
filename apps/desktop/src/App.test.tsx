@@ -21,6 +21,7 @@ const api = vi.hoisted(() => ({
   updateTunnelConfig: vi.fn(),
   openPowerShellInstallGuide: vi.fn(),
   refresh: vi.fn(),
+  observeRuntimeStatus: vi.fn(),
   observeChatgptActivity: vi.fn(),
   resumeSavedRuntime: vi.fn(),
   resumeSavedConnections: vi.fn(),
@@ -286,6 +287,7 @@ beforeEach(() => {
     api.configureLocal.mockResolvedValue(projectlessReadyState);
     api.inspectLocalMigration.mockResolvedValue({ fingerprint: "original", resuming: false });
     api.observeChatgptActivity.mockResolvedValue(readyState);
+    api.observeRuntimeStatus.mockResolvedValue(readyState);
     api.updateTunnelProxy.mockResolvedValue(readyState);
     api.startRegularTunnel.mockResolvedValue(readyState);
     api.stopRegularTunnel.mockResolvedValue(readyState);
@@ -410,7 +412,8 @@ beforeEach(() => {
     const runtime = deferred<DesktopState>();
     let refreshing = false;
     let inventoryUpdated = false;
-    api.refresh.mockImplementation(() => { refreshing = true; return runtime.promise; });
+    const readRuntime = trigger === "automatic" ? api.observeRuntimeStatus : api.refresh;
+    readRuntime.mockImplementation(() => { refreshing = true; return runtime.promise; });
     const normal = workspace.invoke.getMockImplementation()!;
     workspace.invoke.mockImplementation((command, args) => {
       if (refreshing) return Promise.reject(new Error("workspace_unavailable"));
@@ -430,6 +433,9 @@ beforeEach(() => {
       const before = workspace.invoke.mock.calls.length;
       if (trigger === "manual") fireEvent.click(screen.getByRole("button", { name: "刷新" }));
       else await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+      expect(readRuntime).toHaveBeenCalledTimes(1);
+      if (trigger === "automatic") expect(api.refresh).toHaveBeenCalledTimes(1);
+      else expect(api.observeRuntimeStatus).not.toHaveBeenCalled();
       await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
       expect(workspace.invoke.mock.calls.length).toBe(before);
       expect(screen.getByRole("button", {name:/^项目\s*1$/})).toBeInTheDocument();
@@ -459,7 +465,7 @@ beforeEach(() => {
     const selected = { ...readyState, persistent_environment: "fixture-environment" };
     api.getState.mockResolvedValue(selected);
     api.refresh.mockResolvedValueOnce(selected);
-    api.refresh.mockImplementation(() => new Promise(resolve => {
+    api.observeRuntimeStatus.mockImplementation(() => new Promise(resolve => {
       window.setTimeout(() => resolve(selected), 100);
     }));
     vi.useFakeTimers();
@@ -470,7 +476,8 @@ beforeEach(() => {
       const count = () => workspace.invoke.mock.calls.filter(([, args]) => args.request.kind === "overview").length;
       expect(count()).toBe(1);
       await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
-      expect(api.refresh.mock.calls.length).toBeGreaterThan(2);
+      expect(api.observeRuntimeStatus.mock.calls.length).toBeGreaterThan(2);
+      expect(api.refresh).toHaveBeenCalledTimes(1);
       expect(count()).toBe(1);
       await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
       expect(count()).toBeGreaterThanOrEqual(2);
@@ -486,7 +493,8 @@ beforeEach(() => {
     const running = { ...idle, current_operation: localSetupOperationState().current_operation };
     api.getState.mockResolvedValueOnce(idle).mockResolvedValueOnce(running).mockResolvedValue(idle);
     if (trigger === "poll") api.refresh.mockResolvedValueOnce(idle);
-    api.refresh.mockRejectedValueOnce({ code: "desktop_operation_busy", message: "Busy", next_action: "Wait" });
+    const readRuntime = trigger === "poll" ? api.observeRuntimeStatus : api.refresh;
+    readRuntime.mockRejectedValueOnce({ code: "desktop_operation_busy", message: "Busy", next_action: "Wait" });
     const view = renderApp();
     try {
       await act(async () => {});

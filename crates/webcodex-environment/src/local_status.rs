@@ -39,50 +39,63 @@ struct ServiceProbe {
 
 type ServiceProbeResult = SetupResultValue<(ServiceStatus, Option<u32>)>;
 
-fn inspect_probe(probe: ServiceProbe) -> ServiceProbeResult {
-    let spec = probe.spec?;
-    if probe.with_pid {
-        ServiceManager::inspect_with_pid(&spec).map_err(crate::native::service_error)
-    } else {
-        ServiceManager::inspect(&spec)
-            .map(|status| (status, None))
-            .map_err(crate::native::service_error)
-    }
+fn inspect_probes(probes: Vec<ServiceProbe>) -> Vec<ServiceProbeResult> {
+    inspect_probes_with(probes, |requests| {
+        ServiceManager::inspect_many(requests)
+            .into_iter()
+            .map(|result| result.map_err(crate::native::service_error))
+            .collect()
+    })
 }
 
-/// Task Scheduler inspection starts a PowerShell process. Keep independent
-/// observations concurrent but bounded; the source order remains stable, and a
-/// failing query cannot turn an unknown owner into a successful observation.
-fn inspect_probes(probes: Vec<ServiceProbe>, windows_user: bool) -> Vec<ServiceProbeResult> {
-    if !windows_user {
-        return probes.into_iter().map(inspect_probe).collect();
-    }
-
-    const MAX_CONCURRENT_PROBES: usize = 3;
-    let mut observations = Vec::with_capacity(probes.len());
-    let mut remaining = probes.into_iter();
-    loop {
-        let group: Vec<_> = remaining.by_ref().take(MAX_CONCURRENT_PROBES).collect();
-        if group.is_empty() {
-            break;
-        }
-        std::thread::scope(|scope| {
-            let tasks: Vec<_> = group
-                .into_iter()
-                .map(|probe| scope.spawn(move || inspect_probe(probe)))
-                .collect();
-            for task in tasks {
-                observations.push(task.join().unwrap_or_else(|_| {
+/// Collect one native snapshot, coalescing identical saved owners (including
+/// embedded Tunnels). Results retain input order and each probe's failure.
+fn inspect_probes_with(
+    probes: Vec<ServiceProbe>,
+    observe: impl FnOnce(&[(&crate::service::ServiceSpec, bool)]) -> Vec<ServiceProbeResult>,
+) -> Vec<ServiceProbeResult> {
+    let mut unique: Vec<(crate::service::ServiceSpec, bool)> = Vec::new();
+    let indices: Vec<_> = probes
+        .iter()
+        .map(|probe| {
+            let spec = probe.spec.as_ref().map_err(Clone::clone)?;
+            let index = if let Some(index) = unique.iter().position(|(owner, _)| owner == spec) {
+                unique[index].1 |= probe.with_pid;
+                index
+            } else {
+                unique.push((spec.clone(), probe.with_pid));
+                unique.len() - 1
+            };
+            Ok(index)
+        })
+        .collect();
+    let requests: Vec<_> = unique
+        .iter()
+        .map(|(spec, with_pid)| (spec, *with_pid))
+        .collect();
+    let observed = if requests.is_empty() {
+        Vec::new()
+    } else {
+        observe(&requests)
+    };
+    indices
+        .into_iter()
+        .zip(probes)
+        .map(|(index, probe)| {
+            let index = index?;
+            observed
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| {
                     Err(SetupDiagnostic::new(
                         "local_observation_unavailable",
                         "Native service status could not be observed",
                         "Inspect the service owner before retrying",
                     ))
-                }));
-            }
-        });
-    }
-    observations
+                })
+                .map(|(status, pid)| (status, probe.with_pid.then_some(pid).flatten()))
+        })
+        .collect()
 }
 
 pub(crate) fn collect(
@@ -157,10 +170,7 @@ pub(crate) fn collect(
         }
     }
 
-    let observed = inspect_probes(
-        probes,
-        cfg!(windows) && record.request.service_scope == crate::service::ServiceScope::User,
-    );
+    let observed = inspect_probes(probes);
     if let Some(index) = server_index {
         result.components.push(observation(
             Component::Server.as_str(),
@@ -318,6 +328,100 @@ fn linger(record: &EnvironmentRecord) -> Option<bool> {
 mod tests {
     use super::*;
 
+    fn probe_spec(identity: &str) -> crate::service::ServiceSpec {
+        crate::service::ServiceSpec {
+            scope: ServiceScope::User,
+            id: "observation-fixture".into(),
+            component: Component::Server,
+            program: std::env::temp_dir().join("observation-fixture"),
+            args: vec!["--config".into(), "fixture.toml".into()],
+            working_directory: std::env::temp_dir(),
+            account: crate::service::ServiceAccount::SystemUser {
+                name: "fixture".into(),
+                group: None,
+                expected_identity: "fixture-identity".into(),
+                home: None,
+            },
+            config_identity: identity.into(),
+            env_file: None,
+            environment: Default::default(),
+            linux_socket: None,
+        }
+    }
+
+    #[test]
+    fn one_snapshot_coalesces_identical_owners_but_keeps_pid_intent_and_failures() {
+        let owner = probe_spec("first");
+        let other = probe_spec("second");
+        let plans = vec![
+            ServiceProbe {
+                spec: Ok(owner.clone()),
+                with_pid: false,
+            },
+            ServiceProbe {
+                spec: Err(SetupDiagnostic::new(
+                    "invalid_plan",
+                    "Invalid fixture",
+                    "Inspect",
+                )),
+                with_pid: true,
+            },
+            ServiceProbe {
+                spec: Ok(other),
+                with_pid: true,
+            },
+            ServiceProbe {
+                spec: Ok(owner),
+                with_pid: true,
+            },
+        ];
+        let observed = inspect_probes_with(plans, |requests| {
+            // Same task name with a different saved identity is never merged.
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[0].0.config_identity, "first");
+            assert_eq!(requests[1].0.config_identity, "second");
+            assert!(requests[0].1 && requests[1].1);
+            vec![
+                Ok((
+                    ServiceStatus {
+                        id: "observation-fixture".into(),
+                        ownership: Ownership::Owned,
+                        installed: true,
+                        enabled: Some(true),
+                        running: Some(true),
+                        detail: None,
+                    },
+                    Some(42),
+                )),
+                Err(SetupDiagnostic::new(
+                    "owner_unknown",
+                    "Unknown fixture",
+                    "Inspect",
+                )),
+            ]
+        });
+        assert_eq!(observed.len(), 4);
+        assert_eq!(observed[0].as_ref().unwrap().1, None);
+        assert_eq!(observed[1].as_ref().unwrap_err().code, "invalid_plan");
+        assert_eq!(observed[2].as_ref().unwrap_err().code, "owner_unknown");
+        assert_eq!(observed[3].as_ref().unwrap().1, Some(42));
+    }
+
+    #[test]
+    fn missing_batch_results_never_become_successful_observations() {
+        let observed = inspect_probes_with(
+            vec![ServiceProbe {
+                spec: Ok(probe_spec("missing")),
+                with_pid: true,
+            }],
+            |_| Vec::new(),
+        );
+        assert_eq!(
+            observed[0].as_ref().unwrap_err().code,
+            "local_observation_unavailable"
+        );
+    }
+
     #[test]
     fn bounded_service_probes_preserve_order_and_fail_closed() {
         let codes = [
@@ -338,7 +442,7 @@ mod tests {
                 with_pid: true,
             })
             .collect();
-        let results = inspect_probes(plans, true);
+        let results = inspect_probes(plans);
         assert_eq!(results.len(), codes.len());
         for (actual, code) in results.into_iter().zip(codes) {
             assert_eq!(actual.err().expect("probe must fail").code, code);

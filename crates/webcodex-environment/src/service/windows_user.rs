@@ -1,13 +1,35 @@
 //! Per-user interactive Task Scheduler adapter. No password, UAC or SCM account.
-//! A fixed native script consumes bounded non-secret JSON as child-local data;
+//! Read-only observations use Task Scheduler COM and query-only process handles.
+//! Mutations use a fixed script with bounded non-secret JSON as child-local data;
 //! callers cannot supply script text. New tasks are registered create-only.
 use super::*;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+#[cfg(windows)]
+mod native;
+
 const SCRIPT: &str = include_str!("windows_user.ps1");
 
-fn task_request(spec: &ServiceSpec, operation: &str) -> Result<Value, ServiceError> {
+#[derive(Clone, serde::Serialize)]
+struct TaskPlan {
+    #[cfg(windows)]
+    #[serde(skip)]
+    id: String,
+    #[cfg(windows)]
+    #[serde(skip)]
+    home: PathBuf,
+    name: String,
+    description: String,
+    sid: String,
+    program: String,
+    arguments: String,
+    host: Option<String>,
+    host_arguments: String,
+    directory: String,
+}
+
+fn task_plan(spec: &ServiceSpec) -> Result<TaskPlan, ServiceError> {
     let (sid, _) = scope::user_account(spec)?;
     let quote = |value: &str| -> String {
         let mut out = String::from("\"");
@@ -59,11 +81,32 @@ fn task_request(spec: &ServiceSpec, operation: &str) -> Result<Value, ServiceErr
         quote(program),
         arguments
     );
-    Ok(json!({"operation":operation, "name":name,
-        "description":format!("{} scope=user", ownership_marker(spec)), "sid":sid,
-        "program":program,
-        "arguments":arguments, "host":host, "host_arguments":host_arguments,
-        "directory":directory}))
+    Ok(TaskPlan {
+        #[cfg(windows)]
+        id: spec.id.clone(),
+        #[cfg(windows)]
+        home: scope::user_account(spec)?.1.to_owned(),
+        name,
+        description: format!("{} scope=user", ownership_marker(spec)),
+        sid: sid.to_owned(),
+        program: program.to_owned(),
+        arguments,
+        host: host
+            .map(|path| path.into_os_string().into_string())
+            .transpose()
+            .map_err(|_| {
+                ServiceError::new(ServiceErrorCode::InvalidSpec, "Task host must be UTF-8")
+            })?,
+        host_arguments,
+        directory: directory.to_owned(),
+    })
+}
+
+fn task_request(spec: &ServiceSpec, operation: &str) -> Result<Value, ServiceError> {
+    let mut request = serde_json::to_value(task_plan(spec)?)
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidSpec, "Cannot encode task plan"))?;
+    request["operation"] = json!(operation);
+    Ok(request)
 }
 
 // The installed GUI and its runtime are verified and updated as one package.
@@ -188,7 +231,23 @@ fn decode_status(spec: &ServiceSpec, value: &Value) -> Result<ServiceStatus, Ser
             "Task ownership was not observed",
         )
     })?;
-    let running = match value["state"].as_u64() {
+    Ok(observed_status(
+        &spec.id,
+        owned,
+        value["state"].as_i64(),
+        value["enabled"].as_bool(),
+        value["last_task_result"].as_i64(),
+    ))
+}
+
+fn observed_status(
+    id: &str,
+    owned: bool,
+    state: Option<i64>,
+    enabled: Option<bool>,
+    last_result: Option<i64>,
+) -> ServiceStatus {
+    let running = match state {
         Some(2 | 4) => Some(true),  // queued/running
         Some(1 | 3) => Some(false), // disabled/ready
         _ => None,
@@ -197,63 +256,22 @@ fn decode_status(spec: &ServiceSpec, value: &Value) -> Result<ServiceStatus, Ser
         "user Task Scheduler; runs only while this owner is signed in; no password stored",
     );
     if owned && running == Some(false) {
-        if let Some(result) = value["last_task_result"]
-            .as_i64()
-            .filter(|result| *result != 0)
-        {
+        if let Some(result) = last_result.filter(|result| *result != 0) {
             detail.push_str(&format!("; last Task Scheduler result {result}"));
         }
     }
-    Ok(ServiceStatus {
-        id: spec.id.clone(),
+    ServiceStatus {
+        id: id.to_owned(),
         ownership: if owned {
             Ownership::Owned
         } else {
             Ownership::Foreign
         },
         installed: true,
-        enabled: value["enabled"].as_bool(),
+        enabled,
         running,
         detail: Some(detail),
-    })
-}
-
-/// A running task can be queued, and its engine PID need not be its action PID.
-/// Accept only the exact live action observation made by the native adapter.
-fn decode_running_pid(spec: &ServiceSpec, value: &Value) -> Result<Option<u32>, ServiceError> {
-    let status = decode_status(spec, value)?;
-    if status.ownership != Ownership::Owned || value["state"].as_u64() != Some(4) {
-        return Ok(None);
     }
-    if value.get("process_id").is_none_or(Value::is_null) {
-        return Ok(None);
-    }
-    let pid = value["process_id"]
-        .as_u64()
-        .and_then(|pid| u32::try_from(pid).ok())
-        .filter(|pid| *pid != 0);
-    let instance = value["instance_guid"]
-        .as_str()
-        .and_then(|id| uuid::Uuid::parse_str(id).ok())
-        .filter(|id| !id.is_nil());
-    match (pid, instance) {
-        (Some(pid), Some(_)) => Ok(Some(pid)),
-        _ => Err(ServiceError::new(
-            ServiceErrorCode::OwnershipUnknown,
-            "Task Scheduler did not confirm a live action process",
-        )),
-    }
-}
-
-#[cfg(any(windows, test))]
-fn decode_status_with_pid(
-    spec: &ServiceSpec,
-    value: &Value,
-) -> Result<(ServiceStatus, Option<u32>), ServiceError> {
-    Ok((
-        decode_status(spec, value)?,
-        decode_running_pid(spec, value)?,
-    ))
 }
 
 #[cfg(windows)]
@@ -325,20 +343,29 @@ fn call(spec: &ServiceSpec, operation: &str) -> Result<ServiceStatus, ServiceErr
 
 #[cfg(windows)]
 pub(super) fn running_pid(spec: &ServiceSpec) -> Result<Option<u32>, ServiceError> {
-    decode_running_pid(spec, &call_value(spec, "running_pid")?)
+    inspect_with_pid(spec).map(|(_, pid)| pid)
 }
 
 #[cfg(windows)]
 pub(super) fn inspect_with_pid(
     spec: &ServiceSpec,
 ) -> Result<(ServiceStatus, Option<u32>), ServiceError> {
-    let value = call_value(spec, "running_pid")?;
-    decode_status_with_pid(spec, &value)
+    native::inspect_many(&[(spec, true)]).remove(0)
 }
 
 #[cfg(windows)]
 pub(super) fn inspect(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
-    call(spec, "inspect")
+    native::inspect_many(&[(spec, false)])
+        .remove(0)
+        .map(|(status, _)| status)
+}
+
+/// A fresh batch shares one COM connection, never a cached ownership/PID result.
+#[cfg(windows)]
+pub(super) fn inspect_many(
+    probes: &[(&ServiceSpec, bool)],
+) -> Vec<Result<(ServiceStatus, Option<u32>), ServiceError>> {
+    native::inspect_many(probes)
 }
 #[cfg(windows)]
 pub(super) fn preflight(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
@@ -435,67 +462,6 @@ mod tests {
         );
         assert!(!request.to_string().contains("--windows-service"));
     }
-    #[test]
-    fn user_task_status_and_pid_share_one_owner_checked_observation() {
-        let spec = super::super::tests::sample_spec();
-        let current = json!({
-            "exists": true, "owned": true, "enabled": true, "state": 4,
-            "process_id": 4312,
-            "instance_guid": "{723A491B-825B-4C30-BB2B-F86AA98F94AA}"
-        });
-        let (status, pid) = decode_status_with_pid(&spec, &current).unwrap();
-        assert_eq!(status.ownership, Ownership::Owned);
-        assert_eq!(status.running, Some(true));
-        assert_eq!(pid, Some(4312));
-        let mut foreign = current.clone();
-        foreign["owned"] = json!(false);
-        assert_eq!(decode_status_with_pid(&spec, &foreign).unwrap().1, None);
-        let mut invalid = current;
-        invalid["instance_guid"] = json!("unknown");
-        assert!(decode_status_with_pid(&spec, &invalid).is_err());
-    }
-
-    #[test]
-    fn user_task_running_pid_requires_a_live_owned_action_observation() {
-        let spec = super::super::tests::sample_spec();
-        let current = json!({
-            "exists": true, "owned": true, "enabled": true, "state": 4,
-            "process_id": 4312,
-            "instance_guid": "{723A491B-825B-4C30-BB2B-F86AA98F94AA}"
-        });
-        assert_eq!(decode_running_pid(&spec, &current).unwrap(), Some(4312));
-        for state in [0, 1, 2, 3] {
-            let mut observation = current.clone();
-            observation["state"] = json!(state);
-            assert_eq!(decode_running_pid(&spec, &observation).unwrap(), None);
-        }
-        let mut foreign = current.clone();
-        foreign["owned"] = json!(false);
-        assert_eq!(decode_running_pid(&spec, &foreign).unwrap(), None);
-        let mut missing = current.clone();
-        missing.as_object_mut().unwrap().remove("process_id");
-        assert_eq!(decode_running_pid(&spec, &missing).unwrap(), None);
-        for pid in [
-            json!(0),
-            json!(-1),
-            json!(u64::from(u32::MAX) + 1),
-            json!("4312"),
-        ] {
-            let mut invalid = current.clone();
-            invalid["process_id"] = pid;
-            assert!(decode_running_pid(&spec, &invalid).is_err());
-        }
-        for instance in [
-            Value::Null,
-            json!("unknown"),
-            json!(uuid::Uuid::nil().to_string()),
-        ] {
-            let mut invalid = current.clone();
-            invalid["instance_guid"] = instance;
-            assert!(decode_running_pid(&spec, &invalid).is_err());
-        }
-    }
-
     #[cfg(windows)]
     #[test]
     fn console_free_worker_has_no_console_and_preserves_exit_and_redirected_streams() {

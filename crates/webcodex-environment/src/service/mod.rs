@@ -314,13 +314,75 @@ impl ServiceManager {
         Ok((status, pid))
     }
 
+    /// Read one bounded presentation snapshot. Windows user tasks share a
+    /// native scheduler connection; this never caches mutation authorization.
+    pub(crate) fn inspect_many(
+        probes: &[(&ServiceSpec, bool)],
+    ) -> Vec<Result<(ServiceStatus, Option<u32>), ServiceError>> {
+        // One Server, one Runner, and the existing sixteen-profile limit.
+        if probes.len() > 18 {
+            return probes
+                .iter()
+                .map(|_| {
+                    Err(ServiceError::new(
+                        ServiceErrorCode::InvalidSpec,
+                        "Service observation exceeds its bounded batch size",
+                    ))
+                })
+                .collect();
+        }
+        #[cfg(windows)]
+        let mut user_probes = Vec::new();
+        let results: Vec<_> = probes
+            .iter()
+            .map(|(spec, with_pid)| {
+                if let Err(error) = validate_spec(spec) {
+                    return Err(error);
+                }
+                #[cfg(windows)]
+                if spec.scope == ServiceScope::User {
+                    user_probes.push((*spec, *with_pid));
+                    // Replaced by the native batch below, including failures.
+                    return Err(ServiceError::new(
+                        ServiceErrorCode::OwnershipUnknown,
+                        "Native service status has not been observed",
+                    ));
+                }
+                if *with_pid {
+                    Self::inspect_with_pid(spec)
+                } else {
+                    Self::inspect(spec).map(|status| (status, None))
+                }
+            })
+            .collect();
+        #[cfg(windows)]
+        {
+            let mut results = results;
+            let observations = windows_user::inspect_many(&user_probes);
+            let mut observed = observations.into_iter();
+            for ((spec, _), result) in probes.iter().zip(&mut results) {
+                if spec.scope == ServiceScope::User && validate_spec(spec).is_ok() {
+                    *result = observed.next().unwrap_or_else(|| {
+                        Err(ServiceError::new(
+                            ServiceErrorCode::OwnershipUnknown,
+                            "Native service observation was incomplete",
+                        ))
+                    });
+                }
+            }
+            results
+        }
+        #[cfg(not(windows))]
+        results
+    }
+
     /// Current manager-owned process only. Unsupported managers fail closed.
     pub fn running_pid(spec: &ServiceSpec) -> Result<Option<u32>, ServiceError> {
         validate_spec(spec)?;
         #[cfg(windows)]
         if spec.scope == ServiceScope::User {
             // The adapter independently verifies the task and its exact live
-            // action PID; a separate inspect would spawn another PowerShell.
+            // action PID; a separate inspect would duplicate the observation.
             return windows_user::running_pid(spec);
         }
         let status = Self::inspect(spec)?;
@@ -775,6 +837,28 @@ mod tests {
             validate_spec(&spec).unwrap_err().code,
             ServiceErrorCode::InvalidSpec
         );
+    }
+
+    #[test]
+    fn observation_batch_rejects_invalid_plans_without_native_access() {
+        let mut invalid = sample_spec();
+        invalid.id.clear();
+        let observed = ServiceManager::inspect_many(&[(&invalid, false), (&invalid, true)]);
+        assert_eq!(observed.len(), 2);
+        assert!(observed
+            .iter()
+            .all(|result| result.as_ref().unwrap_err().code == ServiceErrorCode::InvalidSpec));
+    }
+
+    #[test]
+    fn observation_batch_has_the_same_eighteen_component_bound_as_local_status() {
+        let spec = sample_spec();
+        let observed = ServiceManager::inspect_many(&vec![(&spec, true); 19]);
+        assert_eq!(observed.len(), 19);
+        assert!(observed
+            .iter()
+            .all(|result| result.as_ref().unwrap_err().code == ServiceErrorCode::InvalidSpec));
+        assert!(ServiceManager::inspect_many(&[]).is_empty());
     }
 
     pub(super) fn sample_spec() -> ServiceSpec {

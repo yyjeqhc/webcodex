@@ -123,6 +123,66 @@ cargo test --locked -p webcodex --lib regular_tunnel_real_process_parent_eof_dur
 This tests the native notification and cleanup boundary, not an actual system
 reboot. Qualify installed autostart separately when doing a real Windows reboot.
 
+## Windows service observations
+
+Periodic status reads for Windows user services use Task Scheduler COM and
+query-only process handles. They do not start PowerShell, query WMI, or fall back
+to a shell after a native read fails. One local snapshot batches Server, Runner,
+and Tunnel probes through one scheduler connection; identical saved service
+specifications share one result. Embedded Tunnels continue to share their Server
+owner. A batch contains at most 18 probes (Server, Runner, and 16 profiles).
+
+Desktop's periodic UI and tray observers share in-flight work. For a persistent
+environment, a published native observation can be reused for three seconds
+while an authenticated HTTP heartbeat still agrees. Heartbeats do not extend
+that lifetime. A changed or failed heartbeat triggers a fresh native read.
+Explicit refresh, operation admission/completion, and changed environment or
+operation generations invalidate display evidence. Bootstrap, diagnostics, and
+service controls keep their fresh-read paths. Three seconds is a cache lifetime,
+not a promise that every external task change is detected within three seconds:
+detection also depends on the next observer tick and native query completion.
+
+The cache is presentation-only. Start, stop, restart, install, and uninstall still
+use the existing control adapter and independently verify the saved task and
+live process identity. Native observations preserve task metadata, account/SID,
+action and arguments, working directory, triggers and settings, instance GUID,
+process creation time, and direct host/child ownership checks. An unconfirmed PID
+stays unconfirmed. Command-line reads dynamically resolve
+`NtQueryInformationProcess`; an unavailable or incompatible information class
+does not authorize a process or trigger a PowerShell fallback.
+
+Task Scheduler RPC can stall. The reader has one worker, a queue of at most eight
+batches, and a 55-second caller deadline. Expired queued reads and late results
+are discarded. A stuck worker is not replaced with another thread; observations
+remain unavailable until the owning process is restarted. Failures never become
+evidence that an inaccessible task is absent or belongs to WebCodex.
+
+Focused Windows checks (in addition to the frontend checks above):
+Constructing Desktop's `AppState` can still adopt the default Environment; a
+temporary Desktop state directory alone does not isolate it. The child process
+below points `APPDATA` / `LOCALAPPDATA` at new test directories without changing
+the invoking shell or system environment, or reading an installed Environment.
+
+```powershell
+cargo test --locked --profile dogfood -p webcodex-environment --lib service::windows_user
+cargo test --locked --profile dogfood -p webcodex-environment --lib local_status::tests
+powershell -NoLogo -NoProfile -NonInteractive -Command {
+  $testProfile = Join-Path $env:TEMP ('webcodex-observer-' + [guid]::NewGuid())
+  $env:APPDATA = Join-Path $testProfile 'Roaming'
+  $env:LOCALAPPDATA = Join-Path $testProfile 'Local'
+  New-Item -ItemType Directory -Path $env:APPDATA, $env:LOCALAPPDATA | Out-Null
+  cargo test --locked --profile dogfood --manifest-path apps/desktop/src-tauri/Cargo.toml --lib runtime_observation
+  exit $LASTEXITCODE
+}
+if ($LASTEXITCODE -ne 0) { throw 'Desktop observation tests failed' }
+```
+
+When dogfooding this path, compare PowerShell process launches and event-log
+record growth over matched idle intervals, then verify explicit refresh and a
+real service transition. Process I/O write counters also include non-disk I/O;
+they are not physical SSD-write measurements. This change does not disable
+Windows Event Log, auditing, or PowerShell logging.
+
 ## Build the local WebCodex runtime
 
 Desktop debug builds look for the three binaries in the repository's

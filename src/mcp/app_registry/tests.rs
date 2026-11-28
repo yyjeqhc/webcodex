@@ -7,8 +7,8 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
         "ui://webcodex/pdf/v7",
         "ui://webcodex/spreadsheet/v5",
         "ui://webcodex/computer/v12",
-        "ui://webcodex/workbench/v9",
-        "ui://webcodex/work-result/v39",
+        "ui://webcodex/workbench/v12",
+        "ui://webcodex/work-result/v41",
         "ui://webcodex/goal-plan/v11",
         "ui://webcodex/agent-continuation/v25",
         "ui://webcodex/job-terminal-continuation/v4",
@@ -37,7 +37,7 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
             assert!(for_uri(&format!("{}{extra}", app.uri)).is_none());
         }
     }
-    assert_eq!(tools.len(), 9);
+    assert_eq!(tools.len(), 10);
     for retired in [
         "ui://webcodex/docx/v1",
         "ui://webcodex/spreadsheet/v1",
@@ -56,6 +56,13 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
         "ui://webcodex/workbench/v5",
         "ui://webcodex/workbench/v6",
         "ui://webcodex/workbench/v7",
+        "ui://webcodex/workbench/v8",
+        "ui://webcodex/workbench/v9",
+        "ui://webcodex/workbench/v10",
+        "ui://webcodex/workbench/v11",
+        "ui://webcodex/work-result/v39",
+        "ui://webcodex/work-result/v40",
+        "ui://webcodex/work-result/v38",
         "ui://webcodex/work-result/v36",
         "ui://webcodex/work-result/v32",
         "ui://webcodex/work-result/v31",
@@ -167,6 +174,11 @@ fn bundled_app_registry_keeps_resource_csp_display_modes_and_cache_policy_separa
             if resource["uri"] == MCP_SPREADSHEET_UI_RESOURCE_URI {
                 expected["ui"]["csp"]["resourceDomains"] = json!(["blob:"]);
             }
+            if resource["uri"] == MCP_WORKBENCH_UI_RESOURCE_URI {
+                if let Some(origin) = web_preview_frame_origin() {
+                    expected["ui"]["csp"]["frameDomains"] = json!([origin]);
+                }
+            }
             assert_eq!(resource["_meta"], expected);
             assert_eq!(resource["mimeType"], MCP_UI_RESOURCE_MIME_TYPE);
         }
@@ -180,6 +192,11 @@ fn bundled_app_registry_keeps_resource_csp_display_modes_and_cache_policy_separa
             let mut expected = meta.clone();
             if app.uri == MCP_SPREADSHEET_UI_RESOURCE_URI {
                 expected["ui"]["csp"]["resourceDomains"] = json!(["blob:"]);
+            }
+            if app.uri == MCP_WORKBENCH_UI_RESOURCE_URI {
+                if let Some(origin) = web_preview_frame_origin() {
+                    expected["ui"]["csp"]["frameDomains"] = json!([origin]);
+                }
             }
             assert_eq!(contents[0]["_meta"]["ui"], expected["ui"]);
             if matches!(

@@ -137,7 +137,7 @@ async fn empty_workbench_keeps_goal_access_when_project_domain_is_unavailable() 
     auth.username = Some("resource-owner".into());
     auth.scopes = vec![crate::auth::SCOPE_COMMUNICATION_READ.into()];
     let result = runtime
-        .open_webcodex_workbench(None, None, None, Some(&auth))
+        .open_webcodex_workbench(None, None, None, None, Some(&auth))
         .await;
     assert!(result.success);
     assert!(result.output["project"].is_null());
@@ -148,7 +148,7 @@ async fn empty_workbench_keeps_goal_access_when_project_domain_is_unavailable() 
     assert_eq!(result.output["projects"]["items"], json!([]));
     assert!(
         !runtime
-            .open_webcodex_workbench(None, Some("wc_sess_unselected".into()), None, Some(&auth))
+            .open_webcodex_workbench(None, Some("wc_sess_unselected".into()), None, None, Some(&auth))
             .await
             .success
     );

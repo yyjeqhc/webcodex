@@ -9,28 +9,28 @@ export function summaryItems({ safeCount }, { state, hasFinalChanges }) {
   const items = [];
   const workspace = state.workspace;
   if (state.task_outputs) {
-    const count = state.task_outputs.verified_count;
-    items.push({ key: "outputs", text: `${count} task ${count === 1 ? "output" : "outputs"}` });
+    items.push({ key: "outputs", label: "任务产物", value: `${state.task_outputs.verified_count} 个` });
   }
-  if (hasFinalChanges) items.push({ key: "final", text: "Final changes ready" });
+  if (hasFinalChanges) items.push({ key: "final", label: "最终变更", value: "已就绪" });
   if (workspace.git_available) {
-    let text = workspace.clean ? "No uncommitted changes"
-      : `${workspace.files_total} ${workspace.files_total === 1 ? "file" : "files"} changed`;
+    let value = workspace.clean ? "无未提交的变更" : `已更改 ${workspace.files_total} 个文件`;
     if (!workspace.clean && safeCount(workspace.additions) && safeCount(workspace.deletions)) {
-      text += ` · +${workspace.additions} −${workspace.deletions}`;
+      value += ` · +${workspace.additions} −${workspace.deletions}`;
     }
-    items.push({ key: "workspace", text });
+    items.push({ key: "workspace", label: "工作区", value });
   }
   if (state.validation) {
-    const text = validationLabel(state.validation);
-    items.push({ key: "checks", text, tone: text === "Checks need attention" ? "attention" : text === "Checks passed" ? "good" : "" });
+    const value = validationLabel(state.validation);
+    items.push({ key: "checks", label: "验证", value, tone: value === "验证需关注" ? "attention" : value === "验证通过" ? "good" : "" });
   }
   if (state.jobs?.available) {
     const running = state.jobs.items.filter(job => job.state === "active").length;
     const failed = state.jobs.items.filter(job => job.state === "terminal"
       && FAILED_JOB_OUTCOMES.has(job.outcome || job.status)).length;
-    if (running) items.push({ key: "jobs", text: `${running} running in background` });
-    if (failed) items.push({ key: "failedJobs", text: `${failed} background ${failed === 1 ? "job" : "jobs"} failed`, tone: "attention" });
+    const parts = [];
+    if (running) parts.push(`运行 ${running}`);
+    if (failed) parts.push(`失败 ${failed}`);
+    if (parts.length) items.push({ key: "jobs", label: "后台任务", value: parts.join(" · "), tone: failed ? "attention" : "" });
   }
   return items;
 }
@@ -41,14 +41,21 @@ export function createSummaryRenderer({ document, root, navigate }) {
     const keep = new Set();
     items.forEach((item, index) => {
       let button = buttons.get(item.key);
+      let label = button && button.children[0], value = button && button.children[1];
       if (!button) {
         button = document.createElement("button");
         button.type = "button";
-        button.onclick = () => navigate(item.key);
+        button.dataset.key = item.key;
+        button.setAttribute("data-key", item.key);
+        label = document.createElement("span"); label.className = "summary-label";
+        value = document.createElement("span"); value.className = "summary-value";
+        button.append(label, value);
+        button.onclick = () => navigate(item);
         buttons.set(item.key, button);
       }
       button.className = "summary-item" + (item.tone ? " tone-" + item.tone : "");
-      if (button.textContent !== item.text) button.textContent = item.text;
+      if (label.textContent !== item.label) label.textContent = item.label;
+      if (value.textContent !== item.value) value.textContent = item.value;
       if (root.children[index] !== button) root.insertBefore(button, root.children[index] || null);
       keep.add(item.key);
     });

@@ -27,7 +27,7 @@ async function main() {
     absWorkingDir: root,
     entryPoints: ["src/mcp-apps/work-result/sections.mjs"],
     bundle: true, platform: "browser", format: "iife", globalName: "WebCodexWorkResultSections",
-    target: "es2022", minify: true, legalComments: "inline", write: false,
+    target: "es2022", charset: "utf8", minify: true, legalComments: "inline", write: false,
     supported: { "inline-script": true }, metafile: true,
   });
   // This bundle is first-party only. New package dependencies need an explicit

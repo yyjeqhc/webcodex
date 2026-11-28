@@ -152,6 +152,7 @@ impl ToolCallAuditProjection for ToolCall {
         project_audit_arguments! { self;
             fields {
                 SearchWebcodexResources { kind, offset, limit },
+                StartWebPreview { project, port },
                 CodingAgentCancel { run_id },
                 CodingAgentDiagnose { project, provider_id, include_live_acp },
                 OpenSessionShell { project, session_id, cwd, shell },
@@ -293,6 +294,7 @@ impl ToolCallAuditProjection for ToolCall {
             }
 
             Self::OpenWebcodexWorkbench { .. } => serde_json::json!({"workbench_open":true}),
+
             Self::ReadWebcodexResource { .. } => serde_json::json!({"resource_read":true}),
 
             #[cfg(feature = "experimental-code-mode")]

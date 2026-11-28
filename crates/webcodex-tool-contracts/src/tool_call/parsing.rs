@@ -524,6 +524,7 @@ impl ToolCall {
             Self::CheckpointGoal { .. } => "checkpoint_goal",
             Self::ReviseGoalPlan { .. } => "revise_goal_plan",
             Self::OpenWebcodexWorkbench { .. } => "open_webcodex_workbench",
+            Self::StartWebPreview { .. } => "start_web_preview",
             Self::SearchWebcodexResources { .. } => "search_webcodex_resources",
             Self::ReadWebcodexResource { .. } => "read_webcodex_resource",
             Self::ListGoals { .. } => "list_goals",
@@ -805,7 +806,8 @@ impl ToolCall {
                 destination_project,
                 ..
             } => Some(destination_project.as_str()),
-            Self::RunProcess { project, .. }
+            Self::StartWebPreview { project, .. }
+            | Self::RunProcess { project, .. }
             | Self::RunDetachedProcess { project, .. }
             | Self::CodingAgentStart { project, .. }
             | Self::CodingAgentDiagnose { project, .. }

@@ -2,6 +2,7 @@ use crate::admin_project_lifecycle::{
     AdminProjectLifecycleService, CreateProjectRequest, ProjectMutationRequest,
     RegisterProjectRequest, ServiceResponse, UpdateProjectAllowPatchRequest,
 };
+use crate::admin_runner_lifecycle::{AdminRunnerLifecycleService, RunnerUnregisterRequest};
 use crate::auth::{AuthContext, AuthKind};
 use crate::tool_runtime::activity::ActivityVisibility;
 use crate::tool_runtime::admin_dashboard::{
@@ -30,6 +31,9 @@ pub(crate) fn routes() -> Router {
         )
         .push(
             Router::with_path(api_path(RouteId::AdminProjectsUnregister)).post(unregister_project),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::AdminRunnersUnregister)).post(unregister_runner),
         )
 }
 
@@ -66,6 +70,9 @@ fn device_row(device: AdminDashboardDevice) -> Value {
         "compatibility": device.compatibility,
         "protocol_compatibility": device.protocol_compatibility,
         "build_alignment": device.build_alignment,
+        "actions": {
+            "unregister": device.removable
+        },
     })
 }
 
@@ -228,10 +235,10 @@ fn render_service_response(res: &mut Response, response: ServiceResponse) {
     res.render(Json(response.body));
 }
 
-async fn lifecycle_context(
+async fn admin_mutation_context(
     req: &mut Request,
     depot: &Depot,
-) -> Result<(AuthContext, AdminProjectLifecycleService), ServiceResponse> {
+) -> Result<(AuthContext, Arc<ToolRuntime>, Arc<Database>), ServiceResponse> {
     crate::auth::require_json_same_origin(req).map_err(|(status, _, _)| ServiceResponse {
         status,
         body: json!({"error":{"code":"invalid_request"}}),
@@ -254,6 +261,14 @@ async fn lifecycle_context(
             status: 500,
             body: json!({"error":{"code":"operation_failed"}}),
         })?;
+    Ok((auth, runtime, db))
+}
+
+async fn lifecycle_context(
+    req: &mut Request,
+    depot: &Depot,
+) -> Result<(AuthContext, AdminProjectLifecycleService), ServiceResponse> {
+    let (auth, runtime, db) = admin_mutation_context(req, depot).await?;
     Ok((auth, AdminProjectLifecycleService::new(runtime, db)))
 }
 
@@ -324,6 +339,20 @@ async fn update_allow_patch(req: &mut Request, depot: &mut Depot, res: &mut Resp
         Err(response) => return render_service_response(res, response),
     };
     render_service_response(res, service.update_allow_patch(&auth, body).await);
+}
+
+#[handler]
+async fn unregister_runner(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (auth, runtime, db) = match admin_mutation_context(req, depot).await {
+        Ok(value) => value,
+        Err(response) => return render_service_response(res, response),
+    };
+    let body = match parse_admin_json::<RunnerUnregisterRequest>(req).await {
+        Ok(value) => value,
+        Err(response) => return render_service_response(res, response),
+    };
+    let service = AdminRunnerLifecycleService::new(runtime, db);
+    render_service_response(res, service.unregister(&auth, body).await);
 }
 
 #[handler]
@@ -470,6 +499,7 @@ mod tests {
                     compatibility: "compatible".to_string(),
                     protocol_compatibility: "compatible".to_string(),
                     build_alignment: "different_version".to_string(),
+                    removable: true,
                 },
                 AdminDashboardDevice {
                     display_name: Some("A".to_string()),
@@ -485,6 +515,7 @@ mod tests {
                     compatibility: "compatible".to_string(),
                     protocol_compatibility: "compatible".to_string(),
                     build_alignment: "exact".to_string(),
+                    removable: false,
                 },
             ]),
             projects: Ok(vec![
@@ -744,6 +775,202 @@ mod tests {
         assert_eq!(project["actions"]["disable"], true);
         assert_eq!(project["actions"]["enable"], false);
         assert_eq!(project["actions"]["unregister"], true);
+        assert_eq!(body["devices"][0]["actions"]["unregister"], false);
+        assert_eq!(body["devices"][1]["actions"]["unregister"], true);
+    }
+
+    fn runner_service(auth: Option<AuthContext>, registry: Arc<crate::RunnerRegistry>) -> Service {
+        let (_tmp, db) = crate::test_support::test_db();
+        let runtime = Arc::new(ToolRuntime::new(
+            registry,
+            Arc::new(crate::tool_runtime::RuntimeInfo::default()),
+        ));
+        let mut router = Router::new()
+            .hoop(affix_state::inject(db))
+            .hoop(affix_state::inject(runtime));
+        if let Some(auth) = auth {
+            router = router.hoop(affix_state::inject(auth));
+        }
+        Service::new(router.push(routes()))
+    }
+
+    async fn runner_call(
+        auth: Option<AuthContext>,
+        registry: Arc<crate::RunnerRegistry>,
+        body: &str,
+        origin: bool,
+    ) -> (StatusCode, Value) {
+        let mut request = TestClient::post("http://127.0.0.1/admin/runners/unregister")
+            .add_header("host", "127.0.0.1", true)
+            .add_header("content-type", "application/json", true)
+            .body(body.to_string());
+        request = request.add_header(
+            "origin",
+            if origin {
+                "http://127.0.0.1"
+            } else {
+                "http://evil.invalid"
+            },
+            true,
+        );
+        let mut response = request.send(&runner_service(auth, registry)).await;
+        let status = response.status_code.unwrap();
+        let body = response.take_json::<Value>().await.unwrap();
+        (status, body)
+    }
+
+    fn bootstrap_auth() -> AuthContext {
+        let mut bootstrap = AuthContext::new(AuthKind::Bootstrap);
+        bootstrap.is_bootstrap = true;
+        bootstrap
+    }
+
+    #[tokio::test]
+    async fn runner_unregister_enforces_admin_same_origin_and_strict_json() {
+        let valid = r#"{"client_id":"stale-runner","confirm":true}"#;
+        let registry = Arc::new(crate::RunnerRegistry::default());
+        assert_eq!(
+            runner_call(None, registry.clone(), valid, true).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        for kind in [AuthKind::ProjectCredential, AuthKind::AgentToken] {
+            assert_eq!(
+                runner_call(
+                    Some(AuthContext::new(kind)),
+                    registry.clone(),
+                    valid,
+                    true
+                )
+                .await
+                .0,
+                StatusCode::FORBIDDEN
+            );
+        }
+        assert_eq!(
+            runner_call(
+                Some(AuthContext::new(AuthKind::ApiToken)),
+                registry.clone(),
+                valid,
+                true
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            runner_call(
+                Some(bootstrap_auth()),
+                registry.clone(),
+                valid,
+                false
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+        let unknown = r#"{"client_id":"stale-runner","confirm":true,"force":true}"#;
+        assert_eq!(
+            runner_call(Some(bootstrap_auth()), registry, unknown, true)
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_unregister_converges_on_absent_and_rejects_missing_confirmation() {
+        let registry = Arc::new(crate::RunnerRegistry::default());
+        let (status, body) = runner_call(
+            Some(bootstrap_auth()),
+            registry.clone(),
+            r#"{"client_id":"already-gone","confirm":true}"#,
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["outcome"], "already_unregistered");
+        assert_eq!(body["changed"], false);
+
+        let (status, body) = runner_call(
+            Some(bootstrap_auth()),
+            registry,
+            r#"{"client_id":"already-gone","confirm":false}"#,
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn runner_unregister_removes_a_stale_registration_and_reports_online_refusal() {
+        let registry = Arc::new(crate::RunnerRegistry::default());
+        registry
+            .register(crate::test_support::runner_registration(
+                "stale-runner",
+                "stale-instance",
+                crate::runner_protocol::RunnerCapabilities {
+                    shell: true,
+                    ..Default::default()
+                },
+            ))
+            .await
+            .unwrap();
+        crate::test_support::apply_project_inventory_snapshot(
+            &registry,
+            "stale-runner",
+            "stale-instance",
+            vec![crate::runner_protocol::RunnerProjectSummary {
+                id: "demo".to_string(),
+                name: Some("Demo".to_string()),
+                path: "/tmp/demo".to_string(),
+                allow_patch: true,
+                kind: Some("repo".to_string()),
+                registration_source: None,
+                description: None,
+                hooks: Vec::new(),
+                disabled: false,
+                revision: None,
+                root_fingerprint: None,
+                lineage: None,
+                git_branch: None,
+                git_head: None,
+                git_dirty: None,
+                updated_at: 1,
+                shell_profile: None,
+            }],
+        )
+        .await;
+        let (status, body) = runner_call(
+            Some(bootstrap_auth()),
+            registry.clone(),
+            r#"{"client_id":"stale-runner","confirm":true}"#,
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "runner_online");
+
+        registry
+            .set_last_seen_for_test(
+                "stale-runner",
+                chrono::Utc::now().timestamp()
+                    - webcodex_runner_registry::RUNNER_ONLINE_WINDOW_SECS
+                    - 1,
+            )
+            .await;
+        let (status, body) = runner_call(
+            Some(bootstrap_auth()),
+            registry.clone(),
+            r#"{"client_id":"stale-runner","confirm":true}"#,
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["outcome"], "unregistered");
+        assert_eq!(body["changed"], true);
+        assert_eq!(body["projects_removed"], 1);
+        assert!(registry.list_runners().await.is_empty());
     }
 
     #[test]

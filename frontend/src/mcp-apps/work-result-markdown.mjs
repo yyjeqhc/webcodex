@@ -19,12 +19,12 @@ export function render(target, source, document) {
       if (token.hidden) continue;
       if (token.type === "inline") { walk(token.children || [], parent); continue; }
       if (token.type === "image") {
-        text(parent, `[Image: ${token.content || "image"} · external image not loaded]`); continue;
+        text(parent, `[图片：${token.content || "图片"} · 外部图片未加载]`); continue;
       }
       if (token.type === "link_open") {
         const node = document.createElement("span"); node.className = "markdown-link";
         const url = token.attrGet("href");
-        if (url && parser.validateLink(url)) node.setAttribute("title", `${url} · links are shown without opening external resources`);
+        if (url && parser.validateLink(url)) node.setAttribute("title", `${url} · 仅显示链接，不打开外部资源`);
         parent.append(node); stack.push(node); continue;
       }
       if (token.type === "link_close") { if (stack.length > 1) stack.pop(); continue; }
@@ -52,7 +52,7 @@ export function render(target, source, document) {
   try { walk(parser.parse(source, {}), target); }
   catch (_) {
     target.replaceChildren();
-    text(target, "Markdown display limit reached · complete source shown below");
+    text(target, "已达到 Markdown 显示上限 · 完整内容显示在下方");
     const pre = document.createElement("pre"); pre.textContent = source; target.append(pre);
   }
 }

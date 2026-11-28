@@ -446,6 +446,22 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_admin_project_idempotency_created
                 ON admin_project_idempotency(created_at DESC);
 
+            CREATE TABLE IF NOT EXISTS admin_runner_lifecycle_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                correlation_id TEXT NOT NULL,
+                subject_type TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                runner TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                changed INTEGER NOT NULL,
+                projects_removed INTEGER NOT NULL,
+                reason_code TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_admin_runner_lifecycle_audit_created
+                ON admin_runner_lifecycle_audit(created_at DESC);
+
             CREATE TABLE IF NOT EXISTS workspace_activity (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at INTEGER NOT NULL,

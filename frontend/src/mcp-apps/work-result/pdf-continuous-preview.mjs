@@ -11,7 +11,7 @@ async function unzip(value) {
 class InlineBinaryDataFactory {
   async fetch({ kind, filename }) {
     const value = WEBCODEX_PDF_ASSETS[`${kind}/${filename}`];
-    if (!value) throw new Error("PDF font resource unavailable");
+    if (!value) throw new Error("PDF 字体资源不可用");
     return unzip(value);
   }
 }
@@ -49,32 +49,32 @@ export function createPreview(host, options) {
     node.type = "button"; node.textContent = label; node.onclick = () => void action();
     group.append(node); return node;
   };
-  const prev = button("Previous", () => jump(currentPage - 1), navigation);
+  const prev = button("上一页", () => jump(currentPage - 1), navigation);
   const info = element("span"); navigation.append(info);
-  const next = button("Next", () => jump(currentPage + 1), navigation);
+  const next = button("下一页", () => jump(currentPage + 1), navigation);
   const minus = button("−", async () => {
     if (!pdf) return;
     if (fit) scale = pageStates.get(currentPage)?.scale ?? scale;
     fit = false; scale = Math.max(0.15, scale / 1.2); await rescale();
   }, zoom);
-  minus.setAttribute("aria-label", "Zoom out");
+  minus.setAttribute("aria-label", "缩小");
   const plus = button("+", async () => {
     if (!pdf) return;
     if (fit) scale = pageStates.get(currentPage)?.scale ?? scale;
     fit = false; scale = Math.min(3, scale * 1.2); await rescale();
   }, zoom);
-  plus.setAttribute("aria-label", "Zoom in");
-  const fitButton = button("Fit width", async () => {
+  plus.setAttribute("aria-label", "放大");
+  const fitButton = button("适合宽度", async () => {
     if (!pdf) return;
     fit = true; await rescale();
   }, zoom);
-  fitButton.setAttribute("aria-label", "Fit page width");
+  fitButton.setAttribute("aria-label", "适合页面宽度");
 
   const search = element("input");
-  search.type = "search"; search.placeholder = "Find on page";
-  search.setAttribute("aria-label", "Find text on current PDF page");
+  search.type = "search"; search.placeholder = "在页内查找";
+  search.setAttribute("aria-label", "在当前 PDF 页面中查找文本");
   searchGroup.append(search);
-  const find = button("Find", () => {
+  const find = button("查找", () => {
     const query = search.value.trim().toLocaleLowerCase();
     if (!query) return;
     const state = pageStates.get(currentPage);
@@ -82,8 +82,8 @@ export function createPreview(host, options) {
       .find(node => node.textContent.toLocaleLowerCase().includes(query));
     if (!match) {
       setStatus(state?.rendered
-        ? "No match on this page · scanned images may have no text"
-        : "Current page text is still loading");
+        ? "本页无匹配 · 扫描图片可能不含文本"
+        : "当前页面文本仍在加载");
       return;
     }
     const range = host.ownerDocument.createRange();
@@ -91,7 +91,7 @@ export function createPreview(host, options) {
     const selection = host.ownerDocument.getSelection();
     selection.removeAllRanges(); selection.addRange(range);
     match.scrollIntoView({ block: "nearest", inline: "nearest" });
-    setStatus("Matching text selected");
+    setStatus("已选中匹配文本");
   }, searchGroup);
   search.onkeydown = event => {
     if (event.key === "Enter") { event.preventDefault(); find.onclick(); }
@@ -103,7 +103,7 @@ export function createPreview(host, options) {
     prev.disabled ||= currentPage <= 1;
     next.disabled ||= currentPage >= (pdf?.numPages ?? 0);
     info.textContent = ready ? `${currentPage} / ${pdf.numPages}` : "0 / 0";
-    fitButton.textContent = ready && !fit ? `${Math.round(scale * 100)}%` : "Fit width";
+    fitButton.textContent = ready && !fit ? `${Math.round(scale * 100)}%` : "适合宽度";
   }
   function setStatus(message) {
     status.textContent = failureMessage || message;
@@ -111,15 +111,15 @@ export function createPreview(host, options) {
   function summary() {
     if (!pdf) return;
     const pageScale = pageStates.get(currentPage)?.scale ?? scale;
-    setStatus(`${options.sourceLabel || "PDF"} · ${pdf.numPages} ${pdf.numPages === 1 ? "page" : "pages"} · ${Math.round(pageScale * 100)}%`);
+    setStatus(`${options.sourceLabel || "PDF"} · ${pdf.numPages} 页 · ${Math.round(pageScale * 100)}%`);
   }
   function failure(error) {
     if (!current() || failureMessage) return;
     const reason = String(error?.message || error).includes("Image exceeded maximum allowed size")
-      ? "An embedded image exceeds the 16 million pixel limit; a complete preview is unavailable."
+      ? "内嵌图片超过 1600 万像素上限，无法提供完整预览。"
       : String(error?.message || error);
     // Retry/source replacement creates a new preview; zoom is not recovery.
-    failureMessage = `PDF unavailable: ${reason}`;
+    failureMessage = `PDF 不可用：${reason}`;
     setStatus(failureMessage);
     options.failed?.();
   }
@@ -150,9 +150,9 @@ export function createPreview(host, options) {
     };
     port.addEventListener("message", workerMessage);
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => finish(new Error("PDF Worker unavailable")), 3000);
+      const timer = setTimeout(() => finish(new Error("PDF 工作线程不可用")), 3000);
       const message = event => { if (event.data?.webcodexPdfReady) finish(); };
-      const error = () => finish(new Error("PDF Worker blocked by the Host"));
+      const error = () => finish(new Error("PDF 工作线程被宿主阻止"));
       function finish(reason) {
         clearTimeout(timer);
         port?.removeEventListener("message", message);
@@ -443,7 +443,7 @@ export function createPreview(host, options) {
           ...options,
           current,
           progress: (loaded, total) => {
-            if (current()) setStatus(`Loading PDF · ${loaded} / ${total} bytes`);
+            if (current()) setStatus(`正在加载 PDF · ${loaded} / ${total} 字节`);
           },
         });
         await createWorker();

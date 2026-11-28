@@ -99,8 +99,8 @@ for (const channel of ["structured", "private", "text"]) for (const linked of [f
       view.toolInput(args);
       await view.initialize();
       assert.equal(view.nodes.refresh.disabled, false);
-      assert.equal(view.nodes.projectIdentity.textContent, "Project · " + project);
-      assert.equal(view.nodes.sessionIdentity.textContent, linked ? "Session · " + session_id : "Session · not linked yet");
+      assert.equal(view.nodes.projectIdentity.textContent, project);
+      assert.equal(view.nodes.sessionIdentity.textContent, linked ? session_id : "尚未关联");
       view.nodes.refresh.onclick();
       await flush();
       const call = view.calls("get_work_result_state")[0];
@@ -164,7 +164,7 @@ for (const selectors of [
     if (first === "result") view.toolInput(selectedInput);
     await view.initialize();
     await flush();
-    assert.equal(view.nodes.projectIdentity.textContent, "Project · " + project);
+    assert.equal(view.nodes.projectIdentity.textContent, project);
     assert.equal(view.nodes.refresh.disabled, false);
     view.nodes.refresh.onclick();
     await flush();
@@ -198,7 +198,10 @@ for (const selectors of [
     await view.fireTimers(100000);
     assert.match(view.nodes.status.textContent, /WR-INPUT-UNRESOLVED/);
     assert.doesNotMatch(view.nodes.status.textContent, /private-host-payload|~[ps]/);
-    assert.equal(view.nodes.initialDelivery.textContent, `Initial delivery · first: ${first} · input: yes · result: yes · structured: no · private: no · selectors: no`);
+    assert.deepEqual(kvRow(view.nodes.initialDelivery, "首个通道"), ["首个通道", first === "input" ? "输入" : "结果"]);
+    assert.deepEqual(kvRow(view.nodes.initialDelivery, "结构化内容"), ["结构化内容", "否"]);
+    assert.deepEqual(kvRow(view.nodes.initialDelivery, "私有元数据"), ["私有元数据", "否"]);
+    assert.deepEqual(kvRow(view.nodes.initialDelivery, "选择器"), ["选择器", "否"]);
     assert.equal(view.nodes.refresh.disabled, true);
     assert.equal(view.calls("get_work_result_state").length, 0);
     assert.equal(view.timers.size, 0);
@@ -217,8 +220,10 @@ for (const first of ["input", "result"]) test(`private final result still resolv
   await view.initialize();
   await flush();
   assert.equal(view.nodes.refresh.disabled, false);
-  assert.equal(view.nodes.initialDelivery.textContent, `Initial delivery · first: ${first} · input: yes · result: yes · structured: no · private: yes · selectors: yes`);
-  assert.doesNotMatch(view.nodes.initialDelivery.textContent, /~[ps]|agent:|wc_sess/);
+  assert.deepEqual(kvRow(view.nodes.initialDelivery, "首个通道"), ["首个通道", first === "input" ? "输入" : "结果"]);
+    assert.deepEqual(kvRow(view.nodes.initialDelivery, "私有元数据"), ["私有元数据", "是"]);
+    assert.deepEqual(kvRow(view.nodes.initialDelivery, "选择器"), ["选择器", "是"]);
+  assert.doesNotMatch(view.nodes.initialDelivery.children.map(row => row.children.map(child => child.textContent).join("")).join(""), /~[ps]|agent:|wc_sess/);
   view.nodes.refresh.onclick();
   await flush();
   assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, input);
@@ -237,7 +242,7 @@ test("selector input waits without reads until its canonical private result arri
   view.notification("ui/notifications/tool-result", { result });
   await flush();
   assert.equal(view.nodes.refresh.disabled, false);
-  assert.equal(view.nodes.projectIdentity.textContent, "Project · " + project);
+  assert.equal(view.nodes.projectIdentity.textContent, project);
 });
 
 for (const selectors of [
@@ -294,7 +299,7 @@ for (const resultFirst of [false, true]) test(`first-open thread is an empty pan
   assert.equal(view.nodes.viewTabs.hidden, true);
   assert.equal(view.nodes.workResultContent.hidden, true);
   assert.equal(view.nodes.refresh.disabled, true);
-  assert.match(view.nodes.status.textContent, /Waiting for a work result/);
+  assert.match(view.nodes.status.textContent, /等待此对话中的工作结果/);
   await view.fireTimers(10000);
   assert.equal(view.calls("get_work_result_state").length, 0);
   assert.equal(view.calls("list_sessions").length, 0);
@@ -324,7 +329,7 @@ test("a mounted result cannot be erased by an empty thread result", async () => 
   view.notification("ui/notifications/tool-result", emptyThreadResult());
   assert.equal(view.nodes.emptyState.hidden, true);
   assert.equal(view.nodes.refresh.disabled, true);
-  assert.match(view.nodes.status.textContent, /unavailable/);
+  assert.match(view.nodes.status.textContent, /不可用/);
 });
 
 for (const context of [undefined, { empty: true, session_id }, { empty: true, session_id: null, project }]) {
@@ -350,7 +355,7 @@ for (const resultFirst of [false, true]) test(`thread initialization preserves t
   const call = view.calls("get_work_result_state")[0];
   assert.deepEqual(JSON.parse(JSON.stringify(call.params.arguments)), input);
   await view.reply(call, toolResult({ work_result: nextState }));
-  assert.equal(view.nodes.sessionIdentity.textContent, "Session · " + session_id);
+  assert.equal(view.nodes.sessionIdentity.textContent, session_id);
 });
 
 test("thread initialization never promotes a Window-linked Session into refresh authority", async () => {
@@ -370,8 +375,8 @@ for (const context of [undefined, {}, { session_id: "invalid" }, { session_id: `
     if (context !== undefined) result._meta = { "webcodex/workResultThread": context };
     view.notification("ui/notifications/tool-result", result);
     await view.initialize();
-    assert.equal(view.nodes.badge.textContent, "Unavailable");
-    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · " +
+    assert.equal(view.nodes.badge.textContent, "不可用");
+    assert.equal(view.nodes.status.textContent, "此工作结果卡片不可用 · " +
       (context === undefined ? "WR-THREAD-BINDING-MISSING" : "WR-THREAD-BINDING-CONFLICT"));
     assert.equal(view.calls("get_work_result_state").length, 0);
   });
@@ -383,9 +388,9 @@ test("a mounted thread cannot be retargeted by a later presentation", async () =
   view.notification("ui/notifications/tool-result", threadResult(baseState, session_id));
   await view.initialize();
   view.notification("ui/notifications/tool-result", threadResult({ ...baseState, session_id: `wc_sess_${"2".repeat(32)}` }, `wc_sess_${"2".repeat(32)}`));
-  assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.nodes.badge.textContent, "不可用");
   // The internally inconsistent state is rejected before binding comparison.
-  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-STATE-INVALID");
+  assert.equal(view.nodes.status.textContent, "此工作结果卡片不可用 · WR-STATE-INVALID");
 });
 
 test("thread review puts checks before long file lists while keeping diagnostics folded", async () => {
@@ -400,7 +405,8 @@ test("thread review puts checks before long file lists while keeping diagnostics
   assert.deepEqual(view.nodes.panelResults.children.slice(0, 4), [view.nodes.resultChecks, view.nodes.quotePanel, view.nodes.workspaceChangesSection, view.nodes.finalChanges]);
   assert.equal(view.nodes.quotePanel.hidden, true);
   assert.equal(view.nodes.diagnostics.open, false);
-  assert.deepEqual(view.nodes.diagnosticContent.children, [view.nodes.taskContext]);
+  assert.deepEqual([...view.nodes.diagnosticContent.children].map(node => node === view.nodes.taskContext ? "identity"
+    : node === view.nodes.deliveryGroup ? "delivery" : "other"), ["delivery", "identity"]);
   view.nodes.tabResults.onkeydown({ key: "ArrowLeft", preventDefault() {} });
   assert.equal(view.nodes.panelActivity.hidden, false);
 });
@@ -450,8 +456,8 @@ test("non-Git task outputs show independently observed files and partial failure
   assert.equal(view.nodes.taskOutputsSection.hidden, false);
   assert.equal(view.nodes.workspaceChangesSection.hidden, true);
   assert.equal(view.nodes.taskOutputsList.children.length, 3);
-  assert.match(view.nodes.taskOutputsSummary.textContent, /1 observed.*1 missing.*1 unavailable/);
-  assert.match(view.nodes.taskOutputsObserved.textContent, /files may change after this observation/);
+  assert.match(view.nodes.taskOutputsSummary.textContent, /已验证 1 · 缺失 1 · 不可用 1/);
+  assert.match(view.nodes.taskOutputsObserved.textContent, /此后文件可能已经变化/);
   const rows = view.nodes.taskOutputsList.children;
   assert.equal(rows[0].children[0].textContent, "results/report.csv");
   assert.equal(rows[0].children[2].children[1].textContent, "SHA-256 · " + "d".repeat(64));
@@ -473,12 +479,12 @@ test("explicit output export request preserves Project path and observed SHA", a
   assert.ok(text.includes(project));
   assert.ok(text.includes('"results/report.csv"'));
   assert.ok(text.includes("d".repeat(64)));
-  assert.match(text, /First check.*if it changed/);
+  assert.match(text, /先核对.*如有变化/);
   assert.equal(view.calls("inspect_project_artifact").length, 0);
   await view.reply(request, {});
   await pending;
   assert.equal(button.disabled, false);
-  assert.equal(view.nodes.taskOutputsAction.textContent, "File requested in chat.");
+  assert.equal(view.nodes.taskOutputsAction.textContent, "已请求在对话中获取文件。");
 });
 
 test("malformed or unlinked output evidence cannot populate the task card", async () => {
@@ -510,7 +516,7 @@ test("output request failure remains retryable and teardown ignores a late reply
   await view.reject(view.sent.find(r => r.method === "ui/message"));
   await failed;
   assert.equal(button.disabled, false);
-  assert.match(view.nodes.taskOutputsAction.textContent, /Try again/);
+  assert.match(view.nodes.taskOutputsAction.textContent, /请重试/);
   const pending = button.onclick();
   await button.onclick();
   const requests = view.sent.filter(r => r.method === "ui/message");
@@ -530,7 +536,7 @@ test("initial private Work Result fallback renders when Host omits structuredCon
   view.notification("ui/notifications/tool-result", privateOnly(toolResult({ work_result: baseState })));
   await flush();
   assert.equal(view.nodes.taskTitle.textContent, "Work Result test");
-  assert.equal(view.nodes.badge.textContent, "Waiting");
+  assert.equal(view.nodes.badge.textContent, "等待中");
   assert.equal(view.nodes.refresh.disabled, false);
   assert.equal(view.calls("get_work_result_state").length, 0);
 });
@@ -549,12 +555,12 @@ test("Window card renders and refreshes before any Workflow Session exists", asy
   view.toolInput({ project });
   view.toolResult({ work_result: windowOnlyState });
   await view.initialize();
-  assert.equal(view.nodes.taskTitle.textContent, "WebCodex activity");
-  assert.equal(view.nodes.projectIdentity.textContent, "Project · " + project);
-  assert.equal(view.nodes.windowIdentity.textContent, "Window · " + "f".repeat(64));
-  assert.equal(view.nodes.sessionIdentity.textContent, "Session · not linked yet");
-  assert.equal(view.nodes.windowSource.textContent, "Source · mcp");
-  assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
+  assert.equal(view.nodes.taskTitle.textContent, "WebCodex 活动");
+  assert.equal(view.nodes.projectIdentity.textContent, project);
+  assert.equal(view.nodes.windowIdentity.textContent, "f".repeat(64));
+  assert.equal(view.nodes.sessionIdentity.textContent, "尚未关联");
+  assert.equal(view.nodes.windowSource.textContent, "mcp");
+  assert.equal(view.nodes.windowCoverage.textContent, "已记录 2 次调用");
   assert.equal(view.nodes.windowActivity.children.length, 2);
   assert.equal(view.nodes.collaborationMeta.textContent, "");
   assert.equal(view.nodes.messageInput.disabled, true);
@@ -572,12 +578,12 @@ test("missing initial machine result recovers once through app-only content fall
     content: [{ type: "text", text: "WebCodex tool completed successfully." }],
   });
   await flush();
-  assert.notEqual(view.nodes.status.textContent, "This Work Result card is unavailable");
+  assert.notEqual(view.nodes.status.textContent, "此工作结果卡片不可用");
   assert.equal(view.calls("get_work_result_state").length, 1);
   await view.reply(view.calls("get_work_result_state")[0], contentOnly(toolResult({ work_result: baseState })));
   assert.equal(view.nodes.taskTitle.textContent, "Work Result test");
   assert.equal(view.nodes.refresh.disabled, false);
-  assert.match(view.nodes.status.textContent, /Updated|Up to date|Live/);
+  assert.match(view.nodes.status.textContent, /已更新|已是最新|已连接/);
 });
 
 test("Activity stays focused while Results exposes live files", async () => {
@@ -587,11 +593,11 @@ test("Activity stays focused while Results exposes live files", async () => {
   assert.equal(view.nodes.taskTitle.textContent, "Work Result test");
   assert.equal(view.nodes.activityStatus.textContent, "Reviewed changes");
   assert.doesNotMatch(view.nodes.activityStatus.textContent, /read_workspace_changes|session event/i);
-  assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
+  assert.equal(view.nodes.windowCoverage.textContent, "已记录 2 次调用");
   assert.equal(view.nodes.windowActivity.children.length, 2);
   assert.equal(view.nodes.panelResults.hidden, true);
-  assert.match(view.nodes.workspaceFiles.children[0].children[0].textContent, /src\/a.rs/);
-  assert.equal(view.nodes.collaborationMeta.textContent, "0 loaded");
+  assert.match(fileRowLabel(view.nodes.workspaceFiles.children[0]), /src\/a.rs/);
+  assert.equal(view.nodes.collaborationMeta.textContent, "已加载 0 条");
 });
 
 test("recent inactive work keeps the lightweight last-active state before the idle threshold", async () => {
@@ -608,8 +614,8 @@ test("recent inactive work keeps the lightweight last-active state before the id
   view.toolResult({ work_result: quietState });
   await view.initialize();
   assert.equal(view.nodes.activityStatus.textContent, "Edited files");
-  assert.equal(view.nodes.activityAge.textContent, "Last active 10s ago");
-  assert.equal(view.nodes.badge.textContent, "Waiting");
+  assert.equal(view.nodes.activityAge.textContent, "最近活动于 10 秒前");
+  assert.equal(view.nodes.badge.textContent, "等待中");
 });
 
 test("inactive work becomes explicitly idle from local wall-clock time while preserving the last semantic activity", async () => {
@@ -625,10 +631,10 @@ test("inactive work becomes explicitly idle from local wall-clock time while pre
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: idleState });
   await view.initialize();
-  assert.equal(view.nodes.badge.textContent, "Idle");
-  assert.equal(view.nodes.activityStatus.textContent, "No WebCodex activity");
-  assert.equal(view.nodes.activityDetail.textContent, "Last activity: Ran checks");
-  assert.equal(view.nodes.activityAge.textContent, "Idle for 3m");
+  assert.equal(view.nodes.badge.textContent, "空闲");
+  assert.equal(view.nodes.activityStatus.textContent, "WebCodex 暂无活动");
+  assert.equal(view.nodes.activityDetail.textContent, "最近活动：Ran checks");
+  assert.equal(view.nodes.activityAge.textContent, "已空闲 3 分钟");
 });
 
 test("missing meaningful activity time waits without inventing an idle age", async () => {
@@ -638,8 +644,8 @@ test("missing meaningful activity time waits without inventing an idle age", asy
     activity: { ...baseState.activity, last: null, last_meaningful_activity_at_ms: null },
   } });
   await view.initialize();
-  assert.equal(view.nodes.badge.textContent, "Waiting");
-  assert.equal(view.nodes.activityStatus.textContent, "Waiting for WebCodex activity");
+  assert.equal(view.nodes.badge.textContent, "等待中");
+  assert.equal(view.nodes.activityStatus.textContent, "等待 WebCodex 活动");
   assert.equal(view.nodes.activityAge.textContent, "");
 });
 
@@ -657,8 +663,8 @@ test("internal validation or Session lifecycle does not override Window idle tru
     const view = app("mcp_work_result_app.html");
     view.toolResult({ work_result: state });
     await view.initialize();
-    assert.equal(view.nodes.badge.textContent, "Idle");
-    assert.equal(view.nodes.activityStatus.textContent, "No WebCodex activity");
+    assert.equal(view.nodes.badge.textContent, "空闲");
+    assert.equal(view.nodes.activityStatus.textContent, "WebCodex 暂无活动");
   }
 });
 
@@ -675,14 +681,14 @@ test("unchanged state_version refresh still advances wall-clock idle copy withou
   view.toolInput(input);
   view.toolResult({ work_result: recent });
   await view.initialize();
-  assert.equal(view.nodes.badge.textContent, "Waiting");
+  assert.equal(view.nodes.badge.textContent, "等待中");
   view.advanceTime(20_000);
   view.nodes.refresh.onclick();
   await flush();
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: recent }));
-  assert.equal(view.nodes.badge.textContent, "Idle");
-  assert.equal(view.nodes.activityStatus.textContent, "No WebCodex activity");
-  assert.equal(view.nodes.activityAge.textContent, "Idle for 1m");
+  assert.equal(view.nodes.badge.textContent, "空闲");
+  assert.equal(view.nodes.activityStatus.textContent, "WebCodex 暂无活动");
+  assert.equal(view.nodes.activityAge.textContent, "已空闲 1 分钟");
 });
 
 test("Window messages render sender delivery state but not inbound peer delivery state", async () => {
@@ -707,15 +713,15 @@ test("Window messages render sender delivery state but not inbound peer delivery
   await view.initialize();
   const rows = view.nodes.messages.children;
   const metadata = row => row.children.at(-1).children.map(child => child.textContent).join(' ');
-  assert.match(metadata(rows[0]), /Saved/);
-  assert.match(metadata(rows[1]), /Included in tool result/);
-  assert.match(metadata(rows[2]), /Acknowledged/);
-  assert.match(metadata(rows[2]), /Reply received/);
-  assert.doesNotMatch(metadata(rows[3]), /Saved|Included in tool result|Acknowledged/);
-  assert.equal(rows[3].children[0].children[0].textContent, "This Window → You");
-  assert.match(rows[3].children[1].textContent, /Reply to · acknowledged/);
-  assert.doesNotMatch(metadata(rows[4]), /Saved|Included in tool result|Acknowledged/);
-  assert.match(metadata(rows[5]), /Included in tool result/);
+  assert.match(metadata(rows[0]), /已保存/);
+  assert.match(metadata(rows[1]), /已送达对话/);
+  assert.match(metadata(rows[2]), /已确认/);
+  assert.match(metadata(rows[2]), /已收到回复/);
+  assert.doesNotMatch(metadata(rows[3]), /已保存|已送达对话|已确认/);
+  assert.equal(rows[3].children[0].children[0].textContent, "WebCodex → 你");
+  assert.match(rows[3].children[1].textContent, /回复 · acknowledged/);
+  assert.doesNotMatch(metadata(rows[4]), /已保存|已送达对话|已确认/);
+  assert.match(metadata(rows[5]), /已送达对话/);
 });
 
 test("card composer retries uncertain delivery with the same payload across context changes", async () => {
@@ -735,7 +741,7 @@ test("card composer retries uncertain delivery with the same payload across cont
   assert.match(first.params.arguments.delivery_key, /^wrc_[0-9a-f]{32}$/);
 
   await view.fireTimers(10000);
-  assert.match(view.nodes.composerState.textContent, /status unknown/);
+  assert.match(view.nodes.composerState.textContent, /发送状态未知/);
   const changedContext = { ...baseState, session_id: `wc_sess_${"2".repeat(32)}`, state_version: `wr2_${"9".repeat(64)}` };
   view.toolResult({ work_result: changedContext });
   await flush();
@@ -754,7 +760,7 @@ test("card composer retries uncertain delivery with the same payload across cont
   })));
   const historyRead = view.calls("get_work_result_state").find(call => call.params.arguments.collaboration);
   assert.ok(historyRead, "receipt must refresh history even while an earlier activity read is pending");
-  assert.equal(view.nodes.sendMessage.textContent, "Send", "composer does not wait for the history read");
+  assert.equal(view.nodes.sendMessage.textContent, "发送", "composer does not wait for the history read");
   const refreshed = {
     ...baseState,
     state_version: `wr2_${"e".repeat(64)}`,
@@ -768,7 +774,7 @@ test("card composer retries uncertain delivery with the same payload across cont
   };
   await view.reply(historyRead, contentOnly(toolResult({ work_result_collaboration: refreshed.collaboration })));
   assert.equal(view.nodes.messageInput.value, "");
-  assert.equal(view.nodes.messages.children[0].children.at(-1).children.at(-1).textContent, "Saved");
+  assert.equal(view.nodes.messages.children[0].children.at(-1).children.at(-1).textContent, "已保存");
 });
 
 test("card conflict is deterministic and the next explicit send gets a new delivery key", async () => {
@@ -783,8 +789,8 @@ test("card conflict is deterministic and the next explicit send gets a new deliv
   const first = view.calls("send_work_result_message")[0];
   await view.reply(first, { structuredContent: { success: false, output: { failure_kind: "conflict", error_kind: "delivery_key_conflict", state_changed: false }, error: "delivery_key_conflict" } });
   assert.equal(view.nodes.messageInput.value, "Keep conflict draft");
-  assert.equal(view.nodes.sendMessage.textContent, "Send");
-  assert.equal(view.nodes.composerState.textContent, "Message could not be sent");
+  assert.equal(view.nodes.sendMessage.textContent, "发送");
+  assert.equal(view.nodes.composerState.textContent, "消息未能发送。");
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
   const second = view.calls("send_work_result_message")[1];
@@ -803,7 +809,7 @@ test("card invalid context preserves the draft and rebuilds payload on the next 
   const first = view.calls("send_work_result_message")[0];
   await view.reply(first, { structuredContent: { success: false, output: { failure_kind: "invalid_context", error_kind: "session_context_unlinked", state_changed: false }, error: "Session context is not explicitly linked to this Window" } });
   assert.equal(view.nodes.messageInput.value, "Keep context draft");
-  assert.equal(view.nodes.composerState.textContent, "Context is no longer available");
+  assert.equal(view.nodes.composerState.textContent, "上下文已不可用");
   const replacement = { ...baseState, session_id: `wc_sess_${"4".repeat(32)}`, state_version: `wr2_${"4".repeat(64)}` };
   view.toolResult({ work_result: replacement });
   await flush();
@@ -843,7 +849,7 @@ for (const first of ["input", "result"]) {
     else view.toolInput(input);
     await flush();
     assert.equal(view.calls("get_work_result_state").length, 0);
-    assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
+    assert.equal(view.nodes.windowCoverage.textContent, "已记录 2 次调用");
     assert.equal(view.nodes.windowActivity.children.length, 2);
     assert.equal(view.nodes.refresh.disabled, false);
   });
@@ -855,14 +861,14 @@ test("input-only bootstrap waits for a user Refresh before reading state", async
   await view.initialize();
   assert.equal(view.calls("get_work_result_state").length, 0);
   assert.equal(view.nodes.refresh.disabled, false);
-  assert.match(view.nodes.status.textContent, /Waiting for Window activity/);
+  assert.match(view.nodes.status.textContent, /等待调用/);
   view.nodes.refresh.onclick();
   await flush();
   assert.equal(view.calls("get_work_result_state").length, 1);
   assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id });
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: baseState }));
-  assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
-  assert.equal(view.nodes.status.textContent, "Updated");
+  assert.equal(view.nodes.windowCoverage.textContent, "已记录 2 次调用");
+  assert.equal(view.nodes.status.textContent, "已更新");
 });
 
 test("matching Work input/result identity is idempotent and unchanged initial state avoids DOM rebuild", async () => {
@@ -885,7 +891,7 @@ test("automatic workspace reuse is explicit and manual Refresh always requests a
   assert.equal(automatic.params.arguments.automatic, true);
   await view.reply(automatic, toolResult({work_result: {...baseState,
     workspace_observation: {reused: true, max_reuse_ms: 30000, semantics: "bounded_snapshot_not_filesystem_freshness"}}}));
-  assert.match(view.nodes.status.title, /at most 30 seconds/);
+  assert.match(view.nodes.status.title, /至多 30 秒/);
   view.nodes.refresh.onclick(); await flush();
   const manual = view.calls("get_work_result_state").at(-1);
   assert.equal(manual.params.arguments.automatic, undefined);
@@ -904,8 +910,8 @@ test("live progress performs bounded app-only polling and adapts to visibility",
   assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id, automatic: true });
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.activityStatus.textContent, "Running checks");
-  assert.equal(view.nodes.activityAge.textContent, "Active now");
-  assert.equal(view.nodes.badge.textContent, "Working");
+  assert.equal(view.nodes.activityAge.textContent, "当前活跃");
+  assert.equal(view.nodes.badge.textContent, "工作中");
   await view.fireTimers(10000);
   assert.equal(view.calls("get_work_result_state").length, 2);
   await view.reply(view.calls("get_work_result_state")[1], toolResult({ work_result: nextState }));
@@ -934,7 +940,7 @@ test("closed linked Session does not stop Window-level automatic polling", async
   assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id, automatic: true });
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: closedState }));
   assert.equal(view.nodes.refresh.disabled, false);
-  assert.equal(view.nodes.status.textContent, "Live");
+  assert.equal(view.nodes.status.textContent, "已连接");
 });
 
 test("unchanged active Session pauses automatic polling after bounded idle time and manual Refresh resumes it", async () => {
@@ -947,14 +953,14 @@ test("unchanged active Session pauses automatic polling after bounded idle time 
   view.advanceTime(30 * 60 * 1000);
   await view.visibility(false);
   assert.equal(view.timers.size, 0);
-  assert.match(view.nodes.status.textContent, /Updates paused/);
+  assert.match(view.nodes.status.textContent, /更新已暂停/);
   assert.equal(view.calls("get_work_result_state").length, 0);
 
   view.nodes.refresh.onclick();
   await flush();
   assert.equal(view.calls("get_work_result_state").length, 1);
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: baseState }));
-  assert.equal(view.nodes.status.textContent, "Up to date");
+  assert.equal(view.nodes.status.textContent, "已是最新");
   assert.equal([...view.timers.values()].some(timer => timer.delay === 10000), true);
 });
 
@@ -968,11 +974,11 @@ test("user Refresh performs one exact state read and updates the snapshot", asyn
   assert.equal(view.calls("get_work_result_state").length, 1);
   assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id });
   assert.equal(view.nodes.refresh.disabled, true);
-  assert.equal(view.nodes.refresh.textContent, "Refreshing…");
+  assert.equal(view.nodes.refresh.textContent, "正在刷新…");
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
-  assert.equal(view.nodes.windowCoverage.textContent, "3 observed events");
+  assert.equal(view.nodes.windowCoverage.textContent, "已记录 3 次调用");
   assert.equal(view.nodes.windowActivity.children.length, 4);
-  assert.equal(view.nodes.status.textContent, "Updated");
+  assert.equal(view.nodes.status.textContent, "已更新");
   assert.equal(view.nodes.refresh.disabled, false);
 });
 
@@ -987,7 +993,7 @@ test("in-flight Refresh clicks coalesce and a later user click performs one new 
   await flush();
   assert.equal(view.calls("get_work_result_state").length, 1);
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: baseState }));
-  assert.equal(view.nodes.status.textContent, "Up to date");
+  assert.equal(view.nodes.status.textContent, "已是最新");
   view.nodes.refresh.onclick();
   await flush();
   assert.equal(view.calls("get_work_result_state").length, 2);
@@ -1003,23 +1009,23 @@ test("failed Refresh preserves the last valid snapshot and remains retryable", a
   view.nodes.refresh.onclick();
   await flush();
   await view.reply(view.calls("get_work_result_state")[0], { structuredContent: { success: false, output: { error_kind: "workspace_unavailable" } } });
-  assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
-  assert.match(view.nodes.status.textContent, /Refresh unavailable/);
+  assert.equal(view.nodes.windowCoverage.textContent, "已记录 2 次调用");
+  assert.match(view.nodes.status.textContent, /刷新不可用/);
   assert.equal(view.nodes.refresh.disabled, false);
 
   view.nodes.refresh.onclick();
   await flush();
   assert.equal(view.calls("get_work_result_state").length, 2);
   await view.reject(view.calls("get_work_result_state")[1]);
-  assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
-  assert.match(view.nodes.status.textContent, /Refresh unavailable/);
+  assert.equal(view.nodes.windowCoverage.textContent, "已记录 2 次调用");
+  assert.match(view.nodes.status.textContent, /刷新不可用/);
   assert.equal(view.nodes.refresh.disabled, false);
 
   view.nodes.refresh.onclick();
   await flush();
   assert.equal(view.calls("get_work_result_state").length, 3);
   await view.reply(view.calls("get_work_result_state")[2], toolResult({ work_result: baseState }));
-  assert.equal(view.nodes.status.textContent, "Up to date");
+  assert.equal(view.nodes.status.textContent, "已是最新");
 });
 
 for (const first of ["input", "result"]) {
@@ -1033,7 +1039,7 @@ for (const first of ["input", "result"]) {
     else view.toolInput(foreign);
     await flush();
     assert.equal(view.calls("get_work_result_state").length, 0);
-    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-IDENTITY-INVALID");
+    assert.equal(view.nodes.status.textContent, "此工作结果卡片不可用 · WR-IDENTITY-INVALID");
     assert.equal(view.nodes.refresh.disabled, true);
     assert.equal(view.timers.size, 0);
   });
@@ -1047,7 +1053,7 @@ test("malformed authoritative Refresh state fails closed", async () => {
   view.nodes.refresh.onclick();
   await flush();
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: { ...baseState, state_version: "bad" } }));
-  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-STATE-INVALID");
+  assert.equal(view.nodes.status.textContent, "此工作结果卡片不可用 · WR-STATE-INVALID");
   assert.equal(view.nodes.refresh.disabled, true);
 });
 
@@ -1075,7 +1081,7 @@ test("collaboration context_project rejects controls and unbounded identities", 
       },
     } });
     await view.initialize();
-    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-STATE-INVALID");
+    assert.equal(view.nodes.status.textContent, "此工作结果卡片不可用 · WR-STATE-INVALID");
     assert.equal(view.nodes.refresh.disabled, true);
   }
 });
@@ -1094,7 +1100,7 @@ test("Window coverage stays explicit when retained activity is truncated", async
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: partialState });
   await view.initialize();
-  assert.equal(view.nodes.windowCoverage.textContent, "Showing 2 of 41 observed events");
+  assert.equal(view.nodes.windowCoverage.textContent, "显示 41 次调用中的 2 次");
   assert.equal(view.nodes.windowActivity.children.length, 2);
   assert.equal(view.calls("get_work_result_state").length, 0);
 });
@@ -1113,7 +1119,7 @@ for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
     await view.visibility(false);
     assert.equal(view.calls("get_work_result_state").length, 1);
     assert.equal(view.timers.size, 0);
-    assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
+    assert.equal(view.nodes.windowCoverage.textContent, "已记录 2 次调用");
   });
 }
 
@@ -1123,7 +1129,7 @@ test("invalid Project input never refreshes", async () => {
     view.toolInput(bad);
     await flush();
     assert.equal(view.calls("get_work_result_state").length, 0);
-    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-IDENTITY-INVALID");
+    assert.equal(view.nodes.status.textContent, "此工作结果卡片不可用 · WR-IDENTITY-INVALID");
     assert.equal(view.nodes.refresh.disabled, true);
     assert.equal(view.timers.size, 0);
   }
@@ -1170,7 +1176,7 @@ const frozenWork = (overrides = {}) => ({ ...baseState, final_changes: { ...fina
 function frozenNodes(view, index = 0) {
   const root = view.nodes.frozenFiles.children[index];
   const button = root.children[0], wrap = root.children[1];
-  return { root, button, wrap, state: wrap.children[0], get pre() { return wrap.children[1]; } };
+  return { root, row: root, button, wrap, state: wrap.children[0], get pre() { return wrap.children[1]; } };
 }
 function frozenDiff(overrides = {}) {
   const diff = overrides.diff ?? "diff --git a/src/file_0.rs b/src/file_0.rs\n@@ -1 +1 @@\n-old\n+new\n";
@@ -1199,12 +1205,12 @@ for (const first of ["input", "result"]) {
     assert.equal(view.calls("read_changed_file_diff").length, 0);
     assert.equal(view.calls("get_work_result_state").length, 0);
     assert.equal(view.nodes.finalChanges.hidden, false);
-    assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
+    assert.equal(view.nodes.frozenSummary.textContent, "已更改 7 个文件");
     assert.equal(view.nodes.frozenFiles.children.length, 5);
-    assert.equal(view.nodes.frozenMore.textContent, "Show more files");
+    assert.equal(view.nodes.frozenMore.textContent, "显示更多文件");
     assert.equal(frozenNodes(view).pre, undefined, "no diff DOM before expansion");
-    assert.match(frozenNodes(view, 3).button.textContent, /src\/old_name.rs → src\/new_name.rs/);
-    assert.match(frozenNodes(view, 4).button.textContent, /binary/);
+    assert.match(fileRowLabel(frozenNodes(view, 3).row), /src\/old_name.rs → src\/new_name.rs/);
+    assert.match(fileRowLabel(frozenNodes(view, 4).row), /二进制/);
     assert.equal(view.timers.size, 1);
   });
 }
@@ -1306,7 +1312,7 @@ test("refreshing file snapshot ignores an older page and leaves the new more but
   assert.equal(view.nodes.workspaceFiles.children[0], row);
   assert.equal(view.nodes.workspaceMore.disabled, false);
   assert.equal(view.calls("get_work_result_state").length, 2);
-  assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /unavailable/);
+  assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /不可用/);
 });
 
 test("a file page cannot replace its Project and sealed changes cannot retarget their Session", async () => {
@@ -1317,11 +1323,11 @@ test("a file page cannot replace its Project and sealed changes cannot retarget 
     project: "agent:special:foreign", session_id: null, snapshot_id, offset: 0, next_offset: null,
     files_total: 1, source_truncated: false, files: [frozenFile(0)],
   } }));
-  assert.match(view.nodes.workspaceMeta.textContent, /unavailable/);
+  assert.match(view.nodes.workspaceMeta.textContent, /不可用/);
   assert.equal(view.calls("get_work_result_state").length, 1);
   view.toolResult({ work_result: { ...frozenWork(), session_id: `wc_sess_${"3".repeat(32)}` } });
   await flush();
-  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-FROZEN-IDENTITY-CONFLICT");
+  assert.equal(view.nodes.status.textContent, "此工作结果卡片不可用 · WR-FROZEN-IDENTITY-CONFLICT");
   assert.equal(view.nodes.refresh.disabled, true);
   assert.equal(view.calls("read_changed_file_diff").length, 0);
 });
@@ -1334,7 +1340,7 @@ test("frozen expansion reads the exact four-part identity once and re-expansion 
   assert.equal(view.calls("read_changed_file_diff").length, 1);
   assert.deepEqual({ ...view.calls("read_changed_file_diff")[0].params.arguments }, { project, session_id, snapshot_id, path: "src/file_0.rs" });
   await view.reply(view.calls("read_changed_file_diff")[0], contentOnly(frozenDiff()));
-  assert.equal(nodes.state.textContent, "File changes");
+  assert.equal(nodes.state.textContent, "文件变更");
   assert.equal(nodes.pre.children.some(line => line.textContent === "+new" && line.className.includes("added")), true);
   assert.equal(nodes.pre.children.some(line => line.textContent === "-old" && line.className.includes("deleted")), true);
   nodes.button.onclick(); nodes.button.onclick();
@@ -1355,10 +1361,10 @@ test("Show more and live Refresh preserve pending frozen nodes, initial identity
   await flush();
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.finalChanges.hidden, false);
-  assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
+  assert.equal(view.nodes.frozenSummary.textContent, "已更改 7 个文件");
   assert.equal(frozenNodes(view).root, nodes.root);
   await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff());
-  assert.equal(nodes.state.textContent, "File changes");
+  assert.equal(nodes.state.textContent, "文件变更");
   nodes.button.onclick(); nodes.button.onclick();
   assert.equal(view.calls("read_changed_file_diff").length, 1);
   assert.equal(view.calls("read_changed_file_diff")[0].params.arguments.snapshot_id, snapshot_id);
@@ -1374,7 +1380,7 @@ test("initial snapshot is idempotent and its late arrival cannot roll back an ex
   view.toolResult({ work_result: frozenWork() });
   assert.equal(frozenNodes(view).root, root);
   assert.equal(view.nodes.finalChanges.hidden, false);
-  assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
+  assert.equal(view.nodes.frozenSummary.textContent, "已更改 7 个文件");
 });
 
 test("live progress card adopts the first sealed final snapshot from a later state refresh", async () => {
@@ -1386,8 +1392,8 @@ test("live progress card adopts the first sealed final snapshot from a later sta
   view.nodes.refresh.onclick(); await flush();
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: frozenWork() }));
   assert.equal(view.nodes.finalChanges.hidden, false);
-  assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
-  assert.match(view.nodes.status.textContent, /Live · final changes available/);
+  assert.equal(view.nodes.frozenSummary.textContent, "已更改 7 个文件");
+  assert.match(view.nodes.status.textContent, /已连接 · 最终变更可用/);
   const root = frozenNodes(view).root;
   view.nodes.refresh.onclick(); await flush();
   await view.reply(view.calls("get_work_result_state")[1], toolResult({ work_result: frozenWork() }));
@@ -1397,10 +1403,10 @@ test("live progress card adopts the first sealed final snapshot from a later sta
 
 test("metadata and lazy diff truncation remain truthful within bounded initial rows", async () => {
   const view = await frozenView("result", frozenWork({ files_changed: 30, files_total: 30, files_truncated: true }));
-  assert.match(view.nodes.frozenFooter.textContent, /showing 5 of 30 files/);
+  assert.match(view.nodes.frozenFooter.textContent, /显示 30 个文件中的 5 个/);
   frozenNodes(view).button.onclick(); await flush();
   await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff({ truncated: true, bytes_total: 50000, lines_total: 2000 }));
-  assert.match(frozenNodes(view).state.textContent, /partial \(\d+\/2000 lines\)/);
+  assert.match(frozenNodes(view).state.textContent, /部分内容（\d+\/2000 行）/);
 });
 
 test("renamed and binary files retain their metadata in lazy frozen responses", async () => {
@@ -1408,10 +1414,10 @@ test("renamed and binary files retain their metadata in lazy frozen responses", 
   frozenNodes(view, 3).button.onclick(); await flush();
   assert.equal(view.calls("read_changed_file_diff")[0].params.arguments.path, "src/new_name.rs");
   await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff({ path: "src/new_name.rs", previous_path: "src/old_name.rs", kind: "renamed" }));
-  assert.equal(frozenNodes(view, 3).state.textContent, "File changes");
+  assert.equal(frozenNodes(view, 3).state.textContent, "文件变更");
   frozenNodes(view, 4).button.onclick(); await flush();
   await view.reply(view.calls("read_changed_file_diff")[1], frozenDiff({ path: "assets/blob.bin", binary: true, diff: "Binary files differ\n" }));
-  assert.match(frozenNodes(view, 4).state.textContent, /Binary file/);
+  assert.match(frozenNodes(view, 4).state.textContent, /二进制文件/);
 });
 
 for (const change of [
@@ -1425,7 +1431,7 @@ for (const change of [
     const view = await frozenView();
     frozenNodes(view).button.onclick(); await flush();
     await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff(change));
-    assert.match(view.nodes.status.textContent, /Work Result card is unavailable/);
+    assert.match(view.nodes.status.textContent, /工作结果卡片不可用/);
     assert.equal(view.nodes.finalChanges.hidden, true);
     assert.equal(view.nodes.frozenFiles.children.length, 0);
     assert.equal(view.nodes.refresh.disabled, true);
@@ -1446,7 +1452,7 @@ for (const change of [
     const view = await frozenView("input", frozenWork(change));
     assert.equal(view.calls("read_changed_file_diff").length, 0);
     assert.equal(view.nodes.refresh.disabled, true);
-    assert.match(view.nodes.status.textContent, /Work Result card is unavailable/);
+    assert.match(view.nodes.status.textContent, /工作结果卡片不可用/);
   });
 }
 
@@ -1454,7 +1460,7 @@ test("expired/unavailable snapshots never fall back to live diff or automaticall
   const view = await frozenView();
   frozenNodes(view).button.onclick(); await flush();
   await view.reply(view.calls("read_changed_file_diff")[0], { structuredContent: { success: false, output: { error_kind: "changes_snapshot_unavailable" } } });
-  assert.match(frozenNodes(view).state.textContent, /Changes unavailable/);
+  assert.match(frozenNodes(view).state.textContent, /变更不可用/);
   await view.fireTimers(10000); await view.visibility(false);
   assert.equal(view.calls("read_changed_file_diff").length, 1);
   assert.equal(view.calls("get_work_result_state").length, 0);
@@ -1479,7 +1485,7 @@ for (const via of ["initial", "refresh"]) {
 test("same snapshot id cannot smuggle a changed advertised path list", async () => {
   const view = await frozenView();
   view.toolResult({ work_result: frozenWork({ files: finalChanges.files.map((file, index) => index ? file : { ...file, path: "src/other.rs" }) }) });
-  assert.match(view.nodes.status.textContent, /Work Result card is unavailable/);
+  assert.match(view.nodes.status.textContent, /工作结果卡片不可用/);
   assert.equal(view.nodes.finalChanges.hidden, true);
 });
 
@@ -1487,7 +1493,7 @@ test("cached legacy Changes resource payload is not promoted into authoritative 
   const view = app("mcp_work_result_app.html");
   view.toolInput(input); await view.initialize();
   view.toolResult({ changes: { version: 3, project, session_id, ...finalChanges } });
-  assert.match(view.nodes.status.textContent, /Work Result card is unavailable/);
+  assert.match(view.nodes.status.textContent, /工作结果卡片不可用/);
   assert.equal(view.calls("get_work_result_state").length, 0);
   assert.equal(view.calls("read_changed_file_diff").length, 0);
 });
@@ -1512,16 +1518,16 @@ test("Activity and Collaboration tabs preserve Window activity and drafts across
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: baseState });
   await view.initialize();
-  assert.equal(view.nodes.projectIdentity.textContent, "Project · " + project);
-  assert.equal(view.nodes.windowIdentity.textContent, "Window · " + "f".repeat(64));
-  assert.equal(view.nodes.sessionIdentity.textContent, "Session · " + session_id);
-  assert.equal(view.nodes.windowSource.textContent, "Source · mcp");
+  assert.equal(view.nodes.projectIdentity.textContent, project);
+  assert.equal(view.nodes.windowIdentity.textContent, "f".repeat(64));
+  assert.equal(view.nodes.sessionIdentity.textContent, session_id);
+  assert.equal(view.nodes.windowSource.textContent, "mcp");
   assert.equal(view.nodes.windowActivity.children.length, 2);
   // Newest first; the semantic label leads and the tool name stays on the detail line.
   assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].children[0].textContent, "Reviewed changes");
   assert.match(view.nodes.windowActivity.children[0].children[0].children[0].children[1].textContent, /^read_workspace_changes · /);
   assert.equal(view.nodes.windowActivity.children[1].children[0].children[0].children[0].textContent, "Observed Runtime status");
-  assert.equal(view.nodes.windowActivity.children[1].children[0].children[1].textContent, "Observe · Succeeded");
+  assert.equal(view.nodes.windowActivity.children[1].children[0].children[1].textContent, "仅记录 · 成功");
   assert.equal(view.nodes.windowActivity.children[1].className, "activity-call observe");
   assert.equal(view.nodes.windowActivity.children.every(row => row.tagName === "DETAILS" && row.open === false), true);
   assert.equal(view.calls("read_work_result_activity_detail").length, 0);
@@ -1550,7 +1556,7 @@ for (const workflow of [
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: { ...baseState, workflow } });
   await view.initialize();
-  assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.nodes.badge.textContent, "不可用");
   assert.equal(view.calls("get_work_result_state").length, 0);
 });
 
@@ -1602,7 +1608,7 @@ for (const receipt of [{}, toolResult({}), toolResult({ message_id: 42 })]) {
     await flush();
     const first = view.calls("send_work_result_message")[0];
     await view.reply(first, receipt);
-    assert.equal(view.nodes.sendMessage.textContent, "Retry");
+    assert.equal(view.nodes.sendMessage.textContent, "重试");
     assert.equal(view.nodes.messageInput.value, "Keep this exact message");
     assert.equal(view.nodes.messageInput.disabled, true);
     view.nodes.composer.onsubmit({ preventDefault() {} });
@@ -1621,7 +1627,7 @@ test("Window activity renders newest-first and keeps the running call on top", a
   await view.initialize();
   const titles = view.nodes.windowActivity.children.map(row => row.children[0].children[0].children[0].textContent);
   assert.deepEqual(titles, ["Running checks", "Reviewed changes", "Observed Runtime status"]);
-  assert.equal(view.nodes.windowActivity.children[0].children[0].children[1].textContent, "Running");
+  assert.equal(view.nodes.windowActivity.children[0].children[0].children[1].textContent, "运行中");
 });
 
 test("completed Window call details are folded and loaded once on first expansion", async () => {
@@ -1678,7 +1684,7 @@ test("card renders each concurrent call and reconciles completion by exact trace
   const rows = view.nodes.windowActivity.children;
   assert.equal(rows.length, 3);
   assert(rows.every(row => row.children[0].children[0].children[0].textContent === "Read files"));
-  assert.equal(rows.filter(row => row.children[0].children[1].textContent === "Running").length, 2);
+  assert.equal(rows.filter(row => row.children[0].children[1].textContent === "运行中").length, 2);
 });
 
 test("card keeps repeated fast calls as individual rows and exposes the active display bound", async () => {
@@ -1691,8 +1697,8 @@ test("card keeps repeated fast calls as individual rows and exposes the active d
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: state }); await view.initialize();
   assert.equal(view.nodes.windowActivity.children.length, 208);
-  assert.match(view.nodes.windowCoverage.textContent, /Showing 200 of 230/);
-  assert.match(view.nodes.windowCoverage.textContent, /up to 8 active/);
+  assert.match(view.nodes.windowCoverage.textContent, /显示 230 次调用中的 200 次/);
+  assert.match(view.nodes.windowCoverage.textContent, /最多显示 8 个进行中/);
 });
 
 test("long-running calls keep polling and failed automatic reads identify stale snapshots", async () => {
@@ -1705,7 +1711,7 @@ test("long-running calls keep polling and failed automatic reads identify stale 
   await view.fireTimers(10000);
   assert.equal(view.calls("get_work_result_state").length, 1);
   await view.reject(view.calls("get_work_result_state")[0]);
-  assert.match(view.nodes.status.textContent, /Refresh unavailable.*last snapshot/);
+  assert.match(view.nodes.status.textContent, /刷新不可用.*上一个快照/);
   assert([...view.timers.values()].some(timer => timer.delay === 20000));
 });
 
@@ -1726,22 +1732,22 @@ test("Results shows live file states and checks, preserving nodes on unrelated r
   state.workspace.files_total = 12;
   state.workspace.truncated = true;
   view.toolResult({ work_result: state }); await view.initialize();
-  view.nodes.summaryStrip.children.find(item => /^12 files changed/.test(item.textContent)).onclick();
+  summaryCell(view, "workspace").onclick();
   assert.equal(view.nodes.panelResults.hidden, false);
   assert.equal(view.nodes.workspaceFiles.children.length, 3);
   const row = view.nodes.workspaceFiles.children[0];
-  assert.match(row.children[0].textContent, /src\/old.rs → src\/new.rs/);
+  assert.match(fileRowLabel(row), /src\/old.rs → src\/new.rs/);
   assert.equal(row.children[0].getAttribute('aria-expanded'), 'false');
   assert.equal(row.children[1].children.length, 1, 'no eager diff DOM');
   row.children[0].onclick(); await flush();
   const preview = view.nodes.workspaceFiles.children[1];
   preview.children[0].onclick(); await flush();
-  assert.equal(row.children[1].children[0].textContent, 'Changed content');
+  assert.equal(row.children[1].children[0].textContent, '已更改内容');
   assert.equal(row.children[1].children[1].children[1].textContent, '-old');
   assert.equal(row.children[1].children[1].children[2].textContent, '+new');
-  assert.equal(preview.children[1].children[0].textContent, 'New file preview · partial');
+  assert.equal(preview.children[1].children[0].textContent, '新文件预览 · 部分');
   assert.equal(preview.children[1].children[1].children[0].textContent, '<not markup>');
-  assert.equal(view.nodes.validationStatus.textContent, 'Checks passed');
+  assert.equal(view.nodes.validationStatus.textContent, '验证通过');
   assert.equal(view.nodes.finalChanges.hidden, true);
   assert.equal(view.calls('get_work_result_state').length, 0);
   view.nodes.refresh.onclick(); await flush();
@@ -1762,8 +1768,8 @@ test("clean workspace refresh removes old files without claiming success", async
   view.nodes.refresh.onclick(); await flush();
   await view.reply(view.calls('get_work_result_state')[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.workspaceFiles.children.length, 0);
-  assert.equal(view.nodes.workspaceStatus.textContent, 'No uncommitted changes');
-  assert.equal(view.nodes.validationStatus.textContent, 'Checks need attention');
+  assert.equal(view.nodes.workspaceStatus.textContent, '无未提交的变更');
+  assert.equal(view.nodes.validationStatus.textContent, '验证需关注');
   assert.equal(view.nodes.finalChanges.hidden, true);
 });
 
@@ -1772,7 +1778,7 @@ for (const reason of ['workspace_unavailable', 'non_git_project']) test(`unavail
   view.toolResult({ work_result: { ...baseState, workspace: { ...baseState.workspace, git_available: false, reason_code: reason } } });
   await view.initialize();
   assert.equal(view.nodes.workspaceFiles.children.length, 0);
-  assert.match(view.nodes.workspaceStatus.textContent, /unavailable|not a Git repository/);
+  assert.match(view.nodes.workspaceStatus.textContent, /不可用|不是 Git 仓库/);
   assert.equal(view.nodes.workspaceStats.children.length, 0);
 });
 
@@ -1787,11 +1793,11 @@ test("Results works without a Session and does not invent check evidence", async
 
 test("final results and current workspace remain separate across refresh", async () => {
   const view = await frozenView();
-  view.nodes.summaryStrip.children.find(item => item.textContent === "Final changes ready").onclick();
+  summaryCell(view, "final").onclick();
   const frozen = frozenNodes(view);
   assert.equal(view.nodes.panelResults.hidden, false);
   assert.equal(view.nodes.finalChanges.hidden, false);
-  assert.match(view.nodes.workspaceFiles.children[0].children[0].textContent, /src\/a.rs/);
+  assert.match(fileRowLabel(view.nodes.workspaceFiles.children[0]), /src\/a.rs/);
   view.nodes.refresh.onclick(); await flush();
   await view.reply(view.calls('get_work_result_state')[0], toolResult({ work_result: { ...nextState, final_changes: finalChanges } }));
   assert.equal(frozenNodes(view).root, frozen.root);
@@ -1806,7 +1812,7 @@ test("unsafe live file paths fail closed and clear previously displayed results"
   view.nodes.refresh.onclick(); await flush();
   await view.reply(view.calls('get_work_result_state')[0], toolResult({ work_result: { ...nextState, workspace: { ...baseState.workspace, files: [{ path: '../private' }] } } }));
   assert.equal(view.nodes.workspaceFiles.children.length, 0);
-  assert.equal(view.nodes.workspaceStatus.textContent, 'Changes unavailable');
+  assert.equal(view.nodes.workspaceStatus.textContent, '变更不可用');
   assert.equal(view.nodes.refresh.disabled, true);
 });
 
@@ -1820,8 +1826,8 @@ test("exact Session Job transitions through normal refresh without a model tool 
   view.toolResult({ work_result: { ...baseState, jobs: runningJobs } });
   await view.initialize();
   assert.equal(view.nodes.jobsSection.hidden, false);
-  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Running");
-  assert.equal(view.nodes.badge.textContent, "Working");
+  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "运行中");
+  assert.equal(view.nodes.badge.textContent, "工作中");
   const terminal = { ...baseState, state_version: `wr2_${"c".repeat(64)}`, jobs: {
     available: true, active: false, truncated: false,
     items: [{ ...runningJobs.items[0], status: "completed", state: "terminal", outcome: "passed" }],
@@ -1831,7 +1837,7 @@ test("exact Session Job transitions through normal refresh without a model tool 
   assert.deepEqual({ ...call.params.arguments }, { project, session_id, automatic: true });
   await view.reply(call, toolResult({ work_result: terminal }));
   await flush();
-  assert.equal(view.nodes.jobResultsList.children[0].children[0].children[1].textContent, "Passed");
+  assert.equal(view.nodes.jobResultsList.children[0].children[0].children[1].textContent, "通过");
   assert.equal(view.calls("observe_jobs").length, 0);
   assert.equal(view.calls("ui/message").length, 0);
 });
@@ -1849,8 +1855,8 @@ test("background executions separate live work from folded outcomes without decl
   assert.equal(view.nodes.jobResultsList.children.length, 2);
   assert.equal(view.nodes.jobResults.hidden, false);
   assert.equal(view.nodes.jobResults.open, false);
-  assert.equal(view.nodes.jobResultsSummary.textContent, "Recent background results · 1 failed · 1 passed");
-  assert.equal(view.nodes.activityStatus.textContent, "Work continuing in the background");
+  assert.equal(view.nodes.jobResultsSummary.textContent, "最近的后台结果 · 失败 1 · 通过 1");
+  assert.equal(view.nodes.activityStatus.textContent, "后台工作仍在继续");
   assert.equal(view.nodes.activityAge.textContent, "");
   view.nodes.jobResults.open = true;
   view.nodes.refresh.onclick(); await flush();
@@ -1862,7 +1868,7 @@ test("background executions separate live work from folded outcomes without decl
   assert.equal(view.nodes.jobsList.children.length, 0);
   assert.equal(view.nodes.jobResults.open, true);
   assert.equal(view.nodes.activityStatus.textContent, "Reviewed changes");
-  assert.notEqual(view.nodes.badge.textContent, "Working");
+  assert.notEqual(view.nodes.badge.textContent, "工作中");
 });
 
 test("live Window activity stays primary while background work is visible", async () => {
@@ -1885,11 +1891,11 @@ test("truncated background state does not mistake a terminal visible slice for c
     { ...runningJobs.items[0], state: "terminal", status: "failed", outcome: "failed" },
   ] } } });
   await view.initialize();
-  assert.equal(view.nodes.activityStatus.textContent, "Work continuing in the background");
+  assert.equal(view.nodes.activityStatus.textContent, "后台工作仍在继续");
   assert.equal(view.nodes.jobsList.children.length, 0);
-  assert.equal(view.nodes.badge.textContent, "Working");
-  assert.match(view.nodes.jobsMeta.textContent, /more may be active or finished/);
-  assert.match(view.nodes.jobResultsSummary.textContent, /1 failed/);
+  assert.equal(view.nodes.badge.textContent, "工作中");
+  assert.match(view.nodes.jobsMeta.textContent, /可能还有更多正在运行或已结束/);
+  assert.match(view.nodes.jobResultsSummary.textContent, /失败 1/);
 });
 
 for (const status of ["queued", "recovering", "stop_requested"]) test(`background ${status} does not claim execution is running`, async () => {
@@ -1900,7 +1906,7 @@ for (const status of ["queued", "recovering", "stop_requested"]) test(`backgroun
   ] } } });
   await view.initialize();
   assert.equal(view.nodes.activityAge.textContent, "");
-  assert.notEqual(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Running");
+  assert.notEqual(view.nodes.jobsList.children[0].children[0].children[1].textContent, "运行中");
   assert.equal(view.nodes.jobResults.hidden, true);
 });
 
@@ -1921,9 +1927,9 @@ test("Job failures and recovery remain bounded labels and conflicting Session fa
     { ...runningJobs.items[0], state: "terminal", status: "failed", outcome: "failed", recovery_state: "recovered" },
   ] } } });
   await view.initialize();
-  assert.equal(view.nodes.jobResultsList.children[0].children[0].children[1].textContent, "Failed · recovered");
+  assert.equal(view.nodes.jobResultsList.children[0].children[0].children[1].textContent, "失败 · recovered");
   view.toolInput({ project, session_id: `wc_sess_${"2".repeat(32)}` });
-  assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.nodes.badge.textContent, "不可用");
   assert.equal(view.nodes.jobsSection.hidden, true);
   assert.equal(view.timers.size, 0);
 });
@@ -1939,7 +1945,7 @@ test("active Jobs use the existing timer and preserve hidden and teardown fences
   await view.reply(call, toolResult({ work_result: nextState }));
   await flush();
   assert.equal(view.timers.size, 0);
-  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Running");
+  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "运行中");
 });
 
 test("result-first Job state cannot be rebound by a different explicit Session", async () => {
@@ -1947,8 +1953,8 @@ test("result-first Job state cannot be rebound by a different explicit Session",
   view.toolResult({ work_result: { ...baseState, jobs: runningJobs } });
   view.toolInput({ project, session_id: `wc_sess_${"2".repeat(32)}` });
   await view.initialize();
-  assert.equal(view.nodes.badge.textContent, "Unavailable");
-  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-SESSION-CONFLICT");
+  assert.equal(view.nodes.badge.textContent, "不可用");
+  assert.equal(view.nodes.status.textContent, "此工作结果卡片不可用 · WR-SESSION-CONFLICT");
   assert.equal(view.calls("get_work_result_state").length, 0);
 });
 
@@ -1960,7 +1966,7 @@ for (const jobs of [
   view.toolInput(input);
   view.toolResult({ work_result: { ...baseState, jobs } });
   await view.initialize();
-  assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.nodes.badge.textContent, "不可用");
 });
 
 function filePreview(view, final = false, index = 0) {
@@ -1968,7 +1974,7 @@ function filePreview(view, final = false, index = 0) {
   row.children[0].onclick();
   const wrap = row.children[1], controls = wrap.children[2], preview = wrap.children[3];
   return { row, wrap, controls, state: preview.children[0], text: preview.children[1], markdown: preview.children[2],
-    retry: controls.children.find(node => node.textContent === "Retry preview"), hint: controls.children.at(-1) };
+    retry: controls.children.find(node => node.textContent === "重试预览"), hint: controls.children.at(-1) };
 }
 function previewReply(request, text, extra = {}) {
   const args = request.params.arguments;
@@ -1981,6 +1987,12 @@ function previewReply(request, text, extra = {}) {
   } });
 }
 function descendants(node) { return [node, ...node.children.flatMap(descendants)]; }
+// The file row button holds a path span and a stats span.
+function fileRowLabel(row) { return row.children[0].children.map(child => child.textContent).join(" · "); }
+// Diagnostics render as key-value rows; the summary as labelled cells.
+function kvRow(group, key) { return group.children.map(row => row.children.map(child => child.textContent)).find(row => row[0] === key); }
+function summaryCell(view, key) { return view.nodes.summaryStrip.children.find(node => node.getAttribute("data-key") === key); }
+function summaryCellText(node) { return node ? node.children.map(child => child.textContent).join(" ") : null; }
 
 async function readingView(state = baseState) {
   const view = app("mcp_work_result_app.html");
@@ -1999,17 +2011,16 @@ function readingFile(view, final = false, index = 0) {
 
 test("summary navigation moves focus without reading files or resetting an expanded row", async () => {
   const view = await readingView(frozenWork());
-  const item = text => view.nodes.summaryStrip.children.find(node => node.textContent.startsWith(text));
   assert.equal(view.nodes.summaryStrip.hidden, false);
-  assert.ok(item("Final changes ready"));
-  assert.equal(item("1 task output"), undefined);
+  assert.match(summaryCellText(summaryCell(view, "final")), /最终变更 已就绪/);
+  assert.equal(summaryCell(view, "outputs"), undefined);
   const moves = [];
   for (const id of ["workspaceChangesSection", "finalChanges", "resultChecks"]) {
     view.nodes[id].scrollIntoView = () => moves.push(id);
     view.nodes[id].focus = options => assert.equal(options.preventScroll, true);
   }
-  item("1 file changed").onclick();
-  item("Final changes ready").onclick();
+  summaryCell(view, "workspace").onclick();
+  summaryCell(view, "final").onclick();
   view.nodes.workspaceNavigator.children[3].onclick();
   view.nodes.frozenNavigator.children[3].onclick();
   assert.deepEqual(moves, ["workspaceChangesSection", "finalChanges", "resultChecks", "resultChecks"]);
@@ -2020,7 +2031,7 @@ test("summary navigation moves focus without reading files or resetting an expan
   view.nodes.frozenNavigator.children[3].onclick();
   assert.equal(file.row.children[0].getAttribute("aria-expanded"), "true");
   assert.equal(view.sent.length, requests);
-  const summaryWorkspace = item("1 file changed");
+  const summaryWorkspace = summaryCell(view, "workspace");
   await view.teardown();
   const before = moves.length;
   summaryWorkspace.onclick();
@@ -2028,8 +2039,8 @@ test("summary navigation moves focus without reading files or resetting an expan
 });
 
 test("thread overview preserves failed, stale, missing and unrun evidence", async () => {
-  for (const [status, label] of [["passed", "Checks passed"], ["failed", "Checks need attention"],
-    ["stale", "Checks are out of date"], ["not_run", "Checks not run"], ["inconclusive", "Checks inconclusive"]]) {
+  for (const [status, label] of [["passed", "验证通过"], ["failed", "验证需关注"],
+    ["stale", "验证已过期"], ["not_run", "未运行验证"], ["inconclusive", "验证无定论"]]) {
     const state = structuredClone(baseState);
     state.validation.current_status = status;
     state.workspace = structuredClone(nextState.workspace);
@@ -2037,8 +2048,8 @@ test("thread overview preserves failed, stale, missing and unrun evidence", asyn
     assert.equal(view.nodes.validationStatus.textContent, label);
     assert.equal(view.nodes.resultChecks.hidden, false);
     assert.equal(view.nodes.checksScope.hidden, true, "a linked Session needs no scope disclaimer");
-    assert.ok(view.nodes.summaryStrip.children.some(node => node.textContent === label));
-    assert.equal(view.nodes.summaryStrip.children.some(node => node.textContent === "Final changes ready"), false);
+    assert.equal(summaryCellText(summaryCell(view, "checks")), "验证 " + label);
+    assert.equal(summaryCell(view, "final"), undefined);
   }
   const state = structuredClone(baseState);
   for (const key of ["session_id", "session", "validation", "review"]) delete state[key];
@@ -2046,9 +2057,9 @@ test("thread overview preserves failed, stale, missing and unrun evidence", asyn
   view.notification("ui/notifications/tool-result", threadResult(state, null));
   await view.initialize();
   assert.equal(view.nodes.resultChecks.hidden, false);
-  assert.equal(view.nodes.validationStatus.textContent, "Check status unavailable");
-  assert.equal(view.nodes.reviewStatus.textContent, "Review status unavailable");
-  assert.match(view.nodes.checksScope.textContent, /No Session is linked/);
+  assert.equal(view.nodes.validationStatus.textContent, "验证状态不可用");
+  assert.equal(view.nodes.reviewStatus.textContent, "审查状态不可用");
+  assert.match(view.nodes.checksScope.textContent, /未关联工作会话/);
   assert.equal(view.nodes.checksScope.hidden, false);
   view.toolInput({ project: "other-project" });
   assert.equal(view.nodes.resultChecks.hidden, true, "invalid binding clears the overview");
@@ -2092,13 +2103,13 @@ test("path filtering covers loaded metadata without fetching, detaching rows or 
   state.workspace.files = Array.from({ length: 8 }, (_, i) => ({ path: `docs/文件_[${i}].md`, status: "modified", content: "+saved", content_kind: "diff" }));
   state.workspace.files_total = 30; state.workspace.truncated = true;
   const view = await readingView(state), first = readingFile(view);
-  first.button("Wrap lines").onclick();
+  first.button("自动换行").onclick();
   const nav = view.nodes.workspaceNavigator, filter = nav.children[4].children[0];
   const requests = view.sent.length;
   filter.value = "[7]"; filter.oninput();
   assert.equal(nav.children[0].children.length, 1);
   assert.equal(nav.children[0].value, "docs/文件_[7].md");
-  assert.match(nav.children[5].textContent, /1 shown · 8 loaded · 30 total · filtering loaded paths only/);
+  assert.match(nav.children[5].textContent, /显示 1 · 已加载 8 · 共 30 · 仅筛选已加载的路径/);
   assert.equal(view.sent.length, requests);
   assert.equal(view.nodes.workspaceFiles.children[0], first.row);
   filter.value = "missing"; filter.oninput();
@@ -2106,7 +2117,7 @@ test("path filtering covers loaded metadata without fetching, detaching rows or 
   assert.equal(nav.children[0].disabled, true);
   assert.equal(nav.children[1].disabled, true);
   assert.equal(nav.children[2].disabled, true);
-  assert.match(nav.children[5].textContent, /no matching loaded files/);
+  assert.match(nav.children[5].textContent, /无匹配的已加载文件/);
   filter.onkeydown({ key: "Escape", preventDefault() {} });
   assert.equal(nav.children[0].children.length, 5);
   assert.equal(first.row.hidden, false);
@@ -2151,7 +2162,7 @@ test("complete file paths copy explicitly with a manual fallback when clipboard 
     let selected = false; field.select = () => { selected = true; };
     await copy.onclick();
     assert.equal(selected, denied);
-    assert.equal(denied ? status.textContent.includes("manually") : copied[0] === path, true);
+    assert.equal(denied ? status.textContent.includes("手动复制") : copied[0] === path, true);
     await view.teardown(); await copy.onclick();
     assert.equal(copied.length, denied ? 0 : 1);
   }
@@ -2168,7 +2179,7 @@ async function quoteView({ capabilities = { updateModelContext: { text: {} } }, 
 function selectExcerpt(view, file, text = "+after", node = file.pre.children.at(-1)) {
   view.selection.value = { rangeCount: 1, isCollapsed: false, toString: () => text,
     getRangeAt: () => ({ startContainer: node, endContainer: node, toString: () => text.replaceAll("\n", "") }) };
-  file.button("Quote selection").onclick();
+  file.button("引用所选").onclick();
 }
 const contextUpdates = view => view.sent.filter(request => request.method === "ui/update-model-context");
 
@@ -2179,15 +2190,15 @@ test("quoting previews exact text and provenance without reads or sending, then 
   assert.equal(view.nodes.quotePanel.hidden, false);
   assert.equal(view.nodes.quoteText.textContent, "-before\n+after <script>literal</script> 😀", "rendered line breaks are preserved");
   assert.equal(view.nodes.quoteText.children.length, 0);
-  assert.match(view.nodes.quoteCopy.value, new RegExp(`Observation: ${baseState.state_version}`));
-  assert.match(view.nodes.quoteCopy.value, /not a pinned file snapshot/);
+  assert.match(view.nodes.quoteCopy.value, new RegExp(`观察：${baseState.state_version}`));
+  assert.match(view.nodes.quoteCopy.value, /不是固定的文件快照/);
   const adding = view.nodes.quoteAdd.onclick();
   view.nodes.quoteAdd.onclick();
   assert.equal(contextUpdates(view).length, 1);
   const request = contextUpdates(view)[0];
   assert.equal(request.params.content.length, 1);
   assert.equal(request.params.content[0].text, view.nodes.quoteCopy.value);
-  assert.match(request.params.content[0].text, /File: "src\/a.rs"/);
+  assert.match(request.params.content[0].text, /文件："src\/a.rs"/);
   await view.reply(request, {}); await adding;
   assert.equal(view.nodes.quoteDraft.hidden, true);
   assert.equal(view.nodes.quoteReferences.children.length, 1);
@@ -2206,14 +2217,14 @@ test("quotes reject cross-file and oversized selections, cancel locally and disc
   selectExcerpt(view, file, "😀".repeat(4001));
   assert.equal(view.nodes.quotePanel.hidden, true);
   view.selection.value = { rangeCount: 0, isCollapsed: true };
-  file.button("Quote selection").onclick();
+  file.button("引用所选").onclick();
   assert.equal(view.nodes.quotePanel.hidden, true);
   selectExcerpt(view, file, "😀".repeat(4000));
   assert.equal(Array.from(view.nodes.quoteText.textContent).length, 4000);
   view.nodes.quoteCancel.onclick();
   assert.equal(view.nodes.quotePanel.hidden, true);
   view.viewport.scrollY = 300;
-  let returned = false; file.button("Quote selection").focus = () => { returned = true; };
+  let returned = false; file.button("引用所选").focus = () => { returned = true; };
   selectExcerpt(view, file); view.viewport.scrollY = 0;
   view.nodes.quoteCancel.onclick();
   assert.equal(view.viewport.scrollY, 300);
@@ -2222,14 +2233,14 @@ test("quotes reject cross-file and oversized selections, cancel locally and disc
   view.nodes.workspaceReload.onclick();
   await view.nodes.quoteAdd.onclick();
   assert.equal(view.nodes.quoteDraft.hidden, true);
-  assert.match(view.nodes.quoteStatus.textContent, /file view changed/);
+  assert.match(view.nodes.quoteStatus.textContent, /文件视图已变化/);
   assert.equal(contextUpdates(view).length, 0);
 });
 
 test("full text and Markdown quotes retain the exact working-tree snapshot without promoting Session scope", async () => {
   const state = structuredClone(baseState); state.workspace.files[0].path = "README.md";
   const view = await quoteView({ state }), file = readingFile(view);
-  file.button("Full text").onclick(); await flush();
+  file.button("全文").onclick(); await flush();
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result_files: {
     project, session_id: null, snapshot_id, offset: 0, next_offset: null, files_total: 1, source_truncated: false,
     files: [frozenFile(0, { path: "README.md" })],
@@ -2238,13 +2249,13 @@ test("full text and Markdown quotes retain the exact working-tree snapshot witho
   await view.reply(read, previewReply(read, "# Snapshot text\n\nQuoted paragraph."));
   const requests = view.sent.length;
   selectExcerpt(view, file, "Quoted paragraph.", file.text);
-  assert.match(view.nodes.quoteCopy.value, new RegExp(`Snapshot: ${snapshot_id}`));
-  assert.doesNotMatch(view.nodes.quoteCopy.value, /Session:/);
-  assert.match(view.nodes.quoteCopy.value, /View: Full text/);
+  assert.match(view.nodes.quoteCopy.value, new RegExp(`快照：${snapshot_id}`));
+  assert.doesNotMatch(view.nodes.quoteCopy.value, /会话：/);
+  assert.match(view.nodes.quoteCopy.value, /视图：全文/);
   view.nodes.quoteCancel.onclick();
   file.button("Markdown").onclick();
   selectExcerpt(view, file, "Snapshot text", file.markdown.children[0]);
-  assert.match(view.nodes.quoteCopy.value, /View: Markdown/);
+  assert.match(view.nodes.quoteCopy.value, /视图：Markdown/);
   assert.equal(view.sent.length, requests);
 });
 
@@ -2252,16 +2263,16 @@ test("final Diff quotes carry the frozen snapshot and explicit Session", async (
   const view = await quoteView({ state: frozenWork() }), file = readingFile(view, true);
   await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff());
   selectExcerpt(view, file, "+new");
-  assert.match(view.nodes.quoteCopy.value, new RegExp(`Snapshot: ${snapshot_id}`));
-  assert.match(view.nodes.quoteCopy.value, new RegExp(`Session: ${session_id}`));
-  assert.match(view.nodes.quoteCopy.value, /Source: Final changes/);
+  assert.match(view.nodes.quoteCopy.value, new RegExp(`快照：${snapshot_id}`));
+  assert.match(view.nodes.quoteCopy.value, new RegExp(`会话：${session_id}`));
+  assert.match(view.nodes.quoteCopy.value, /来源：最终变更/);
 });
 
 test("Hosts without text context get a copyable quote and never receive a fabricated resource or message", async () => {
   for (const capabilities of [{}, { updateModelContext: { resource: {}, resourceLink: {} } }]) {
     const view = await quoteView({ capabilities }), file = readingFile(view);
     selectExcerpt(view, file);
-    assert.equal(view.nodes.quoteAdd.textContent, "Copy quote");
+    assert.equal(view.nodes.quoteAdd.textContent, "复制引用");
     assert.equal(view.nodes.quoteCopy.hidden, false);
     let selected = false; view.nodes.quoteCopy.select = () => { selected = true; };
     await view.nodes.quoteAdd.onclick();
@@ -2291,7 +2302,7 @@ test("context update uncertainty retries only the exact set and teardown stops a
   assert.equal(view.nodes.quoteReferences.children.length, 1);
   await view.teardown();
   const requests = view.sent.length;
-  file.button("Quote selection").onclick();
+  file.button("引用所选").onclick();
   await view.nodes.quoteAdd.onclick(); view.nodes.quoteRetry.onclick();
   assert.equal(view.sent.length, requests);
   assert.equal(view.nodes.quoteText.textContent, "");
@@ -2307,7 +2318,7 @@ test("advertised Host context restores other references and canonical removal wi
   view.notification("ui/notifications/host-context-changed", { "openai/modelContext": null });
   await view.reply(request, { _meta: { "openai/modelContext": { updateId: "late" } } }); await adding;
   assert.equal(view.nodes.quoteReferences.children.length, 0);
-  assert.match(view.nodes.quoteStatus.textContent, /cleared in the chat/);
+  assert.match(view.nodes.quoteStatus.textContent, /对话中的引用已清除/);
   const second = view.nodes.quoteAdd.onclick();
   assert.equal(contextUpdates(view)[1].params.content.length, 1, "cleared resource is not resurrected");
   await view.reply(contextUpdates(view)[1], { _meta: { "openai/modelContext": { updateId: "accepted" } } });
@@ -2338,7 +2349,7 @@ test("unadvertised synchronization and oversized Host context cannot overwrite r
   const full = await quoteView({ capabilities, hostContext: { "openai/modelContext": { updateId: "full", content: Array.from({ length: 12 }, () => ({ type: "text", text: "old" })) } } });
   selectExcerpt(full, readingFile(full)); await full.nodes.quoteAdd.onclick();
   assert.equal(contextUpdates(full).length, 0);
-  assert.match(full.nodes.quoteStatus.textContent, /Context is full/);
+  assert.match(full.nodes.quoteStatus.textContent, /上下文已满/);
 });
 
 test("a late context acknowledgment cannot restore a torn-down quote", async () => {
@@ -2360,9 +2371,9 @@ test("context acknowledgment restores disabled-button focus without stealing it 
     const adding = view.nodes.quoteAdd.onclick();
     // Browsers blur a focused button as soon as the pending action disables it.
     view.document.activeElement = view.document.body;
-    if (movedAway) file.button("Quote selection").focus();
+    if (movedAway) file.button("引用所选").focus();
     await view.reply(contextUpdates(view)[0], {}); await adding;
-    assert.equal(view.document.activeElement, movedAway ? file.button("Quote selection") : view.nodes.quotePanel);
+    assert.equal(view.document.activeElement, movedAway ? file.button("引用所选") : view.nodes.quotePanel);
   }
 });
 
@@ -2378,9 +2389,9 @@ test("thread Diff numbers follow hunk ranges, zero-length sides and literal plus
   assert.deepEqual(rows[15], ["", "", "+unknown"]);
   assert.equal(pre.children[5].className, "diff-line deleted");
   assert.equal(pre.children[6].className, "diff-line added");
-  button("Wrap lines").onclick();
+  button("自动换行").onclick();
   assert.equal(pre.className, "diff no-wrap");
-  assert.equal(button("Wrap lines").getAttribute("aria-pressed"), "false");
+  assert.equal(button("自动换行").getAttribute("aria-pressed"), "false");
   assert.equal(view.calls("get_work_result_state").length, 0);
 });
 
@@ -2389,7 +2400,7 @@ test("thread keeps Diff DOM and wrap state through refresh and collapse", async 
   Object.assign(state.workspace.files[0], { content: "@@ -1 +1 @@\n-old\n+new", content_kind: "diff" });
   const view = await readingView(state), file = readingFile(view);
   const firstLine = file.pre.children[0];
-  file.button("Wrap lines").onclick();
+  file.button("自动换行").onclick();
   file.row.collapse(); file.row.expand();
   assert.equal(file.pre.children[0], firstLine);
   assert.equal(file.pre.className, "diff no-wrap");
@@ -2407,7 +2418,7 @@ test("thread restores each reading mode and fences asynchronous previews after s
   const bounds = () => ({ top: 100 - view.viewport.scrollY, bottom: 1100 - view.viewport.scrollY, height: 1000 });
   file.pre.getBoundingClientRect = file.text.getBoundingClientRect = bounds;
   view.viewport.scrollY = 300;
-  file.button("Full text").onclick(); await flush();
+  file.button("全文").onclick(); await flush();
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result_files: {
     project, session_id: null, snapshot_id, offset: 0, next_offset: null, files_total: 1, source_truncated: false,
     files: [{ path: "README.md", kind: "modified", additions: 4, deletions: 1 }],
@@ -2415,9 +2426,9 @@ test("thread restores each reading mode and fences asynchronous previews after s
   const read = view.calls("get_work_result_state")[1];
   await view.reply(read, previewReply(read, "# Safe preview\n"));
   view.viewport.scrollY = 450;
-  file.button("Changes").onclick();
+  file.button("变更").onclick();
   assert.equal(view.viewport.scrollY, 300, "Diff restores its own offset");
-  file.button("Full text").onclick();
+  file.button("全文").onclick();
   assert.equal(view.viewport.scrollY, 450, "Full text restores its separate offset");
   assert.equal(view.calls("get_work_result_state").length, 2, "cached modes do not refetch");
   view.nodes.workspaceReload.onclick();
@@ -2425,7 +2436,7 @@ test("thread restores each reading mode and fences asynchronous previews after s
   const replacement = readingFile(view);
   assert.notEqual(replacement.row, file.row);
   assert.equal(replacement.pre.className, "diff");
-  replacement.button("Full text").onclick(); await flush();
+  replacement.button("全文").onclick(); await flush();
   const pending = view.calls("get_work_result_state").at(-1);
   view.nodes.workspaceReload.onclick();
   const currentRow = view.nodes.workspaceFiles.children[0];
@@ -2441,7 +2452,7 @@ test("thread restores each reading mode and fences asynchronous previews after s
 test("thread failure removes navigation together with file content", async () => {
   const view = await readingView(frozenWork());
   view.toolInput({ project: "other-project" });
-  assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.nodes.badge.textContent, "不可用");
   assert.equal(view.nodes.workspaceNavigator.hidden, true);
   assert.equal(view.nodes.frozenNavigator.hidden, true);
 });
@@ -2486,7 +2497,7 @@ test("PDF rows read the pinned working-tree source and fence late replies on clo
       files: { snapshot_id, path: "report.pdf", view: "pdf", byte_offset: 0 } });
     assert.equal(file.button("PDF").getAttribute("aria-pressed"), "true");
     if (close === "collapse") file.row.collapse();
-    if (close === "mode") file.button("Full text").onclick();
+    if (close === "mode") file.button("全文").onclick();
     if (close === "teardown") await view.teardown();
     if (close === "refresh") view.nodes.workspaceReload.onclick();
     const before = view.calls("get_work_result_state").length;
@@ -2532,7 +2543,7 @@ test("PDF failures while path-filtered remain actionable after the row returns",
     project, session_id: null, snapshot_id, path: "report.pdf", view: "pdf", unavailable_reason: "too_large",
   } }));
   filter.value = ""; filter.oninput();
-  const retry = file.button("Retry preview");
+  const retry = file.button("重试预览");
   assert.equal(file.row.hidden, false); assert.equal(retry.hidden, false);
   retry.onclick(); await flush();
   assert.deepEqual(JSON.parse(JSON.stringify(view.calls("get_work_result_state").at(-1).params.arguments)),
@@ -2545,11 +2556,11 @@ test("PDF error retry keeps the same exact snapshot and never requests text for 
   await view.reply(request, toolResult({ work_result_files: {
     project, session_id: null, snapshot_id, path: "report.pdf", view: "pdf", unavailable_reason: "too_large",
   } }));
-  const retry = file.button("Retry preview"); assert.equal(retry.hidden, false);
+  const retry = file.button("重试预览"); assert.equal(retry.hidden, false);
   retry.onclick(); await flush();
   assert.deepEqual(JSON.parse(JSON.stringify(view.calls("get_work_result_state").at(-1).params.arguments)),
     JSON.parse(JSON.stringify(request.params.arguments)));
-  file.button("Full text").onclick();
+  file.button("全文").onclick();
   assert.equal(view.calls("get_work_result_state").filter(call => call.params.arguments.files?.view === "content").length, 0);
   await view.teardown();
 });
@@ -2566,8 +2577,8 @@ test("workspace full text uses exact pinned snapshot, explicit pages and complet
   const total = new TextEncoder().encode(first + tail).length;
   const bytes = new TextEncoder().encode(first).length;
   await view.reply(request, previewReply(request, first, { bytes_total: total, complete: false, next_byte_offset: bytes }));
-  assert.match(nodes.state.textContent, /Partial content/);
-  assert.match(nodes.hint.textContent, /remaining file content/);
+  assert.match(nodes.state.textContent, /部分内容/);
+  assert.match(nodes.hint.textContent, /加载剩余文件内容/);
   assert.equal(nodes.controls.children[2].disabled, true);
   assert.equal(view.calls("get_work_result_state").filter(call => call.params.arguments.files?.view === "content").length, 1, "no automatic page loop");
   nodes.controls.children[3].onclick(); await flush();
@@ -2575,7 +2586,7 @@ test("workspace full text uses exact pinned snapshot, explicit pages and complet
   assert.equal(next.params.arguments.files.byte_offset, bytes);
   await view.reply(next, previewReply(next, tail));
   assert.equal(nodes.text.textContent, first + tail);
-  assert.match(nodes.state.textContent, /Complete file/);
+  assert.match(nodes.state.textContent, /完整文件/);
   assert.equal(nodes.hint.hidden, true);
   assert.equal(nodes.controls.children[2].disabled, false);
   nodes.controls.children[2].onclick();
@@ -2585,7 +2596,7 @@ test("workspace full text uses exact pinned snapshot, explicit pages and complet
   assert.equal(dom.some(node => node.tagName === "S"), true);
   assert.equal(dom.some(node => node.tagName === "STRONG"), true);
   assert.equal(dom.some(node => ["SCRIPT", "IMG", "IFRAME", "A"].includes(node.tagName)), false);
-  assert.equal(dom.some(node => /external image not loaded/.test(node.textContent)), true);
+  assert.equal(dom.some(node => /外部图片未加载/.test(node.textContent)), true);
   assert.equal(dom.some(node => /<script>/.test(node.textContent)), true);
   assert.equal(view.calls("get_work_result_state").filter(call => call.params.arguments.files?.view === "content").length, 2, "rendering needs no external resource request");
 });
@@ -2598,7 +2609,7 @@ test("final full text retains explicit Session and rejects a mismatched content 
   assert.equal(request.params.arguments.session_id, session_id);
   await view.reply(request, previewReply(request, "wrong source", { session_id: null }));
   assert.equal(nodes.text.textContent, "");
-  assert.match(nodes.state.textContent, /Content unavailable/);
+  assert.match(nodes.state.textContent, /内容不可用/);
 });
 
 test("preview ignores late responses after switching view, refreshing snapshot and teardown", async () => {
@@ -2616,9 +2627,9 @@ test("preview marks the byte cap and unsupported encoding without enabling Markd
   for (const reason of ["binary", "non_utf8", "symlink", "submodule"]) {
     const { view, nodes, request } = await workspacePreview();
     await view.reply(request, previewReply(request, "", { unavailable_reason: reason }));
-    assert.match(nodes.state.textContent, /preview unavailable/);
+    assert.match(nodes.state.textContent, /无法进行文本预览/);
     assert.equal(nodes.controls.children[2].disabled, true);
-    assert.match(nodes.hint.textContent, /preview unavailable/);
+    assert.match(nodes.hint.textContent, /无法进行文本预览/);
     assert.equal(nodes.retry.hidden, true, "an unsupported file is not a transient read failure");
   }
   const { view, nodes, request } = await workspacePreview();
@@ -2629,11 +2640,11 @@ test("preview marks the byte cap and unsupported encoding without enabling Markd
       complete: false, limited: index === 7, next_byte_offset: index === 7 ? null : (index + 1) * 32 * 1024 }));
     if (index < 7) { nodes.controls.children[3].onclick(); await flush(); }
   }
-  assert.match(nodes.state.textContent, /256 KiB preview limit/);
+  assert.match(nodes.state.textContent, /256 KiB 预览上限/);
   assert.equal(nodes.text.textContent.length, 256 * 1024);
   assert.equal(nodes.controls.children[3].hidden, true);
   assert.equal(nodes.controls.children[2].disabled, true);
-  assert.match(nodes.hint.textContent, /exceeds the 256 KiB preview limit/);
+  assert.match(nodes.hint.textContent, /超过 256 KiB 的预览上限/);
 });
 
 test("preview retry retains content and retries only the failed page of the same snapshot", async () => {
@@ -2643,11 +2654,11 @@ test("preview retry retains content and retries only the failed page of the same
   const failed = view.calls("get_work_result_state").at(-1);
   await view.reject(failed);
   assert.equal(nodes.text.textContent, "first");
-  assert.match(nodes.state.textContent, /5 bytes retained/);
+  assert.match(nodes.state.textContent, /已保留 5 字节/);
   assert.equal(nodes.retry.hidden, false);
   assert.equal(nodes.retry.disabled, false);
   assert.equal(nodes.controls.children[2].disabled, true);
-  assert.match(nodes.hint.textContent, /Retry preview/);
+  assert.match(nodes.hint.textContent, /重试预览/);
   nodes.retry.onclick(); nodes.retry.onclick(); await flush();
   const retries = view.calls("get_work_result_state").filter(call => call.params.arguments.files?.view === "content");
   assert.equal(retries.length, 3, "rapid retries share one owning request");
@@ -2714,18 +2725,18 @@ test("malformed content pages cannot claim complete, skip bytes or exceed UTF-8 
     const { view, nodes, request } = await workspacePreview();
     await view.reply(request, previewReply(request, "safe", change));
     assert.equal(nodes.text.textContent, "");
-    assert.match(nodes.state.textContent, /Content unavailable/);
+    assert.match(nodes.state.textContent, /内容不可用/);
     assert.equal(nodes.controls.children[2].disabled, true);
   }
 });
 
 test("activity preserves raw outcomes and distinguishes expected failures and mismatches", async () => {
   for (const [status, classification, label] of [
-    ["failed", "matched_expected_failure", "Failed · Expected result"],
-    ["failed", "matched_expected_result", "Failed · Expected result"],
-    ["success", "unexpected_success", "Succeeded · Expectation not met"],
-    ["failed", "expectation_mismatch", "Failed · Expectation not met"],
-    ["failed", undefined, "Failed"],
+    ["failed", "matched_expected_failure", "失败 · 预期结果"],
+    ["failed", "matched_expected_result", "失败 · 预期结果"],
+    ["success", "unexpected_success", "成功 · 未达到预期"],
+    ["failed", "expectation_mismatch", "失败 · 未达到预期"],
+    ["failed", undefined, "失败"],
   ]) {
     const view = app("mcp_work_result_app.html");
     view.toolInput(input);
@@ -2744,8 +2755,8 @@ test("fail-closed Work Result displays only a bounded diagnostic code for invali
   const sensitive = "agent:special:private-project";
   view.toolInput({ project: sensitive + "\nprivate-token" });
   await view.initialize();
-  assert.equal(view.nodes.badge.textContent, "Unavailable");
-  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-IDENTITY-INVALID");
+  assert.equal(view.nodes.badge.textContent, "不可用");
+  assert.equal(view.nodes.status.textContent, "此工作结果卡片不可用 · WR-IDENTITY-INVALID");
   assert(!view.nodes.status.textContent.includes("private"));
   assert.equal(view.nodes.refresh.disabled, true);
   assert.equal(view.calls("get_work_result_state").length, 0);
@@ -2755,14 +2766,14 @@ test("fail-closed Work Result distinguishes invalid state from thread binding lo
   const invalidState = app("mcp_work_result_app.html");
   invalidState.toolResult({ work_result: { ...baseState, state_version: "bad" } });
   await invalidState.initialize();
-  assert.equal(invalidState.nodes.status.textContent, "This Work Result card is unavailable · WR-STATE-INVALID");
+  assert.equal(invalidState.nodes.status.textContent, "此工作结果卡片不可用 · WR-STATE-INVALID");
   assert.equal(invalidState.nodes.refresh.disabled, true);
 
   const missingThread = app("mcp_work_result_app.html");
   missingThread.toolInput({});
   missingThread.notification("ui/notifications/tool-result", toolResult({ work_result: baseState }));
   await missingThread.initialize();
-  assert.equal(missingThread.nodes.status.textContent, "This Work Result card is unavailable · WR-THREAD-BINDING-MISSING");
+  assert.equal(missingThread.nodes.status.textContent, "此工作结果卡片不可用 · WR-THREAD-BINDING-MISSING");
   assert.equal(missingThread.nodes.refresh.disabled, true);
 });
 
@@ -2777,18 +2788,43 @@ test("summary strip states each outcome once, flags failures and opens the ownin
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: state }); await view.initialize();
   const items = [...view.nodes.summaryStrip.children];
-  assert.deepEqual(items.map(item => item.textContent),
-    ["1 file changed · +4 −1", "Checks need attention", "1 running in background", "1 background job failed"]);
+  assert.deepEqual(items.map(item => summaryCellText(item)),
+    ["工作区 已更改 1 个文件 · +4 −1", "验证 验证需关注", "后台任务 运行 1 · 失败 1"]);
   assert.deepEqual(items.map(item => item.className),
-    ["summary-item", "summary-item tone-attention", "summary-item", "summary-item tone-attention"]);
+    ["summary-item", "summary-item tone-attention", "summary-item tone-attention"]);
   view.nodes.tabCollaboration.onclick();
-  items[3].onclick();
+  summaryCell(view, "jobs").onclick();
   assert.equal(view.nodes.panelActivity.hidden, false);
   assert.equal(view.nodes.jobResults.open, true, "failed background results open on request");
-  items[1].onclick();
+  summaryCell(view, "checks").onclick();
   assert.equal(view.nodes.panelResults.hidden, false);
   assert.equal(view.calls("get_work_result_state").length, 0, "navigation never reads state");
   view.nodes.refresh.onclick(); await flush();
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: { ...state, state_version: `wr2_${"b".repeat(64)}` } }));
   assert.deepEqual([...view.nodes.summaryStrip.children], items, "refresh keeps focusable summary nodes");
+});
+
+test("host links stay hidden until the server sends them and open through the Host", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: baseState });
+  await view.initialize();
+  for (const id of ["compactFiles", "compactPreview", "compactConsole"]) {
+    assert.equal(view.nodes[id].hidden, true, `${id} hides without a server link`);
+  }
+  const linked = {
+    ...baseState,
+    state_version: `wr2_${"9".repeat(64)}`,
+    links: { console: "https://console.example.com/runtime", preview: "http://127.0.0.1:5173/", files: "javascript:alert(1)" },
+  };
+  view.notification("ui/notifications/tool-result", { structuredContent: { success: true, output: { work_result: linked } } });
+  await flush();
+  assert.equal(view.nodes.compactConsole.hidden, false, "an HTTPS console link becomes a button");
+  assert.equal(view.nodes.compactConsole.dataset.url, "https://console.example.com/runtime");
+  assert.equal(view.nodes.compactPreview.hidden, false, "a local http preview is usable");
+  assert.equal(view.nodes.compactPreview.dataset.url, "http://127.0.0.1:5173/");
+  assert.equal(view.nodes.compactFiles.hidden, true, "non-http(s) links never become buttons");
+  view.nodes.compactConsole.onclick();
+  await flush();
+  const open = view.sent.find(request => request.method === "ui/open-link");
+  assert.deepEqual(JSON.parse(JSON.stringify(open.params)), { url: "https://console.example.com/runtime" });
 });

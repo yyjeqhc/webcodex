@@ -52,7 +52,7 @@ test('ACK changes and appended messages preserve the original article and body n
   ], true) } });
   assert.equal(view.nodes.messages.children[0], article);
   assert.equal(article.children[2], body);
-  assert(article.children.at(-1).children.some(item => item.textContent === 'Acknowledged'));
+  assert(article.children.at(-1).children.some(item => item.textContent === '已确认'));
 });
 test('late older history cannot repopulate a revoked conversation', async () => {
   const view = await setup(); view.nodes.historyOlder.onclick(); await flush();
@@ -60,7 +60,7 @@ test('late older history cannot repopulate a revoked conversation', async () => 
   view.toolResult({ work_result: { ...baseState, state_version: 'wr2_' + 'b'.repeat(64),
     collaboration: {available: false, can_send: false, messages: []} } });
   await view.reply(call, toolResult({ work_result_collaboration: page([row('private', 100)]) }));
-  assert.equal(view.nodes.messages.children[0].textContent, 'Collaboration unavailable');
+  assert.equal(view.nodes.messages.children[0].textContent, '消息不可用');
   assert.equal(view.nodes.messageInput.disabled, true);
 });
 test('intent and uncertain delivery are fenced; IME Enter never submits', async () => {
@@ -101,7 +101,7 @@ test('priority travels with the send and the confirmed row appears before the hi
   assert.deepEqual(ids, ['wc_msg_current', 'wc_msg_sent']);
   const sent = view.nodes.messages.children[1];
   assert.equal(sent.children[2].textContent, 'Stop after this test');
-  assert(sent.children.at(-1).children.some(item => item.textContent === 'High priority'));
+  assert(sent.children.at(-1).children.some(item => item.textContent === '高优先级'));
   await view.reply(historyRead, toolResult({ work_result_collaboration: page([row('current', 200), {...row('sent', 300, 'Stop after this test'), priority: 'high'}], true) }));
   assert.deepEqual([...view.nodes.messages.children].map(node => node.getAttribute('data-message-id')), ['wc_msg_current', 'wc_msg_sent']);
 });

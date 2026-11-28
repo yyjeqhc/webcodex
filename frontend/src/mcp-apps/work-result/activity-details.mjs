@@ -9,7 +9,7 @@ export function createActivityDetails({ read, scope, alive, validate, render }) 
       if (!alive() || !visible()) return;
       const trace = row.server_trace_id;
       if (!trace || row.running) {
-        root.textContent = row.running ? "Live call · detailed timing is available after completion." : "No trace identity is available for this retained event.";
+        root.textContent = row.running ? "进行中的调用 · 完成后可查看详细耗时。" : "此保留事件没有追踪标识。";
         root.className = "activity-detail activity-detail-state";
         return;
       }
@@ -23,7 +23,7 @@ export function createActivityDetails({ read, scope, alive, validate, render }) 
       const cached = cache.peek(key);
       if (cached) { display(cached); return; }
       root.className = "activity-detail activity-detail-state";
-      root.textContent = "Loading details…";
+      root.textContent = "正在加载详情…";
       try {
         const detail = await cache.read(key, async validGeneration => {
           const value = await read(selected.project, trace);
@@ -33,7 +33,7 @@ export function createActivityDetails({ read, scope, alive, validate, render }) 
         });
         display(detail);
       } catch (_) {
-        if (current()) root.textContent = "Details unavailable.";
+        if (current()) root.textContent = "详情不可用。";
       }
     },
     dispose: cache.dispose,

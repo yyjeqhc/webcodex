@@ -1,6 +1,9 @@
-/* Work Result uses the Workbench's opaque, neutral surfaces. Host color-scheme
-   and font variables remain authoritative; status colors keep their meaning. */
+/* Work Result card — neutral surfaces, one accent, monospace only for identity,
+   paths and diffs. Host color-scheme and font variables remain authoritative. */
 :root {
+  /* CJK-aware fallback chain; the host font variable stays authoritative. */
+  font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif);
+  line-height: 1.5;
   --accent-soft: color-mix(in srgb, var(--accent) 7%, Canvas);
   --card-header: Canvas;
   --card-body: Canvas;
@@ -9,103 +12,318 @@
   --selection-motion-fill: var(--ui-selection-fill);
   --selection-motion-ink: var(--ui-selection-ink);
   --selection-motion-base-ink: CanvasText;
+  /* Type scale: 15 title and section values, 13 body, 12 small, 11 metadata. */
+  --text-title: 15px;
+  --text-value: 15px;
+  --text-body: 13px;
+  --text-small: 12px;
+  --text-meta: 11px;
+  /* Radius scale steps down with nesting: card 12, panel 10, control 8, chip 6. */
+  --radius-panel: 10px;
+  /* Panels step one tone from the card body; rows stay on the body colour. */
+  --panel: color-mix(in srgb, CanvasText 4%, Canvas);
+  --radius-control: 8px;
+  --radius-chip: 6px;
 }
-.card { border-radius: 12px; box-shadow: none; }
-.app-header { min-height: 58px; padding: 10px 14px; gap: 8px 12px; }
-.brand { gap: 9px; }
+/* The host owns the outer frame: inside a Host the App draws only its own surfaces,
+   so the card carries no second border or radius of its own. Console mode is our page,
+   so the sheet keeps its soft edge there. */
+.card { border: 0; border-radius: 0; box-shadow: none; }
+body { padding: 0; }
+:root[data-display-mode="fullscreen"] .card {
+  border: 1px solid var(--card-border); border-radius: 12px;
+}
+
+/* Header: the product mark, the Session title, one state chip and one control. */
+.app-header { min-height: 58px; padding: 11px 16px; gap: 10px 14px; }
+.brand { gap: 10px; }
 .brand-icon {
-  width: 30px; height: 30px; border: 0; border-radius: 7px;
+  width: 32px; height: 32px; border: 0; border-radius: 9px;
   background: CanvasText; color: Canvas;
 }
-.brand-icon svg { width: 20px; height: 20px; }
-h1 { font-size: 13px; font-weight: 650; }
-.brand-subtitle { font-family: inherit; }
-.badge, .status-value { border-radius: 6px; font-weight: 550; }
-.actions > .badge { min-height: 32px; padding: 6px 9px; font-size: 12px; }
-.actions > #refresh { min-width: 100px; }
+.brand-icon svg { width: 21px; height: 21px; }
+h1 { font-size: var(--text-title); font-weight: 650; letter-spacing: 0; }
+.brand-subtitle { font-family: inherit; font-size: var(--text-small); color: var(--muted); }
+.badge, .status-value {
+  min-height: 30px; padding: 5px 10px; gap: 6px;
+  border-radius: var(--radius-chip); font-size: var(--text-body); font-weight: 550;
+}
+.actions > .badge { min-height: 32px; padding: 6px 11px; }
+.actions > #badge::before {
+  content: ""; width: 6px; height: 6px; flex: 0 0 auto; border-radius: 999px;
+  background: currentColor; opacity: .8;
+}
+.actions > #refresh { min-width: 92px; }
+
+/* Controls: one height, one radius, one hover step. */
 .refresh, .file-views button, .workflow-stages button {
-  min-height: 32px; padding: 6px 10px; border: 1px solid var(--card-border);
-  border-radius: 7px; background: var(--card-body); color: CanvasText;
-  font: inherit; font-size: 12px; font-weight: 500;
+  min-height: 32px; padding: 6px 11px; border: 1px solid var(--card-border);
+  border-radius: var(--radius-control); background: var(--card-body); color: CanvasText;
+  font: inherit; font-size: var(--text-body); font-weight: 500;
   transition: background-color 120ms, border-color 120ms;
 }
 .refresh:active:not(:disabled) { transform: none; }
-.refresh:hover:not(:disabled), .file-views button:hover:not(:disabled) { background: var(--surface-hover); }
+.refresh:hover:not(:disabled), .file-views button:hover:not(:disabled) {
+  background: var(--surface-hover); border-color: color-mix(in srgb, CanvasText 22%, var(--card-border));
+}
+.refresh:disabled { opacity: .5; cursor: default; }
+/* Sending is the panel's one filled primary action. */
+#sendMessage { background: CanvasText; border-color: transparent; color: Canvas; font-weight: 600; }
+#sendMessage:hover:not(:disabled) { background: color-mix(in srgb, CanvasText 86%, Canvas); border-color: transparent; }
+#sendMessage:disabled { opacity: .5; cursor: default; }
 button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible {
   outline: 2px solid var(--ui-selection-color); outline-offset: 2px;
 }
+
+/* Three steps carry the hierarchy: the card body, tinted panels on it, and the
+   white rows inside a panel. Borders stay for rows and controls only. */
 .content { padding: 12px; gap: 12px; }
-.section { padding: 12px; border-radius: 8px; background: Canvas; gap: 8px; }
-.progress-section { background: var(--surface); }
-h2 { font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; }
-.primary { font-size: 14px; font-weight: 600; line-height: 1.5; }
+.section { padding: 16px; border: 0; border-radius: var(--radius-panel); background: var(--panel); gap: 12px; }
+h2 { font-size: 13px; font-weight: 600; letter-spacing: 0; color: color-mix(in srgb, CanvasText 66%, transparent); text-transform: none; }
+.primary { font-size: 16px; font-weight: 600; line-height: 1.45; }
+.primary.tone-good { color: var(--success); }
+.primary.tone-attention { color: var(--warning); }
+.primary.tone-unavailable { color: var(--danger); }
+.secondary, .status { font-size: var(--text-small); line-height: 1.6; }
+.stats-inline { font-size: var(--text-small); font-variant-numeric: tabular-nums; }
+.section > .refresh, .card-panel > .refresh { justify-self: start; max-width: 100%; }
+
+/* One live line, the facts as plain text, and at most three quiet links. */
+.compact-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 16px 4px; }
+.compact-live { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1 1 220px; }
+.compact-dot {
+  flex: 0 0 auto; width: 7px; height: 7px; border-radius: 999px; background: var(--faint); align-self: center;
+}
+.compact-dot.is-live { background: var(--accent); animation: compact-pulse 2s ease-in-out infinite; }
+.compact-dot.is-failed { background: var(--danger); }
+@keyframes compact-pulse {
+  0%, 100% { opacity: .3; transform: scale(.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
+.compact-status {
+  min-width: 0; font-size: var(--text-body); font-weight: 550;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.compact-meta { font-size: var(--text-small); color: var(--muted); font-variant-numeric: tabular-nums; }
+.compact-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.compact-link, .compact-toggle {
+  min-height: 28px; padding: 3px 10px; border: 0; border-radius: var(--radius-chip);
+  background: transparent; color: color-mix(in srgb, CanvasText 72%, transparent);
+  font: inherit; font-size: var(--text-small); cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+.compact-link:hover, .compact-toggle:hover { background: var(--surface-hover); color: CanvasText; }
+.compact-toggle { background: var(--surface); color: CanvasText; font-weight: 550; }
+.compact-hint { flex-basis: 100%; margin: 0; font-size: var(--text-meta); color: var(--muted); overflow-wrap: anywhere; }
+.details-body { animation: details-in 160ms ease-out; }
+@keyframes details-in { from { opacity: 0; transform: translateY(-4px); } }
+
+/* Work in progress reads as one travelling highlight, no timers involved. */
+.activity-bar {
+  height: 2px; margin: 0; background: color-mix(in srgb, var(--accent) 16%, transparent);
+  overflow: hidden; position: relative;
+}
+.activity-bar::after {
+  content: ""; position: absolute; inset: 0; width: 34%;
+  background: var(--accent); border-radius: 999px;
+  animation: activity-sweep 1.6s ease-in-out infinite;
+}
+@keyframes activity-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+
+/* Summary: labelled facts in plain text; tone lives on the value. */
+.summary-bar { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0; padding: 4px 16px 12px; }
+.summary-item {
+  display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; padding: 0;
+  border: 0; background: transparent; color: CanvasText; font: inherit; text-align: left; cursor: pointer;
+}
+.summary-item:hover .summary-value { text-decoration: underline; text-underline-offset: 3px; }
+.summary-label { font-size: var(--text-meta); color: color-mix(in srgb, CanvasText 58%, transparent); }
+.summary-value { font-size: var(--text-body); font-variant-numeric: tabular-nums; }
+.summary-item.tone-good .summary-value { color: var(--success); }
+.summary-item.tone-attention .summary-value { color: var(--danger); }
+
+/* Tabs: one hairline, the selected label carried by the selection plate. */
 .card-tabs {
-  margin: 0 12px; padding: 4px 0; gap: 4px; border: 0; border-bottom: 1px solid var(--divider);
+  margin: 0 14px; padding: 0; gap: 2px; border: 0; border-bottom: 1px solid var(--divider);
   border-radius: 0; background: transparent;
 }
 .card-tabs button {
-  min-height: 34px; padding: 7px 10px; border: 0; border-radius: 6px;
-  font: inherit; font-size: 12px; font-weight: 550; color: CanvasText;
+  min-height: 38px; padding: 9px 12px; border: 0; border-radius: 0;
+  font: inherit; font-size: var(--text-body); font-weight: 550;
+  color: color-mix(in srgb, CanvasText 70%, transparent);
 }
-.card-tabs button[aria-selected="true"] { color: var(--ui-selection-color); background: transparent; border-bottom-color: transparent; font-weight: 550; }
-.card-tabs button:hover { background: var(--surface-hover); }
+.card-tabs button:hover { color: CanvasText; background: transparent; }
 .card-tabs button:focus-visible { outline: 1px dashed var(--muted); outline-offset: -5px; }
+
+/* Checks: two labelled cells, divided when there is room. */
+.check-summary > .check-item { display: grid; min-width: 0; gap: 5px; padding: 0 0 10px; }
+.check-item + .check-item { border-top: 1px solid var(--divider); padding-top: 10px; }
+.check-label { font-size: var(--text-meta); color: color-mix(in srgb, CanvasText 58%, transparent); }
+.check-hint { margin: 2px 0 0; font-size: var(--text-meta); }
+@media (min-width: 640px) {
+  .check-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; }
+  .check-summary > .check-item { padding: 0 16px 0 0; }
+  .check-item + .check-item { border-top: 0; border-left: 1px solid var(--divider); padding: 0 0 0 16px; }
+}
+
+/* File rows: path left, counts right, one border per row. */
+.workspace-files { gap: 6px; }
 .workspace-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .workspace-actions:has(> :not([hidden])) { margin-top: 2px; }
-.section > .refresh, .card-panel > .refresh { justify-self: start; max-width: 100%; }
+.frozen-file {
+  border: 1px solid var(--divider); border-radius: var(--radius-control); background: var(--card-body);
+  transition: border-color 120ms, background-color 120ms;
+}
+.frozen-file + .frozen-file { margin-top: 0; }
+.frozen-file:hover { border-color: color-mix(in srgb, CanvasText 24%, transparent); }
+.file-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; min-height: 36px; padding: 8px 12px; border: 0; background: transparent;
+  color: CanvasText; text-align: left; cursor: pointer;
+  font: 13px/1.5 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+}
+.file-toggle[aria-expanded="true"] { background: color-mix(in srgb, CanvasText 4%, transparent); }
+.file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-stats {
+  flex: 0 0 auto; display: inline-flex; gap: 6px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.file-add { color: var(--success); }
+.file-del { color: var(--danger); }
+/* The file body reads as three bands: state caption, diff, view actions. */
+.file-state { padding: 7px 12px 8px; border-top: 1px solid var(--divider); }
+.file-views { margin: 0; padding: 9px 12px; border-top: 1px solid var(--divider); gap: 8px; }
+.diff { padding: 6px 0; font-size: 13px; line-height: 1.65; }
+.diff-line { padding: 0 12px; }
+/* The hunk header is a heading inside the diff: keep it tinted but at reading contrast. */
+.diff-line.hunk { color: color-mix(in srgb, var(--accent) 76%, CanvasText); }
+.full-text { padding: 8px 12px 12px; }
+.markdown-preview { padding: 8px 12px 12px; }
 .file-views[data-work-result-selection] { position: relative; align-items: center; }
 .file-views button[data-view] { border-color: transparent; }
 .file-views button[data-view][aria-pressed="true"] { color: var(--ui-selection-ink); background: var(--ui-selection-fill); }
 .thread-review .file-views .refresh[aria-pressed="true"]:not([data-view]) {
   background: var(--surface-hover); border-color: var(--card-border); color: CanvasText;
 }
-.details { border-radius: 8px; }
-.details > summary { min-height: 36px; display: list-item; align-content: center; }
-.app-footer { gap: 8px; background: var(--surface); }
-.app-footer > .status { min-width: 0; flex: 1; }
+
+/* Activity: current work first, then the bounded history. */
+.activity-line { gap: 3px; }
+.activity-current { font-size: var(--text-value); font-weight: 650; }
+.activity-age { font-size: var(--text-small); }
+.background-work { gap: 6px; }
+.background-results > summary { padding: 8px 0; font-size: var(--text-small); }
+.workflow-row { padding: 9px 0; }
+.workflow-row time { font-size: var(--text-meta); }
+.job-state.tone-active { color: var(--accent); }
+.job-state.tone-passed { color: var(--success); }
+.job-state.tone-failed { color: var(--danger); }
+.job-state.tone-active::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px;
+  border-radius: 999px; background: currentColor; vertical-align: 1px;
+}
+.activity-call > summary { padding: 9px 6px 9px 1px; }
+.call-title { font-size: var(--text-body); font-weight: 600; }
+.call-time, .call-outcome { font-size: var(--text-meta); }
+.activity-detail-state { font-size: var(--text-meta); }
+.detail-item span { font-size: var(--text-meta); }
+.detail-item strong { font-size: var(--text-small); }
+
+/* Collaboration. */
+.conversation { gap: 10px; padding: 4px 2px; }
+.message { gap: 5px; padding: 9px 11px; border-radius: var(--radius-control); }
+.message.user { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 20%, var(--divider)); }
+.message-copy { font-size: var(--text-body); line-height: 1.65; }
+.message-meta { font-size: 11.5px; }
+.message-kind { border-radius: var(--radius-chip); padding: 2px 6px; font-size: 11.5px; }
+.message-reply { border-radius: 0 var(--radius-chip) var(--radius-chip) 0; }
+.collaboration-semantics { font-size: var(--text-small); margin: 4px 0 10px; }
+.conversation-intent { font-size: var(--text-small); }
+.composer textarea { min-height: 60px; padding: 9px 10px; border-radius: var(--radius-control); font-size: var(--text-body); }
+#composerState { font-size: var(--text-small); }
+
+/* Thread review: one navigator row, one quiet metadata line. */
+.file-navigator { gap: 8px; padding: 10px 0 12px; }
+.file-navigator select { min-height: 34px; border-radius: var(--radius-control); font-size: var(--text-small); }
+.file-navigator .refresh { min-width: 40px; padding-inline: 10px; }
+.file-filter input { min-height: 34px; border-radius: var(--radius-control); font-size: var(--text-small); }
+.file-filter-status, .file-path > summary { line-height: 1.6; }
+.quote-text { border-radius: var(--radius-control); }
+.quote-copy { min-height: 130px; font-size: 13px; }
+#quotePanel .file-views { border-top: 0; padding: 0; }
+
+.details { border-radius: var(--radius-control); }
+.details > summary { min-height: 36px; display: list-item; align-content: center; font-size: var(--text-small); }
+/* Diagnostics: key-value groups on the summary's inset. */
+#diagnostics > :not(summary) { display: grid; gap: 16px; padding: 2px 12px 12px; }
+.kv-group { display: grid; gap: 6px; min-width: 0; }
+.kv-title { font-size: var(--text-meta); color: color-mix(in srgb, CanvasText 58%, transparent); }
+.kv { display: grid; min-width: 0; }
+.kv-row { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 4px 0; }
+.kv-key { min-width: 0; font-size: var(--text-small); color: var(--muted); }
+.kv-value { min-width: 0; font-size: var(--text-small); overflow-wrap: anywhere; }
+.kv-value.mono { font: 11.5px/1.6 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+.kv-value.off { color: color-mix(in srgb, CanvasText 46%, transparent); }
+#diagnosticContent { font-size: var(--text-small); line-height: 1.7; }
+
+/* Footer. */
+.app-footer { padding: 8px 14px; gap: 8px; background: var(--surface); }
+.app-footer > .status { min-width: 0; flex: 1; font-size: var(--text-small); }
 .app-footer > .card-appearance { flex: 0 0 auto; }
-.app-footer > .card-appearance > summary { min-height: 26px; padding: 3px 8px; border-color: transparent; color: var(--muted); }
+.app-footer > .card-appearance > summary { min-height: 26px; padding: 3px 8px; border-color: transparent; color: var(--muted); font-size: var(--text-small); }
 /* Open upward from the footer even before the shared controller measures it. */
 .app-footer > .card-appearance > .card-selection-preference { top: auto; bottom: 44px; left: auto; right: 8px; }
-/* One overview row: each item opens the section that owns its evidence. */
-.summary-strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 12px 0; }
-.summary-item {
-  min-height: 28px; padding: 4px 10px; border: 1px solid var(--card-border); border-radius: 999px;
-  background: var(--card-body); color: CanvasText; font: inherit; font-size: 12px; cursor: pointer;
-}
-.summary-item:hover { background: var(--surface-hover); }
-.summary-item.tone-attention { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--card-border)); background: var(--danger-soft); }
-.summary-item.tone-good { color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, var(--card-border)); background: var(--success-soft); }
-.activity-call.observe .call-title { color: var(--muted); font-weight: 500; }
 .live-dot { background: var(--faint); box-shadow: none; }
 [data-unavailable] .live-dot { background: var(--danger); }
 [data-unavailable] #badge { color: var(--danger); background: var(--danger-soft); border-color: var(--divider); }
+
+/* Forms. */
 select, .conversation-intent select, .file-navigator select, input, textarea {
-  min-height: 34px; max-width: 100%; border: 1px solid var(--card-border);
-  border-radius: 7px; background: var(--card-body); color: CanvasText; font: inherit;
+  min-height: 32px; max-width: 100%; border: 1px solid var(--card-border);
+  border-radius: var(--radius-control); background: var(--card-body); color: CanvasText;
+  font: inherit; font-size: var(--text-body);
 }
-select, .conversation-intent select, .file-navigator select { padding: 6px 28px 6px 9px; cursor: pointer; }
+select, .conversation-intent select, .file-navigator select { padding: 5px 26px 5px 9px; cursor: pointer; }
 select:hover:not(:disabled), input:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--muted); }
-select:disabled { opacity: .48; cursor: default; }
-:root[data-display-mode="fullscreen"] .app-header { padding: 12px 20px; }
-:root[data-display-mode="fullscreen"] h1 { font-size: 14px; }
-:root[data-display-mode="fullscreen"] .card-tabs { padding: 4px; margin: 0 20px; }
-:root[data-display-mode="fullscreen"] .summary-strip { margin-inline: 20px; }
-:root[data-display-mode="fullscreen"] .card-tabs button { padding: 7px 16px; }
+select:disabled { opacity: .5; cursor: default; }
+
+/* Empty state: the frame and one sentence, nothing to decorate. */
+.empty-state { padding: 44px 24px; max-width: 460px; }
+.empty-state h2 { font-size: 16px; font-weight: 650; color: CanvasText; }
+.empty-state p { font-size: var(--text-body); line-height: 1.7; }
+
+/* The console view gives the same screen more room, not a different system. */
+:root[data-display-mode="fullscreen"] .app-header { min-height: 64px; padding: 14px 20px; }
+:root[data-display-mode="fullscreen"] h1 { font-size: 16px; }
+:root[data-display-mode="fullscreen"] .content { padding: 20px; gap: 16px; }
+:root[data-display-mode="fullscreen"] .section { padding: 16px; gap: 12px; }
+:root[data-display-mode="fullscreen"] .card-tabs { padding: 0; margin: 0 20px; }
+:root[data-display-mode="fullscreen"] .card-tabs button { padding: 10px 14px; }
+:root[data-display-mode="fullscreen"] .summary-bar { margin-inline: 20px; }
+
 @media (max-width: 620px) {
   .app-header { align-items: center; }
   .actions { flex-basis: 100%; justify-content: flex-start; gap: 6px; }
-  .actions > #refresh { min-width: 96px; }
-  .actions > .badge { padding-inline: 6px; }
-  .card-appearance > summary { padding-inline: 7px; }
+  .actions > #refresh { min-width: 92px; }
+  .actions > .badge { padding-inline: 9px; }
   .brand-icon { width: 30px; height: 30px; }
-  .card-tabs button { padding: 7px 4px; }
+  .content { padding: 10px; }
+  .section { padding: 12px; }
+  .summary-bar { margin-inline: 10px; }
+  .summary-item { min-height: 34px; padding: 7px 10px; }
+  .card-tabs { margin: 0 10px; }
+  .card-tabs button { padding: 9px 6px; }
+  .card-appearance > summary { padding-inline: 7px; }
   :root[data-display-mode="fullscreen"] .app-header { padding: 12px; }
+  :root[data-display-mode="fullscreen"] .content { padding: 12px; }
+  :root[data-display-mode="fullscreen"] .section { padding: 12px; }
   :root[data-display-mode="fullscreen"] .card-tabs { margin: 0 12px; }
-  :root[data-display-mode="fullscreen"] .card-tabs button { flex: 1; padding: 7px 4px; }
 }
 @media (pointer: coarse) {
   .actions > .badge { min-height: 44px; }
-  .refresh, .card-tabs button, .file-views button, .summary-item, .app-footer > .card-appearance > summary, select, .conversation-intent select, .file-navigator select { min-height: 44px; }
+  .refresh, .card-tabs button, .file-views button, .summary-item, #sendMessage, .file-toggle,
+  .app-footer > .card-appearance > summary, select, .conversation-intent select, .file-navigator select { min-height: 44px; }
 }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }

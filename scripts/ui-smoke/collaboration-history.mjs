@@ -3,6 +3,16 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { baseState } from '../../src/mcp_tests/work_result_app_fixture.mjs';
+
+// The card folds its body by default; open it the way a reader would.
+async function expandCard(frame) {
+  const body = frame.locator('#detailsBody');
+  if (await body.count() === 0) return;
+  if (await body.evaluate(node => node.hidden)) {
+    await frame.locator('#detailsToggle').click();
+    await frame.waitForFunction(() => document.getElementById('detailsBody').hidden === false);
+  }
+}
 const { chromium } = createRequire(import.meta.url)('playwright');
 const html = fs.readFileSync(new URL('../../src/mcp_work_result_app.html', import.meta.url), 'utf8');
 const output = new URL('../../artifacts/projects-runtime/collaboration-history/', import.meta.url);
@@ -53,23 +63,24 @@ try {
       frame.srcdoc = html; document.body.append(frame);
     }, {html, state, earlier});
     const card = page.frameLocator('iframe');
-    await card.getByRole('tab', {name: 'Collaboration', exact: true}).click();
-    await card.getByText('Reply received', {exact: true}).waitFor();
+    await expandCard(page.frames().find(candidate => candidate.parentFrame()));
+    await card.getByRole('tab', {name: '消息', exact: true}).click();
+    await card.getByText('已收到回复', {exact: true}).waitFor();
     await card.locator('.message-reply').filter({hasText: 'Please keep the earlier discussion'}).waitFor();
     assert.equal(await card.locator('.message').count(), 3);
-    await card.getByRole('button', {name: 'Load earlier messages'}).click();
+    await card.getByRole('button', {name: '加载更早的消息'}).click();
     await card.getByText(earlier.message, {exact: true}).waitFor();
     await page.evaluate(() => { window.fixtureState.state_version = 'wr2_' + 'd'.repeat(64); });
-    await card.getByRole('button', {name: 'Refresh', exact: true}).click();
-    await card.getByRole('button', {name: 'Refresh', exact: true}).waitFor();
+    await card.getByRole('button', {name: '刷新', exact: true}).click();
+    await card.getByRole('button', {name: '刷新', exact: true}).waitFor();
     assert.equal(await card.getByText(earlier.message, {exact: true}).count(), 1);
     assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.screenshot({path: fileURLToPath(new URL(`history-${width}.png`, output)), fullPage: true});
-    await card.getByRole('button', {name: 'Return to latest messages'}).click();
-    await card.getByRole('combobox', {name: 'Message type'}).selectOption('question');
-    await card.getByRole('textbox', {name: 'Message this Window'}).fill('Please verify these changes.');
-    await card.getByRole('button', {name: 'Send', exact: true}).click();
-    await card.locator('#composerState').filter({hasText: 'Saved'}).waitFor();
+    await card.getByRole('button', {name: '返回最新消息'}).click();
+    await card.getByRole('combobox', {name: '消息类型'}).selectOption('question');
+    await card.getByRole('textbox', {name: '给 WebCodex 留言'}).fill('Please verify these changes.');
+    await card.getByRole('button', {name: '发送', exact: true}).click();
+    await card.locator('#composerState').filter({hasText: '已保存'}).waitFor();
     assert.deepEqual(await page.evaluate(() => window.writes.map(write => write.kind)), ['question']);
     assert.deepEqual(errors, []);
     await page.close();

@@ -168,6 +168,7 @@ fn store_connection_domains_and_metric_names_are_closed_and_stable() {
             "accounts",
             "activity",
             "admin_project_lifecycle",
+            "admin_runner_lifecycle",
             "agent_task",
             "agent_wait",
             "agent_wake",

@@ -40,9 +40,19 @@ impl AuthorizedDispatch<'_, '_> {
                 client_id,
                 project,
                 session_id,
+                preview_url,
             } => {
                 runtime
-                    .open_webcodex_workbench(project, session_id, client_id, auth)
+                    .open_webcodex_workbench(project, session_id, client_id, preview_url, auth)
+                    .await
+            }
+            ToolCall::StartWebPreview {
+                project,
+                port,
+                idempotency_key,
+            } => {
+                runtime
+                    .start_web_preview(project, port, idempotency_key, auth)
                     .await
             }
             ToolCall::SearchWebcodexResources {

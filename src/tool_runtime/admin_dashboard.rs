@@ -67,6 +67,11 @@ pub(crate) struct AdminDashboardDevice {
     pub(crate) compatibility: String,
     pub(crate) protocol_compatibility: String,
     pub(crate) build_alignment: String,
+    /// Whether the Server-side registration may be removed right now: the
+    /// Runner is past the online window and owns no active Job or queued
+    /// request. This is presentation of the same admission the removal
+    /// endpoint enforces; it grants no authority.
+    pub(crate) removable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +199,9 @@ impl ToolRuntime {
             let alignment_name = runner_compatibility
                 .map(|facts| build_alignment_name(facts.build_alignment))
                 .unwrap_or("unknown");
+            let active_jobs = active_by_runner
+                .get(&client.client_id)
+                .map_or(0, |jobs| jobs.active);
             devices.push(AdminDashboardDevice {
                 display_name: client.display_name.clone(),
                 client_id: client.client_id.clone(),
@@ -215,13 +223,12 @@ impl ToolRuntime {
                     .iter()
                     .filter(|project| !project.disabled)
                     .count(),
-                active_jobs: active_by_runner
-                    .get(&client.client_id)
-                    .map_or(0, |jobs| jobs.active),
+                active_jobs,
                 runner_protocol_generation: client.runner_protocol_generation.get(),
                 compatibility: compatibility_name.to_string(),
                 protocol_compatibility: protocol_name.to_string(),
                 build_alignment: alignment_name.to_string(),
+                removable: !client.connected && client.pending_requests == 0 && active_jobs == 0,
             });
 
             let shell_profiles = client

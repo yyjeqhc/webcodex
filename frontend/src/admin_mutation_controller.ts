@@ -1,9 +1,14 @@
-export type MutationKind = "register" | "create" | "enable" | "disable" | "unregister";
+export type MutationKind = "register" | "create" | "enable" | "disable" | "unregister" | "unregister_runner";
+
+export function mutationKindLabel(kind: MutationKind): string {
+  return kind === "unregister_runner" ? "Unregister runner" : kind[0].toUpperCase() + kind.slice(1);
+}
 
 export type MutationErrorCode =
   | "invalid_request" | "revision_conflict" | "active_jobs_conflict"
   | "idempotency_conflict" | "unsupported_runner_version" | "agent_unavailable"
-  | "operation_indeterminate" | "operation_failed" | "network_error" | "unauthorized";
+  | "operation_indeterminate" | "operation_failed" | "network_error" | "unauthorized"
+  | "runner_connected" | "runner_online" | "runner_busy" | "runner_maintenance";
 
 export class AdminMutationError extends Error {
   constructor(readonly status: number, readonly code: MutationErrorCode, readonly activeJobs?: number) {
@@ -70,9 +75,16 @@ export class AdminMutationController {
     context.pending = true;
     this.deps.pending(context.target, true);
     try {
-      await this.deps.request(context.kind, context.token, { ...context.body, idempotency_key: context.key }, context.controller.signal);
+      // Project lifecycle mutations are journaled Server-side and carry an
+      // idempotency key for uncertain-delivery replay. Runner unregistration
+      // converges on the target state (absent registration), so a repeat is
+      // already safe and needs no key.
+      const body = context.kind === "unregister_runner"
+        ? { ...context.body }
+        : { ...context.body, idempotency_key: context.key };
+      await this.deps.request(context.kind, context.token, body, context.controller.signal);
       if (!this.current(context)) return;
-      this.deps.outcome(`${context.kind[0].toUpperCase()}${context.kind.slice(1)} completed.`);
+      this.deps.outcome(`${mutationKindLabel(context.kind)} completed.`);
       this.contexts.delete(context.target);
       await this.deps.refresh();
     } catch (error) {

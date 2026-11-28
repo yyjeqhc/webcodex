@@ -10,8 +10,8 @@ pub(in crate::mcp) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
 pub(in crate::mcp) const MCP_DOCX_UI_RESOURCE_URI: &str = "ui://webcodex/docx/v2";
 pub(in crate::mcp) const MCP_DOCX_APP_HTML: &str = include_str!("../../mcp_docx_app.html");
 pub(in crate::mcp) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v4";
-pub(in crate::mcp) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v9";
-pub(in crate::mcp) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v39";
+pub(in crate::mcp) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v12";
+pub(in crate::mcp) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v41";
 pub(in crate::mcp) const MCP_SPREADSHEET_UI_RESOURCE_URI: &str = "ui://webcodex/spreadsheet/v5";
 pub(in crate::mcp) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v11";
 pub(in crate::mcp) const MCP_AGENT_CONTINUATION_UI_RESOURCE_URI: &str =
@@ -65,11 +65,12 @@ pub(super) static BUILTIN_MCP_APPS: &[BundledMcpApp] = &[
     BundledMcpApp {
         listing: Some(AppListing {
             name: "WebCodex Workbench",
-            description: "Project files and references, personal Goals, and explicitly routed durable work with authorized progress and actions.",
+            description: "Project files, personal Goals, routed work and optional live web preview of a temporary HTTPS Runner tunnel.",
         }),
-        tools: &["open_webcodex_workbench"],
+        tools: &["open_webcodex_workbench", "start_web_preview"],
         tool_title: Some("WebCodex"),
         tool_entrypoints: &["global"],
+        allow_web_preview_frames: true,
         read_display_modes: &["fullscreen", "inline"],
         ..BundledMcpApp::template(MCP_WORKBENCH_UI_RESOURCE_URI, MCP_WORKBENCH_APP_HTML)
     },

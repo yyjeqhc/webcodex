@@ -7,6 +7,7 @@ use serde::Deserialize;
 pub(super) const CANONICAL_TOOLS: &[&str] = &[
     "list_runners",
     "list_project_files",
+    "start_web_preview",
     "get_goal",
     "create_goal",
     "update_goal",

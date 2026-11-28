@@ -11,7 +11,7 @@ if (process.argv.slice(2).some(arg => arg !== "--check")) throw new Error("Only 
 const result = await build({
   entryPoints: [resolve(root, "src/mcp-apps/work-result-markdown.mjs")],
   bundle: true, platform: "browser", format: "iife", globalName: "WebCodexMarkdown",
-  target: "es2022", minify: true, legalComments: "inline", write: false,
+  target: "es2022", charset: "utf8", minify: true, legalComments: "inline", write: false,
   supported: { "inline-script": true }, metafile: true,
 });
 const html = readFileSync(path, "utf8");

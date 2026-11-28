@@ -80,6 +80,15 @@ pub(super) const ADMIN_ROUTES: &[RouteSpec] = &[
         Other,
         AuthMiddleware,
     ),
+    route(
+        AdminRunnersUnregister,
+        Post,
+        "/api/admin/runners/unregister",
+        BootstrapOnly,
+        Admin,
+        Other,
+        AuthMiddleware,
+    ),
 ];
 
 pub(super) const AUDIT_ROUTES: &[RouteSpec] = &[

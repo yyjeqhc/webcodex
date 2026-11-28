@@ -4,7 +4,7 @@ import { Alert, Badge, Button, Checkbox, Menu, Modal, PasswordInput, Switch, Tab
 import { Activity, AlertTriangle, Ellipsis, Folder, LayoutDashboard, LockKeyhole, Plus, RefreshCw, Users } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AdminHttpError, AdminRefreshController } from "../admin_controller.js";
-import { AdminMutationController, AdminMutationError, type MutationKind, type MutationErrorCode } from "../admin_mutation_controller.js";
+import { AdminMutationController, AdminMutationError, mutationKindLabel, type MutationKind, type MutationErrorCode } from "../admin_mutation_controller.js";
 import { AdminMutationDialogCoordinator } from "../admin_mutation_view.js";
 import { AppearanceControls } from "../ui/AppearanceControls.js";
 import { ACCENT_CHANGE_EVENT, ACCENT_STORAGE_KEY, applyAccentPreference, loadAccentPreference, normalizeAccent, persistAccentPreference } from "../ui/accent.js";
@@ -15,19 +15,24 @@ const ADMIN_BASE = "/api/admin/";
 const REFRESH_MS = 10000;
 const APPEARANCE_KEY = "webcodex.admin.appearance.v1";
 type Appearance = "system" | "light" | "dark";
-type DialogState = { kind: MutationKind; target: string; project?: JsonRecord };
+type DialogState = { kind: MutationKind; target: string; project?: JsonRecord; device?: JsonRecord };
 type FormFields = {
   client_id: string; project_id: string; name: string; description: string; path: string;
-  allow_patch: boolean; git_init: boolean; template: string; adopt_existing_empty: boolean; confirm_project: string;
+  allow_patch: boolean; git_init: boolean; template: string; adopt_existing_empty: boolean;
+  confirm_project: string; confirm_runner: string;
 };
 const emptyFields: FormFields = {
   client_id: "", project_id: "", name: "", description: "", path: "", allow_patch: true,
-  git_init: false, template: "", adopt_existing_empty: false, confirm_project: "",
+  git_init: false, template: "", adopt_existing_empty: false, confirm_project: "", confirm_runner: "",
+};
+const mutationEndpoints: Record<MutationKind, string> = {
+  register: "projects/register", create: "projects/create", enable: "projects/enable",
+  disable: "projects/disable", unregister: "projects/unregister", unregister_runner: "runners/unregister",
 };
 const errorMessage: Record<MutationErrorCode, string> = {
   invalid_request: "The request is invalid. Review the fields and try again.",
   revision_conflict: "Project state changed. The dashboard was refreshed; confirm again using the latest revision.",
-  active_jobs_conflict: "The project has active jobs. No jobs were stopped; refresh and retry after they finish.",
+  active_jobs_conflict: "Active jobs still reference this target. No jobs were stopped; refresh and retry after they finish.",
   idempotency_conflict: "This retry no longer matches its original operation. Start a new operation.",
   unsupported_runner_version: "The Agent does not support project lifecycle operations.",
   agent_unavailable: "The Agent is unavailable. Current dashboard data is preserved; retry this same operation later.",
@@ -35,6 +40,10 @@ const errorMessage: Record<MutationErrorCode, string> = {
   operation_failed: "The operation failed safely. Internal details were not displayed.",
   network_error: "Network failure. Current data is preserved; retry this same operation.",
   unauthorized: "Administrator authentication required.",
+  runner_connected: "The Runner still has a live connection. Stop it on that machine, then retry.",
+  runner_online: "The Runner was seen within the last minute and may still be running. Stop it, then retry once it shows as stale.",
+  runner_busy: "The Runner still has queued requests. Retry once they finish; no requests were cancelled.",
+  runner_maintenance: "An upgrade maintenance lease covers this Runner. Retry after the upgrade completes.",
 };
 
 function savedAppearance(): Appearance {
@@ -59,7 +68,7 @@ async function requestDashboard(token: string, signal: AbortSignal): Promise<unk
 }
 
 async function requestMutation(kind: MutationKind, token: string, body: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
-  const response = await fetch(`${ADMIN_BASE}projects/${kind}`, {
+  const response = await fetch(ADMIN_BASE + mutationEndpoints[kind], {
     method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
   });
   const data = record(await parseResponse(response));
@@ -69,6 +78,7 @@ async function requestMutation(kind: MutationKind, token: string, body: Record<s
   const allowed = new Set<MutationErrorCode>([
     "invalid_request", "revision_conflict", "active_jobs_conflict", "idempotency_conflict",
     "unsupported_runner_version", "agent_unavailable", "operation_indeterminate", "operation_failed",
+    "runner_connected", "runner_online", "runner_busy", "runner_maintenance",
   ]);
   throw new AdminMutationError(response.status,
     typeof code === "string" && allowed.has(code as MutationErrorCode) ? code as MutationErrorCode : "operation_failed",
@@ -119,6 +129,24 @@ function ProjectActionMenu({ project, onAction }: {
         onClick={() => { if (trigger.current) onAction(kind, project, trigger.current); }}>
         {kind[0].toUpperCase() + kind.slice(1)}
       </Menu.Item>)}
+    </Menu.Dropdown>
+  </Menu>;
+}
+
+function RunnerActionMenu({ device, onAction }: {
+  device: JsonRecord;
+  onAction: (kind: "unregister_runner", device: JsonRecord, trigger: HTMLElement) => void;
+}) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const name = display(device.display_name || device.client_id);
+  return <Menu position="bottom-end" shadow="md" width={192}>
+    <Menu.Target><Button ref={trigger} variant="subtle" color="gray" size="xs" rightSection={<Ellipsis size={16} />}
+      aria-label={`Actions for Runner ${name}`}>Actions</Button></Menu.Target>
+    <Menu.Dropdown>
+      <Menu.Item color="red" disabled={record(device.actions).unregister !== true}
+        onClick={() => { if (trigger.current) onAction("unregister_runner", device, trigger.current); }}>
+        Unregister
+      </Menu.Item>
     </Menu.Dropdown>
   </Menu>;
 }
@@ -322,6 +350,15 @@ export function AdminApp() {
     setFields(emptyFields); setDialogError(""); dialogOpen.current = true;
     setDialog({ kind, target, project });
   };
+  const openRunnerAction = (kind: "unregister_runner", device: JsonRecord, trigger: HTMLElement) => {
+    const target = String(device.client_id || "");
+    const body = { client_id: target, confirm: true };
+    const context = mutationRef.current!.start(kind, target, body);
+    flowRef.current!.open(target, context, body);
+    dialogTrigger.current = trigger;
+    setFields(emptyFields); setDialogError(""); dialogOpen.current = true;
+    setDialog({ kind, target, device });
+  };
   const submitDialog = (event: FormEvent) => {
     event.preventDefault();
     if (!dialog || dialogPending) return;
@@ -335,11 +372,17 @@ export function AdminApp() {
       if (kind === "create") Object.assign(body, {
         git_init: fields.git_init, template: fields.template.trim() || null, adopt_existing_empty: fields.adopt_existing_empty,
       });
+    } else if (kind === "unregister_runner") {
+      body = { client_id: target, confirm: true };
     } else {
       body = { project: target, expected_revision: String(dialog.project?.revision || ""), confirm: true };
     }
     if (kind === "unregister" && fields.confirm_project !== target) {
       setDialogError("Type the full runtime project ID to confirm.");
+      return;
+    }
+    if (kind === "unregister_runner" && fields.confirm_runner !== target) {
+      setDialogError("Type the full Runner client ID to confirm.");
       return;
     }
     setDialogError("");
@@ -398,10 +441,11 @@ export function AdminApp() {
           </div>)}</div>
         </Section>
         <Section id="devices-section" eyebrow="Connected fleet" title="Runners" error={sectionError("devices")}>
-          <DataTable label="Connected Runners" empty="No Runners observed." headings={["Name", "Client", "Status", "Transport", "Host", "Last seen", "Capabilities", "Projects", "Jobs", "Protocol", "Build alignment"]}
+          <DataTable label="Connected Runners" empty="No Runners observed." headings={["Name", "Client", "Status", "Transport", "Host", "Last seen", "Capabilities", "Projects", "Jobs", "Protocol", "Build alignment", "Actions"]}
             rows={dashboard.devices.map((device) => [display(device.display_name), <code>{display(device.client_id)}</code>, <Status value={device.status} />,
               display(device.transport), display(device.hostname), <code>{display(device.last_seen)}</code>, display(capabilityLabels(device.capabilities).join(", ")),
-              display(device.project_count), display(device.active_jobs), <Status value={device.protocol_compatibility || device.compatibility} />, <span title="Build identity is diagnostic, not functional compatibility">{display(device.build_alignment)}</span>])} />
+              display(device.project_count), display(device.active_jobs), <Status value={device.protocol_compatibility || device.compatibility} />, <span title="Build identity is diagnostic, not functional compatibility">{display(device.build_alignment)}</span>,
+              <RunnerActionMenu device={device} onAction={openRunnerAction} />])} />
         </Section>
         <Section id="projects-section" eyebrow="Runtime registry" title="Projects" error={sectionError("projects")}
           actions={<div className="section-actions"><Button variant="default" onClick={(event) => openCreate("register", event.currentTarget)}>Register</Button>
@@ -429,7 +473,7 @@ export function AdminApp() {
       returnFocus={false}
       closeOnEscape={!dialogPending} closeOnClickOutside={!dialogPending} withCloseButton={!dialogPending}
       closeButtonProps={{ "aria-label": "Close dialog" }}
-      title={dialog ? `${dialog.kind[0].toUpperCase()}${dialog.kind.slice(1)} project` : "Project operation"} centered size="lg" classNames={{ content: "admin-modal-content", header: "admin-modal-header", title: "admin-modal-title", body: "admin-modal-body" }}>
+      title={dialog ? `${mutationKindLabel(dialog.kind)}${dialog.kind === "unregister_runner" ? "" : " project"}` : "Project operation"} centered size="lg" classNames={{ content: "admin-modal-content", header: "admin-modal-header", title: "admin-modal-title", body: "admin-modal-body" }}>
       {dialog && <form onSubmit={submitDialog} autoComplete="off" className="dialog-form">
         {dialog.kind === "register" || dialog.kind === "create" ? <>
           <p>{dialog.kind === "create" ? "Create may create a directory and Git repository. An existing empty directory is used only when explicitly adopted; non-empty directories are never overwritten." : "Register an existing directory. The path remains only in this form and page memory."}</p>
@@ -444,7 +488,13 @@ export function AdminApp() {
               <TextInput label="Template" value={fields.template} onChange={(event) => setField("template", event.currentTarget.value)} />
               <Checkbox label="Adopt existing empty directory" checked={fields.adopt_existing_empty} onChange={(event) => setField("adopt_existing_empty", event.currentTarget.checked)} /></>}
           </div>
-        </> : <div className="action-confirmation">
+        </> : dialog.kind === "unregister_runner" ? <div className="action-confirmation">
+          <p><strong>Runner</strong><code>{dialog.target}</code></p>
+          <p><strong>Status</strong><span>{display(dialog.device?.status)}</span></p>
+          <p><strong>Projects</strong><span>{display(dialog.device?.project_count ?? 0)}</span></p>
+          <small>Removes the Server-side registration record only. The machine, its credentials, its source directories and its Git repositories are not touched. If that Runner is still running and reconnects, it registers itself again.</small>
+          <TextInput required label="Type the full Runner client ID to confirm" value={fields.confirm_runner} onChange={(event) => setField("confirm_runner", event.currentTarget.value)} />
+        </div> : <div className="action-confirmation">
           <p><strong>Project</strong><code>{dialog.target}</code></p>
           <p><strong>Revision</strong><code>{display(dialog.project?.revision)}</code></p>
           <p><strong>Active jobs</strong><span>{display(dialog.project?.active_jobs ?? 0)}</span></p>

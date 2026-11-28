@@ -3,11 +3,37 @@ use serde_json::{json, Value};
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
+        "start_web_preview" => Some(wrapped_output_schema(vec![
+            (
+                "preview_url",
+                json!({"type":["string","null"],"maxLength":2048}),
+            ),
+            ("job_id", json!({"type":["string","null"],"maxLength":128})),
+            (
+                "expires_at",
+                json!({"type":["string","null"],"maxLength":64}),
+            ),
+            ("project", json!({"type":"string","maxLength":512})),
+            (
+                "port",
+                json!({"type":"integer","minimum":1,"maximum":65535}),
+            ),
+            ("status", json!({"enum":["ready","failed"]})),
+            (
+                "failure_kind",
+                json!({"type":["string","null"],"maxLength":64}),
+            ),
+            ("retry_with_new_key", json!({"type":"boolean"})),
+        ])),
         "open_webcodex_workbench" => Some(wrapped_output_schema(vec![
             ("client_id", json!({"type":["string","null"]})),
             ("runners", json!({"type":"object"})),
             ("project", json!({"type":["string","null"]})),
             ("session_id", json!({"type":["string","null"]})),
+            (
+                "preview_url",
+                json!({"type":["string","null"],"maxLength":2048}),
+            ),
             ("projects", json!({"type":"object"})),
             (
                 "selection",

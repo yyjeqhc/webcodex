@@ -1,6 +1,6 @@
 // Display-only transcript renderer. IDs are UI keys, never execution authority.
-const KINDS = { guidance: 'Guidance', question: 'Question', note: 'Note', todo: 'Request',
-  answer: 'Answer', decision: 'Decision', risk: 'Risk', progress: 'Progress', proposal: 'Proposal' };
+const KINDS = { guidance: '指导', question: '提问', note: '备注', todo: '请求',
+  answer: '答复', decision: '决定', risk: '风险', progress: '进展', proposal: '提议' };
 export function createCollaborationRenderer({document, root, formatAge, deliveryLabel}) {
   const cache = new Map();
   const node = (tag, className) => { const item = document.createElement(tag); item.className = className; return item; };
@@ -25,22 +25,22 @@ export function createCollaborationRenderer({document, root, formatAge, delivery
       const fingerprint = JSON.stringify([row, reply?.message, answered.has(row.message_id)]);
       if (entry.fingerprint !== fingerprint) {
         entry.article.className = `message ${row.source === 'operator' ? 'user' : 'agent'} kind-${row.kind || 'note'}`;
-        entry.author.textContent = row.source === 'operator' ? 'You → This Window'
-          : row.source === 'window' ? 'This Window → You'
-          : row.direction === 'outbound' ? 'This Window → Peer' : 'Peer → This Window';
+        entry.author.textContent = row.source === 'operator' ? '你 → WebCodex'
+          : row.source === 'window' ? 'WebCodex → 你'
+          : row.direction === 'outbound' ? 'WebCodex → 其他窗口' : '其他窗口 → WebCodex';
         if (row.peer_id) entry.author.title = row.peer_id;
         entry.time.setAttribute('datetime', new Date(row.created_at_ms).toISOString());
-        entry.time.title = new Date(row.created_at_ms).toLocaleString();
+        entry.time.title = new Date(row.created_at_ms).toLocaleString("zh-CN", { hour12: false });
         entry.quote.hidden = !row.reply_to_message_id;
-        const quote = row.reply_to_message_id ? 'Reply to · ' + (reply ? reply.message.slice(0, 180) : 'Earlier message') : '';
+        const quote = row.reply_to_message_id ? '回复 · ' + (reply ? reply.message.slice(0, 180) : '更早的消息') : '';
         if (entry.quote.textContent !== quote) entry.quote.textContent = quote;
         // ACK/receipt changes never recreate the body or erase a reader's selection.
         if (entry.copy.textContent !== row.message) entry.copy.textContent = row.message;
-        const kind = node('span', 'message-kind'); kind.textContent = KINDS[row.kind] || 'Note';
+        const kind = node('span', 'message-kind'); kind.textContent = KINDS[row.kind] || '备注';
         entry.footer.replaceChildren(kind);
-        for (const text of [row.priority === 'high' ? 'High priority' : row.priority === 'low' ? 'Low priority' : null, deliveryLabel(row),
-          answered.has(row.message_id) ? 'Reply received' : null,
-          row.context_session_id ? 'Session · ' + row.context_session_id.slice(8, 14) : null]) {
+        for (const text of [row.priority === 'high' ? '高优先级' : row.priority === 'low' ? '低优先级' : null, deliveryLabel(row),
+          answered.has(row.message_id) ? '已收到回复' : null,
+          row.context_session_id ? '会话 · ' + row.context_session_id.slice(8, 14) : null]) {
           if (!text) continue;
           const badge = node('span', 'message-state'); badge.textContent = text; entry.footer.append(badge);
         }
@@ -56,7 +56,7 @@ export function createCollaborationRenderer({document, root, formatAge, delivery
       if (root.children[index] !== item) root.insertBefore(item, root.children[index] || null);
     });
     if (!rows.length) {
-      const empty = node('div', 'empty'); empty.textContent = available ? 'No messages yet' : 'Collaboration unavailable'; root.replaceChildren(empty);
+      const empty = node('div', 'empty'); empty.textContent = available ? '暂无消息' : '消息不可用'; root.replaceChildren(empty);
     }
     if (beforeFirst && rows[0]?.message_id !== beforeFirst && byId.has(beforeFirst)) root.scrollTop = top + Math.max(0, root.scrollHeight - height);
     else if (nearEnd) root.scrollTop = root.scrollHeight;

@@ -1,6 +1,7 @@
 import { renderValidation, renderReview } from "./checks.mjs";
 import { renderJobs } from "./jobs.mjs";
 import { renderWindowCurrentActivity, renderActivityDetail } from "./activity.mjs";
+import { renderCompact } from "./compact.mjs";
 // Async owners are separate exports; synchronous renderers below still get no RPC.
 export { createReadCache } from "./read-cache.mjs";
 export { createActivityDetails } from "./activity-details.mjs";
@@ -19,5 +20,6 @@ export function createWorkResultSections(environment) {
     renderJobs: value => renderJobs(document, el, value),
     renderWindowCurrentActivity: value => renderWindowCurrentActivity(environment, value),
     renderActivityDetail: (root, value) => renderActivityDetail(environment, root, value),
+    renderCompact: snapshot => renderCompact(environment, snapshot),
   });
 }

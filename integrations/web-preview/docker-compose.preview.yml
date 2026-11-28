@@ -1,0 +1,36 @@
+name: webcodex-preview
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: webcodex-preview:local
+    restart: unless-stopped
+    environment:
+      PREVIEW_ADMIN_TOKEN: ${PREVIEW_ADMIN_TOKEN:?Set a random admin secret}
+      PREVIEW_DOMAIN: ${PREVIEW_DOMAIN:-zetx.tech}
+      PREVIEW_PUBLIC_SCHEME: ${PREVIEW_PUBLIC_SCHEME:-https}
+      PREVIEW_PORT: ${PREVIEW_PORT:-8093}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8093/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - 'traefik.http.routers.webcodex-preview-control.rule=Host(`codex.zetx.tech`) && (PathPrefix(`/agent/`) || PathPrefix(`/admin/sessions`))'
+      - traefik.http.routers.webcodex-preview-control.priority=1500
+      - 'traefik.http.routers.webcodex-preview-sites.rule=HostRegexp(`^wcprev-[a-f0-9]{32}[.]zetx[.]tech$`)'
+      - traefik.http.routers.webcodex-preview-sites.ruleSyntax=v3
+      - traefik.http.services.webcodex-preview.loadbalancer.server.port=8093
+    networks:
+      - web
+networks:
+  web:
+    external: true

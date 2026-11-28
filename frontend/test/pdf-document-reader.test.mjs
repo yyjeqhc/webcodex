@@ -49,12 +49,12 @@ test("dedicated PDF rejects corrupted bytes despite a matching claimed SHA", asy
   await assert.rejects(readPdfDocument(options(async offset => {
     const result = response(offset), bytes = Buffer.from(result.encoded, "base64"); bytes[bytes.length - 1] ^= 1;
     return { ...result, encoded: bytes.toString("base64") };
-  })), /version mismatch/);
+  })), /版本不匹配/);
 });
 test("closing and transfer timeout never accept a late document", async () => {
   let active = true, calls = 0;
   await assert.rejects(readPdfDocument({ ...options(async offset => { calls++; active = false; return response(offset); }), current: () => active }), /closed/);
   assert.equal(calls, 1);
   let time = 0;
-  await assert.rejects(readPdfDocument({ ...options(async offset => { time = 120_001; return response(offset); }), now: () => time }), /timed out/);
+  await assert.rejects(readPdfDocument({ ...options(async offset => { time = 120_001; return response(offset); }), now: () => time }), /加载超时/);
 });

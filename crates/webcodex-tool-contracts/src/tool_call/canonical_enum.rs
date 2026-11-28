@@ -2054,7 +2054,21 @@ pub enum ToolCall {
         project: Option<String>,
         #[serde(default)]
         session_id: Option<String>,
+        /// Optional expiring public preview address; server validates the configured origin.
+        #[serde(default)]
+        #[schemars(length(min = 1, max = 2048))]
+        preview_url: Option<String>,
     },
+    /// Start a temporary HTTPS preview for one explicitly selected Runner Project and port.
+    StartWebPreview {
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        #[schemars(range(min = 1, max = 65535))]
+        port: u16,
+        #[schemars(regex(pattern = "^[A-Za-z0-9_-]{16,100}$"))]
+        idempotency_key: String,
+    },
+
 
     /// Search bounded authorized resources. File and artifact searches require an explicit project;
     /// artifact search additionally requires an exact retained Workflow Session.

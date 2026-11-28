@@ -5,6 +5,16 @@ import fs from 'node:fs';
 import { baseState } from '../../src/mcp_tests/work_result_app_fixture.mjs';
 const { chromium } = createRequire(import.meta.url)('playwright');
 
+// The card folds its body by default; open it the way a reader would.
+async function expandCard(frame) {
+  const body = frame.locator('#detailsBody');
+  if (await body.count() === 0) return;
+  if (await body.evaluate(node => node.hidden)) {
+    await frame.locator('#detailsToggle').click();
+    await frame.waitForFunction(() => document.getElementById('detailsBody').hidden === false);
+  }
+}
+
 // Real browser, shipped card HTML, isolated MCP Host protocol fixture.
 const html = fs.readFileSync(new URL('../../src/mcp_work_result_app.html', import.meta.url), 'utf8');
 const output = new URL('../../artifacts/projects-runtime/card-review/', import.meta.url);
@@ -83,27 +93,36 @@ try {
       document.body.append(frame);
     }, { html, state, thread });
     const card = page.frameLocator('iframe');
+    const cardFrame = page.frames().find(candidate => candidate.parentFrame());
+    if (!thread) {
+      await cardFrame.locator('#refresh:not(:disabled)').waitFor();
+      await expandCard(cardFrame);
+    }
     if (thread) {
-      await card.getByRole('heading', { name: 'Changed files', exact: true }).waitFor();
-      assert.equal(await card.getByRole('tab', { name: 'Results', exact: true }).getAttribute('aria-selected'), 'true');
+      await card.getByRole('heading', { name: '变更文件', exact: true }).waitFor();
+      assert.equal(await card.getByRole('tab', { name: '结果', exact: true }).getAttribute('aria-selected'), 'true');
       assert.equal(await card.locator('#diagnostics').evaluate(node => node.open), false);
       assert.equal(await card.locator('#projectIdentity').isVisible(), false);
       assert.equal(await page.evaluate(() => window.reads.some(args => args.files)), false);
       await page.screenshot({ path: fileURLToPath(new URL(`work-result-${surface}-review-${width}.png`, output)), fullPage: true });
-      await card.getByRole('tab', { name: 'Activity', exact: true }).click();
+      await card.getByRole('tab', { name: '活动', exact: true }).click();
     } else {
       // Identity lives in Diagnostics; the always-visible overview is the summary strip.
       await card.locator('#summaryStrip').waitFor();
       assert.equal(await card.locator('#projectIdentity').isVisible(), false);
     }
-    assert.deepEqual(await card.locator('#summaryStrip .summary-item').allTextContents(),
-      ['1 file changed · +4 −1', 'Checks passed', '1 running in background', '1 background job failed']);
+    // Labelled facts: one cell per question, tone on the value.
+    assert.deepEqual(await card.locator('#summaryStrip .summary-item').evaluateAll(nodes => nodes.map(node =>
+      [...node.children].map(child => child.textContent).join(' '))),
+      ['工作区 已更改 1 个文件 · +4 −1', '验证 验证通过', '后台任务 运行 1 · 失败 1']);
+    assert.equal(await card.locator('#summaryStrip .summary-item[data-key="checks"]').isVisible(), true);
+    assert.equal(await card.locator('#summaryStrip .summary-item[data-key="jobs"]').isVisible(), true);
     assert.equal(await card.locator('.app-header .card-appearance').count(), 0, 'Appearance stays out of the header');
     await card.locator('#activityStatus').filter({ hasText: 'Running tools' }).waitFor();
-    assert.equal(await card.getByText('Running', { exact: true }).count(), 3);
+    assert.equal(await card.getByText('运行中', { exact: true }).count(), 3);
     assert.equal(await card.locator('#jobsSection').evaluate(node => node.closest('.progress-section') !== null), true);
     assert.equal(await card.locator('#jobResults').evaluate(node => node.open), false);
-    await card.getByText('Recent background results · 1 failed · 1 passed', { exact: true }).waitFor();
+    await card.getByText('最近的后台结果 · 失败 1 · 通过 1', { exact: true }).waitFor();
     assert.equal(await card.getByText('project build', { exact: true }).isVisible(), false);
     await card.locator('#jobResultsSummary').focus();
     await page.keyboard.press('Enter');
@@ -111,9 +130,9 @@ try {
     await card.locator('#jobResultsSummary').click();
     assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.screenshot({ path: fileURLToPath(new URL(`work-result-${surface}-activity-${width}.png`, output)), fullPage: true });
-    await card.getByRole('tab', { name: 'Results', exact: true }).click();
+    await card.getByRole('tab', { name: '结果', exact: true }).click();
     await card.getByRole('button', { name: 'src/a.rs · +4 −1', exact: true }).waitFor();
-    await card.locator('#validationStatus').filter({ hasText: 'Checks passed' }).waitFor();
+    await card.locator('#validationStatus').filter({ hasText: '验证通过' }).waitFor();
     assert.equal(await card.locator('#finalChanges').isVisible(), false);
     assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await card.locator('#workspaceFiles .file-toggle').evaluate(node => {
@@ -123,14 +142,14 @@ try {
     });
     await page.evaluate(() => { window.fixtureState.state_version = 'wr2_' + 'c'.repeat(64); });
     await card.locator('#refresh').evaluate(node => node.click());
-    await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
+    await card.getByRole('button', { name: '刷新', exact: true }).waitFor();
     assert(await card.locator('#workspaceFiles .file-toggle').evaluate(node => node === window.originalFile && getSelection().toString() === node.textContent));
     await card.locator('#workspaceFiles .file-toggle').click();
     await card.locator('#workspaceFiles .diff').filter({ hasText: '+reviewed' }).waitFor();
     await card.locator('#refresh').click();
-    await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
+    await card.getByRole('button', { name: '刷新', exact: true }).waitFor();
     assert.equal(await card.locator('#workspaceFiles .file-toggle').getAttribute('aria-expanded'), 'true');
-    await card.getByRole('button', { name: 'Pin snapshot for review', exact: true }).click();
+    await card.getByRole('button', { name: '固定快照以便审查', exact: true }).click();
     assert.equal(await card.locator('#workspacePin').getAttribute('aria-pressed'), 'true');
     const pinnedReads = await page.evaluate(() => window.reads.filter(args => args.files).length);
     await page.evaluate(() => {
@@ -139,10 +158,10 @@ try {
       window.fixtureState.workspace_observation = { reused: false, max_reuse_ms: 30000, semantics: 'bounded_snapshot_not_filesystem_freshness' };
     });
     await card.locator('#refresh').click();
-    await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
+    await card.getByRole('button', { name: '刷新', exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.reads.filter(args => args.files).length), pinnedReads);
     await card.locator('#workspaceFiles .diff').filter({ hasText: '+reviewed' }).waitFor();
-    await card.getByRole('button', { name: 'Follow changes', exact: true }).click();
+    await card.getByRole('button', { name: '跟随变更', exact: true }).click();
     await card.locator('#workspaceFiles .diff').filter({ hasText: '+current' }).waitFor();
     assert.equal(await card.locator('#workspacePin').getAttribute('aria-pressed'), 'false');
     if (thread) assert(await page.evaluate(() => window.reads.filter(args => !args.files).every(args => args.session_id === window.fixtureState.session_id)));
@@ -173,13 +192,13 @@ try {
           files: [{ ...window.fixtureState.workspace.files[0], additions: 6 }] };
       });
       await card.locator('#refresh').click();
-      await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
+      await card.getByRole('button', { name: '刷新', exact: true }).waitFor();
       assert.equal(await card.locator('#frozenFiles .diff:not(.full-text)').innerText(), frozen);
       assert.equal(await page.evaluate(() => window.frozenReads.length), 1);
     }
     await page.screenshot({ path: fileURLToPath(new URL(`work-result-${surface}-files-${width}.png`, output)), fullPage: true });
-    await card.getByRole('tab', { name: 'Collaboration', exact: true }).click();
-    await card.getByText('Saved', { exact: true }).waitFor();
+    await card.getByRole('tab', { name: '消息', exact: true }).click();
+    await card.getByText('已保存', { exact: true }).waitFor();
     await card.locator('#messages .message-copy').evaluate(node => {
       window.originalMessage = node;
       const range = document.createRange(); range.selectNodeContents(node);
@@ -188,12 +207,12 @@ try {
     await page.evaluate(() => { window.fixtureState.state_version = 'wr2_' + 'b'.repeat(64); });
     // Programmatic click preserves the browser selection, just like automatic polling.
     await card.locator('#refresh').evaluate(node => node.click());
-    await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
+    await card.getByRole('button', { name: '刷新', exact: true }).waitFor();
     assert(await card.locator('#messages .message-copy').evaluate(node => node === window.originalMessage && getSelection().toString() === node.textContent));
-    await card.getByRole('textbox', { name: 'Message this Window' }).fill('Ready for review');
-    await card.getByRole('button', { name: 'Send', exact: true }).click();
-    await card.getByRole('button', { name: 'Retry', exact: true }).click();
-    await card.locator('#composerState').filter({ hasText: 'Saved' }).waitFor();
+    await card.getByRole('textbox', { name: '给 WebCodex 留言' }).fill('Ready for review');
+    await card.getByRole('button', { name: '发送', exact: true }).click();
+    await card.getByRole('button', { name: '重试', exact: true }).click();
+    await card.locator('#composerState').filter({ hasText: '已保存' }).waitFor();
     const writes = await page.evaluate(() => window.writes);
     assert.equal(writes.length, 2);
     assert.deepEqual(writes[0], writes[1]);

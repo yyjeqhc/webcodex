@@ -1496,6 +1496,10 @@ pub struct RunnerProjectSummary {
     /// root. Missing means the Runner could not prove a current root identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_fingerprint: Option<String>,
+    /// Registered path for a root that passive inventory intentionally does not open.
+    /// After an explicit observation, path may hold the canonical root instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_root_path: Option<String>,
     /// Explicit persisted lineage only. Never inferred from paths, repository
     /// names, Git remotes, registration provenance, or project kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1549,6 +1553,9 @@ pub struct ShellProjectInventoryStatus {
     pub last_error_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_sync_at: Option<i64>,
+    /// The receiving Server can verify a deferred Project root on explicit access.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_deferred_roots: bool,
     pub max_summaries_per_page: usize,
     pub max_serialized_bytes_per_page: usize,
 }
@@ -1562,6 +1569,7 @@ impl ShellProjectInventoryStatus {
             total_synced,
             last_error_code: None,
             last_sync_at: None,
+            supports_deferred_roots: true,
             max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
             max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
         }
@@ -1652,6 +1660,15 @@ pub struct ClaudeCodeProviderStatus {
     pub last_call: Option<ProviderCallSummary>,
 }
 
+/// Effective filesystem policy reported by the active Runner configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerFileAccessPolicy {
+    #[serde(default)]
+    pub allow_cwd_anywhere: bool,
+    #[serde(default)]
+    pub allowed_roots: Vec<PathBuf>,
+}
+
 /// Sanitized Runner policy summary. Carried in the registration payload and
 /// exposed in `runtime_status` / `list_runners`. Contains ONLY non-secret
 /// fields: it never includes the Agent Token, shell env values, init_script
@@ -1664,10 +1681,8 @@ pub struct ClaudeCodeProviderStatus {
 pub struct RunnerPolicySummary {
     #[serde(default = "default_shell_true")]
     pub allow_raw_shell: bool,
-    #[serde(default)]
-    pub allow_cwd_anywhere: bool,
-    #[serde(default)]
-    pub allowed_roots: Vec<PathBuf>,
+    #[serde(flatten)]
+    pub file_access: RunnerFileAccessPolicy,
     #[serde(default = "default_policy_max_timeout_secs")]
     pub max_timeout_secs: u64,
     #[serde(default = "default_policy_max_output_bytes")]
@@ -1691,8 +1706,7 @@ impl Default for RunnerPolicySummary {
     fn default() -> Self {
         Self {
             allow_raw_shell: true,
-            allow_cwd_anywhere: false,
-            allowed_roots: Vec::new(),
+            file_access: RunnerFileAccessPolicy::default(),
             max_timeout_secs: default_policy_max_timeout_secs(),
             max_output_bytes: default_policy_max_output_bytes(),
             shell_profiles: None,
@@ -2347,6 +2361,8 @@ pub struct RunnerJobCapacity {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerPollPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_access: Option<RunnerFileAccessPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_capacity: Option<RunnerJobCapacity>,
     #[serde(flatten)]
@@ -4306,6 +4322,7 @@ mod envelope_tests {
     #[test]
     fn runtime_metadata_and_legacy_poll_payloads_round_trip() {
         let env = RunnerEnvelope::RuntimeMetadata {
+            file_access: None,
             job_capacity: None,
             tool_providers: sample_tool_providers(),
             computer_session_availability: None,
@@ -4327,6 +4344,7 @@ mod envelope_tests {
         let legacy = r#"{"client_id":"oe","agent_instance_id":"inst","projects":null}"#;
         let payload: RunnerPollPayload = serde_json::from_str(legacy).unwrap();
         assert_eq!(payload.request.client_id, "oe");
+        assert!(payload.file_access.is_none());
         assert!(payload.job_capacity.is_none());
         assert!(payload.tool_providers.is_none());
         assert!(payload.mcp_gateway_providers.is_none());
@@ -4339,6 +4357,10 @@ mod envelope_tests {
             tool_providers: ToolProvidersStatus,
         }
         let envelope = RunnerEnvelope::RuntimeMetadata {
+            file_access: Some(RunnerFileAccessPolicy {
+                allow_cwd_anywhere: false,
+                allowed_roots: vec!["/reloaded".into()],
+            }),
             job_capacity: Some(RunnerJobCapacity {
                 generation: 7,
                 limit: 32,
@@ -4354,15 +4376,22 @@ mod envelope_tests {
             old.tool_providers.config_reload.generation,
             sample_tool_providers().config_reload.generation
         );
+        assert_eq!(
+            json["file_access"]["allowed_roots"],
+            serde_json::json!(["/reloaded"])
+        );
+        json.as_object_mut().unwrap().remove("file_access");
         json.as_object_mut().unwrap().remove("job_capacity");
         assert!(matches!(
             serde_json::from_value::<RunnerEnvelope>(json).unwrap(),
             RunnerEnvelope::RuntimeMetadata {
+                file_access: None,
                 job_capacity: None,
                 ..
             }
         ));
         let poll = RunnerPollPayload {
+            file_access: None,
             job_capacity: Some(RunnerJobCapacity {
                 generation: 7,
                 limit: 32,

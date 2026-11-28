@@ -33,11 +33,7 @@ pub(super) fn canonical_execution_project_binding(
         | ToolCall::WorkspaceCheckpointDelete { project, .. } => {
             Some((project, CanonicalProjectOutput::Requested))
         }
-        ToolCall::RunProcess { project, .. }
-        | ToolCall::RunDetachedProcess { project, .. }
-        | ToolCall::StartAgentTaskCodingRun { project, .. }
-        | ToolCall::RunScript { project, .. }
-        | ToolCall::RunShell { project, .. }
+        ToolCall::StartAgentTaskCodingRun { project, .. }
         | ToolCall::OpenSessionShell { project, .. }
         | ToolCall::SessionShellExec { project, .. }
         | ToolCall::SessionShellStatus { project, .. }

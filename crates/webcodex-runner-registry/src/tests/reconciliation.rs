@@ -55,6 +55,7 @@ fn reconciliation_capabilities() -> RunnerCapabilities {
 
 fn project_summary() -> RunnerProjectSummary {
     RunnerProjectSummary {
+        deferred_root_path: None,
         registration_incarnation: None,
         id: PROJECT_ID.to_string(),
         name: Some("Demo".to_string()),

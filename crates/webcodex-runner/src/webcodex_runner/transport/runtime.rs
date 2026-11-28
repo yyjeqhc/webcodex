@@ -90,7 +90,7 @@ impl RunnerRuntimeState {
         cfg: &RunnerConfig,
     ) -> Vec<RunnerProjectSummary> {
         let shutdown = self.shutdown_flag();
-        cache.get_with_shutdown(cfg, Some(shutdown.as_ref()))
+        self.inventory_for_server(cache.get_with_shutdown(cfg, Some(shutdown.as_ref())))
     }
 
     pub(super) fn project_metadata_summaries(
@@ -98,7 +98,58 @@ impl RunnerRuntimeState {
         cfg: &RunnerConfig,
     ) -> Vec<RunnerProjectSummary> {
         let shutdown = self.shutdown_flag();
-        crate::webcodex_runner::projects::load_runner_project_metadata(cfg, Some(shutdown.as_ref()))
+        self.inventory_for_server(
+            crate::webcodex_runner::projects::load_runner_project_metadata(
+                cfg,
+                Some(shutdown.as_ref()),
+            ),
+        )
+    }
+
+    pub(super) fn set_inventory_contract(&self, status: &ShellProjectInventoryStatus) {
+        let mut scan = self
+            .initial_project_scan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let legacy = !status.supports_deferred_roots;
+        if scan.legacy_root_identity != legacy {
+            scan.legacy_root_identity = legacy;
+            scan.generation = scan.generation.wrapping_add(1);
+            scan.changed.send_replace(());
+        }
+    }
+
+    pub(super) fn inventory_for_server(
+        &self,
+        mut projects: Vec<RunnerProjectSummary>,
+    ) -> Vec<RunnerProjectSummary> {
+        let legacy = self
+            .initial_project_scan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .legacy_root_identity;
+        if legacy {
+            // v0.5.1 hashes an absent fingerprint as a different Session identity.
+            // Preserve its canonical-root contract until the Server upgrades.
+            projects.retain_mut(|project| {
+                let Some(path) = project.deferred_root_path.take() else {
+                    return true;
+                };
+                let Ok(root) = crate::webcodex_runner::shell::canonicalize_existing(path.as_ref())
+                else {
+                    return false;
+                };
+                if !root.is_dir() {
+                    return false;
+                }
+                project.root_fingerprint = Some(
+                    crate::webcodex_runner::projects::project_root_fingerprint(&root),
+                );
+                project.path = root.to_string_lossy().into_owned();
+                true
+            });
+        }
+        projects
     }
 
     /// Registration, keepalive and the first authorized catalog must not wait

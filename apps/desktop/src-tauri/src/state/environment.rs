@@ -378,12 +378,12 @@ pub(super) fn adopt_saved_environment(config: &mut StoredDesktopConfig) {
                 .find(|entry| entry.path == *path)
                 .map(|entry| format!("agent:{client}:{}", entry.id))
         });
-        ProjectSelection {
-            path: path.to_string_lossy().into_owned(),
-            allowed_root: path.to_string_lossy().into_owned(),
-            is_git_repository: path.join(".git").exists(),
-            runtime_project_id,
+        let mut selected = saved_project_selection(path, config.project.as_ref());
+        if webcodex_runner_config::paths::project_path_probe_allowed(path, None) {
+            selected.is_git_repository = path.join(".git").exists();
         }
+        selected.runtime_project_id = runtime_project_id;
+        selected
     });
     config.persistent_environment = Some(record.environment_id);
     config.topology = Some(RuntimeTopology {
@@ -509,9 +509,26 @@ pub(super) fn legacy_inventory_projects(
     Ok(projects)
 }
 
+fn saved_project_selection(path: &Path, previous: Option<&ProjectSelection>) -> ProjectSelection {
+    let spelling = path.to_string_lossy().into_owned();
+    ProjectSelection {
+        path: spelling.clone(),
+        allowed_root: spelling,
+        is_git_repository: previous.is_some_and(|project| {
+            webcodex_runner_config::paths::paths_equal(Path::new(&project.path), path)
+                && project.is_git_repository
+        }),
+        runtime_project_id: None,
+    }
+}
+
 fn same_desktop_path(left: &Path, right: &Path) -> bool {
+    use webcodex_runner_config::paths::project_path_probe_allowed;
     if left == right {
         return true;
+    }
+    if !project_path_probe_allowed(left, None) || !project_path_probe_allowed(right, None) {
+        return false;
     }
     match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
         (Ok(a), Ok(b)) => a == b,
@@ -1407,10 +1424,14 @@ impl DesktopCore {
                     .cloned()
             });
         let project = if let Some(path) = selected.as_ref() {
-            let mut project = self
-                .adapter
-                .inspect_project(&path.to_string_lossy())
-                .await?;
+            let mut project =
+                if webcodex_runner_config::paths::project_path_probe_allowed(path, None) {
+                    self.adapter
+                        .inspect_project(&path.to_string_lossy())
+                        .await?
+                } else {
+                    saved_project_selection(path, self.config.project.as_ref())
+                };
             if let (Some(client), Some(entry)) = (
                 record.runner_client_id.as_deref(),
                 record

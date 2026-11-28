@@ -179,35 +179,54 @@ impl ToolRuntime {
             .filter(|n| *n > 0)
             .unwrap_or(DEFAULT_HANDOFF_LIMIT)
             .min(MAX_HANDOFF_LIMIT);
-        let include_workspace = include_workspace.unwrap_or(true);
-        let include_checkpoints = include_checkpoints.unwrap_or(true);
-        #[cfg(not(feature = "workspace-checkpoints"))]
-        let _ = include_checkpoints;
-        let include_validation = include_validation.unwrap_or(true);
-
-        let authorized_target = match self
+        let authorized_target = self
             .authorize_session_target(
                 &session_id,
                 "read_session_handoff",
                 project.as_deref(),
                 auth,
             )
-            .await
-        {
-            Ok(resolved) => resolved,
-            Err(result) => return Err(result),
+            .await?;
+        // The ledger remains readable with a cold Project Ref. Only an explicit
+        // workspace/checkpoint request may open that root for live evidence.
+        let deferred_target = authorized_target.as_ref().filter(|p| p.root_probe_deferred);
+        let include_workspace = include_workspace.unwrap_or(deferred_target.is_none());
+        let include_checkpoints = include_checkpoints.unwrap_or(deferred_target.is_none());
+        let include_validation = include_validation.unwrap_or(true);
+        let observed = if let Some(target) = deferred_target.filter(|_| {
+            include_workspace || (cfg!(feature = "workspace-checkpoints") && include_checkpoints)
+        }) {
+            let observed = self
+                .resolve_project_input_for_auth(&target.input, auth)
+                .await
+                .map_err(super::ProjectResolverError::into_tool_result)?;
+            self.authorize_session_access(
+                &session_id,
+                "read_session_handoff",
+                auth,
+                super::session_tools::SessionAccess::Live {
+                    requested_project: project.as_deref(),
+                    resolved: Some(&observed),
+                },
+            )
+            .await?;
+            Some(observed)
+        } else {
+            None
         };
         let session_project = self
             .sessions
             .session_project(&session_id)
             .expect("authorized Workflow Session must still exist");
-        let requested_project = if let Some(request_project) = project
+        let requested_project = if authorized_target.is_some() {
+            authorized_target
+        } else if let Some(request_project) = project
             .as_deref()
             .map(str::trim)
             .filter(|project| !project.is_empty())
         {
             let requested = match self
-                .resolve_project_input_for_auth(request_project, auth)
+                .resolve_project_metadata_for_auth(request_project, auth)
                 .await
             {
                 Ok(resolved) => resolved,
@@ -236,8 +255,6 @@ impl ToolRuntime {
         // already-authorized stored Project instead of treating it as unscoped.
         let project = if let Some(requested) = requested_project {
             Some(requested.resolved_id)
-        } else if let Some(target) = authorized_target {
-            Some(target.resolved_id)
         } else {
             // The Session project was canonicalized and authority-fenced when the
             // Session was created. Concrete workspace/Job reads keep their own
@@ -360,21 +377,12 @@ impl ToolRuntime {
         });
 
         let mut warnings = Vec::new();
-        let jobs_project = match project
+        let jobs_project = project
             .as_deref()
-            .map(str::trim)
-            .filter(|project| !project.is_empty())
-        {
-            Some(project) => self
-                .resolve_project_input_for_auth(project, auth)
-                .await
-                .map(|resolved| resolved.resolved_id)
-                .unwrap_or_else(|_| project.to_string()),
-            None => summary.project.clone().unwrap_or_default(),
-        };
-        let jobs_project = (!jobs_project.is_empty()).then_some(jobs_project);
+            .or(summary.project.as_deref())
+            .filter(|p| !p.is_empty());
         let job_snapshot = self
-            .active_jobs_snapshot(jobs_project.as_deref(), Some(&summary.session_id), auth, 10)
+            .active_jobs_snapshot(jobs_project, Some(&summary.session_id), auth, 10)
             .await;
         let jobs = job_snapshot.to_value();
         if let Some(job_warnings) = jobs.get("warnings").and_then(Value::as_array) {
@@ -432,7 +440,12 @@ impl ToolRuntime {
                 })
                 .unwrap_or_else(|| (Vec::new(), false));
             let (workspace, continuity, observation) = self
-                .handoff_workspace_summary(&project, &continuity_changed_paths, history_complete)
+                .handoff_workspace_summary(
+                    &project,
+                    observed.as_ref(),
+                    &continuity_changed_paths,
+                    history_complete,
+                )
                 .await;
             closeout_workspace = observation;
             output["workspace"] = workspace;
@@ -443,7 +456,9 @@ impl ToolRuntime {
         #[cfg(feature = "workspace-checkpoints")]
         if has_project && include_checkpoints {
             let project = project.clone().unwrap_or_default();
-            let checkpoints = self.handoff_checkpoint_summary(&project, limit).await;
+            let checkpoints = self
+                .handoff_checkpoint_summary(&project, observed.as_ref(), limit)
+                .await;
             output["checkpoints"] = checkpoints;
         }
 
@@ -633,11 +648,21 @@ impl ToolRuntime {
     async fn handoff_workspace_summary(
         &self,
         project: &str,
+        observed: Option<&super::ResolvedProject>,
         session_changed_paths: &[Value],
         history_complete: bool,
     ) -> (Value, Value, Observation<WorkspaceFacts>) {
         let show_result = self
-            .show_changes(project.to_string(), None, Some(false), None, None, None)
+            .show_changes_observation(
+                project.to_string(),
+                None,
+                Some(false),
+                None,
+                None,
+                None,
+                false,
+                observed,
+            )
             .await;
         if !show_result.success {
             // Non-git project or git failure: do not fail the whole handoff.
@@ -737,10 +762,21 @@ impl ToolRuntime {
     /// `last_known_good` checkpoint (preferring `validation_status == passed`)
     /// and a bounded recent list. Never returns validation.commands or diffs.
     #[cfg(feature = "workspace-checkpoints")]
-    async fn handoff_checkpoint_summary(&self, project: &str, limit: usize) -> Value {
-        let list_result = self
-            .workspace_checkpoint_list(project.to_string(), Some(limit))
-            .await;
+    async fn handoff_checkpoint_summary(
+        &self,
+        project: &str,
+        observed: Option<&super::ResolvedProject>,
+        limit: usize,
+    ) -> Value {
+        let list_result = match observed {
+            Some(target) => {
+                self.list_resolved_checkpoints(project, &target.resolved_id, Some(limit))
+            }
+            None => {
+                self.workspace_checkpoint_list(project.to_string(), Some(limit))
+                    .await
+            }
+        };
         if !list_result.success {
             return json!({
                 "latest_last_known_good": Value::Null,

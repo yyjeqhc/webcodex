@@ -40,6 +40,9 @@ pub fn local_path_entry(
         return entry;
     }
     entry.configured_path = Some(path.to_path_buf());
+    if !webcodex_runner_config::paths::project_path_probe_allowed(path, None) {
+        return entry;
+    }
     let parent = if kind == PathKind::Directory {
         path
     } else {

@@ -35,6 +35,14 @@ fn unavailable() -> DesktopError {
     )
 }
 
+pub(crate) fn revision_changed() -> DesktopError {
+    DesktopError::new(
+        "project_revision_changed",
+        "The project changed since confirmation",
+        "Review the current project again before removing it.",
+    )
+}
+
 fn uncertain() -> DesktopError {
     DesktopError::new("project_unregister_uncertain", "The unregister outcome could not be confirmed", "Refresh the Runner inventory before taking further action. No automatic retry or folder deletion was attempted.")
 }
@@ -67,50 +75,69 @@ pub async fn observe_many(
             return Err(unavailable());
         }
     }
-    let value = crate::workspace::post(
+    let exact = |project: &str| json!({"project":project,"limit":1,"summary_only":false});
+    let params = if projects.len() == 1 {
+        exact(&projects[0])
+    } else {
+        json!({"client_id":target.client_id,"limit":100,"summary_only":false})
+    };
+    let page = list_for_removal(runtime, params).await?;
+    let rows = page
+        .get("projects")
+        .and_then(Value::as_array)
+        .ok_or_else(unavailable)?;
+    let mut observations = Vec::with_capacity(projects.len());
+    for project in projects {
+        let exact_page;
+        let row = match rows.iter().find(|row| row["id"].as_str() == Some(project)) {
+            Some(row) => row,
+            None if projects.len() > 1 && page["truncated"].as_bool() == Some(true) => {
+                exact_page = list_for_removal(runtime, exact(project)).await?;
+                exact_page["projects"]
+                    .as_array()
+                    .and_then(|rows| rows.iter().find(|row| row["id"].as_str() == Some(project)))
+                    .ok_or_else(unavailable)?
+            }
+            None => return Err(unavailable()),
+        };
+        let revision = row
+            .get("revision")
+            .and_then(Value::as_str)
+            .filter(|s| {
+                s.len() == 71
+                    && s.starts_with("sha256:")
+                    && s[7..].bytes().all(|b| b.is_ascii_hexdigit())
+            })
+            .ok_or_else(unavailable)?;
+        let path = row
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(unavailable)?;
+        observations.push(UnregisterObservation {
+            target: target.clone(),
+            project: project.clone(),
+            expected_revision: revision.to_owned(),
+            path: path.to_owned(),
+        });
+    }
+    Ok(observations)
+}
+
+async fn list_for_removal(runtime: &StoredRuntime, params: Value) -> DesktopResult<Value> {
+    let mut value = crate::workspace::post(
         runtime,
         "/api/tools/call",
-        json!({"tool":"list_projects","params":{}}),
+        json!({"tool":"list_projects","params":params}),
         Duration::from_secs(12),
     )
     .await?;
     if value.get("success").and_then(Value::as_bool) != Some(true) {
         return Err(unavailable());
     }
-    let rows = value
-        .pointer("/output/projects")
-        .and_then(Value::as_array)
-        .ok_or_else(unavailable)?;
-    projects
-        .iter()
-        .map(|project| {
-            let row = rows
-                .iter()
-                .find(|row| row.get("id").and_then(Value::as_str) == Some(project))
-                .ok_or_else(unavailable)?;
-            let revision = row
-                .get("revision")
-                .and_then(Value::as_str)
-                .filter(|s| {
-                    s.len() == 71
-                        && s.starts_with("sha256:")
-                        && s[7..].bytes().all(|b| b.is_ascii_hexdigit())
-                })
-                .ok_or_else(unavailable)?;
-            let path = row
-                .get("path")
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(unavailable)?;
-            Ok(UnregisterObservation {
-                target: target.clone(),
-                project: project.clone(),
-                expected_revision: revision.to_owned(),
-                path: path.to_owned(),
-            })
-        })
-        .collect()
+    Ok(value["output"].take())
 }
+
 pub async fn unregister(
     runtime: &StoredRuntime,
     request: &UnregisterRequest,
@@ -121,12 +148,37 @@ pub async fn unregister(
     }
     let observation = observe(runtime, &request.project).await?;
     if observation.expected_revision != request.expected_revision {
-        return Err(unavailable());
+        return Err(revision_changed());
     }
     let value = crate::workspace::post(runtime, "/api/tools/call", json!({"tool":"unregister_project", "params":{"project":request.project,"expected_revision":request.expected_revision}}), Duration::from_secs(40)).await.map_err(|_| uncertain())?;
     if value.get("success").and_then(Value::as_bool) != Some(true) {
-        // Do not expose arbitrary upstream text or infer that a failed response had no effects.
-        return Err(uncertain());
+        return Err(
+            match value.pointer("/output/error/code").and_then(Value::as_str) {
+                Some("project_projection_reconcile_required")
+                    if value.pointer("/output/project").and_then(Value::as_str)
+                        == Some(&request.project)
+                        && matches!(
+                            value
+                                .pointer("/output/authoritative_outcome")
+                                .and_then(Value::as_str),
+                            Some("unregistered" | "already_unregistered")
+                        ) =>
+                {
+                    DesktopError::new(
+                        "project_projection_reconcile_required",
+                        "Runner confirmed removal but Server inventory is pending",
+                        "Refresh the inventory before taking further action.",
+                    )
+                }
+                Some("active_jobs_conflict") => DesktopError::new(
+                    "active_jobs_conflict",
+                    "The project still has active jobs",
+                    "Wait for those jobs to finish before removing the project.",
+                ),
+                Some("revision_conflict") => revision_changed(),
+                _ => uncertain(),
+            },
+        );
     }
     let output = value.get("output").ok_or_else(uncertain)?;
     if output.get("project").and_then(Value::as_str) != Some(&request.project)
@@ -241,6 +293,9 @@ pub async fn unregister_batch(
             {
                 Some("not_attempted_after_uncertain_outcome") => {
                     "not_attempted_after_uncertain_outcome"
+                }
+                Some("project_projection_reconcile_required") => {
+                    "project_projection_reconcile_required"
                 }
                 Some("active_jobs_conflict") => "active_jobs_conflict",
                 Some("revision_conflict") => "revision_conflict",

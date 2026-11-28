@@ -390,6 +390,48 @@ fn is_windows_drive_root(_canonical_path: &Path) -> bool {
     false
 }
 
+#[cfg(windows)]
+pub fn wsl_distribution(path: &Path) -> Option<&std::ffi::OsStr> {
+    use std::path::{Component, Prefix};
+    let Component::Prefix(prefix) = path.components().next()? else {
+        return None;
+    };
+    match prefix.kind() {
+        Prefix::UNC(host, share) | Prefix::VerbatimUNC(host, share)
+            if host.eq_ignore_ascii_case("wsl$") || host.eq_ignore_ascii_case("wsl.localhost") =>
+        {
+            Some(share)
+        }
+        _ => None,
+    }
+}
+
+/// Opening a Windows WSL share can start its distribution. Inventory has no
+/// target; a targeted lookup may probe that distribution only. This is an I/O
+/// filter. Authorization still compares the actual canonical paths.
+pub fn project_path_probe_allowed(candidate: &Path, target: Option<&Path>) -> bool {
+    #[cfg(windows)]
+    {
+        wsl_distribution(candidate).is_none_or(|distro| {
+            target
+                .and_then(wsl_distribution)
+                .is_some_and(|selected| distro.eq_ignore_ascii_case(selected))
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (candidate, target);
+        true
+    }
+}
+
+pub fn canonicalize_project_candidate(candidate: &Path, target: &Path) -> Option<PathBuf> {
+    if !project_path_probe_allowed(candidate, Some(target)) {
+        return None;
+    }
+    candidate.canonicalize().ok()
+}
+
 /// Canonicalize the `allowed_roots` entries that can currently provide path
 /// authority.
 ///
@@ -399,10 +441,10 @@ fn is_windows_drive_root(_canonical_path: &Path) -> bool {
 /// Callers still apply the authoritative path policy after this projection;
 /// an empty result therefore remains fail-closed unless that policy explicitly
 /// permits the target through `allow_cwd_anywhere`.
-pub fn canonicalize_usable_allowed_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+pub fn canonicalize_usable_allowed_roots(roots: &[PathBuf], target: &Path) -> Vec<PathBuf> {
     roots
         .iter()
-        .filter_map(|root| root.canonicalize().ok())
+        .filter_map(|root| canonicalize_project_candidate(root, target))
         .filter(|root| root.is_dir())
         .collect()
 }
@@ -1029,6 +1071,34 @@ mod tests {
             user_config_home().unwrap(),
             PathBuf::from("/c/Users/alice/.config")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wsl_probes_require_a_target_in_the_same_distribution() {
+        let target = Path::new(r"\\?\UNC\WSL.LOCALHOST\Dev-Ubuntu\home\user");
+        for share in [
+            r"\\wsl$\dev-ubuntu\home",
+            r"\\wsl.localhost\Dev-Ubuntu\home",
+            r"\\?\UNC\wsl$\Dev-Ubuntu\home",
+        ] {
+            let root = Path::new(share);
+            assert!(!project_path_probe_allowed(root, None));
+            assert!(!project_path_probe_allowed(
+                root,
+                Some(Path::new(r"C:\project"))
+            ));
+            assert!(!project_path_probe_allowed(
+                root,
+                Some(Path::new(r"\\wsl.localhost\Dev-Ubuntu2\home"))
+            ));
+            assert!(project_path_probe_allowed(root, Some(target)));
+        }
+        assert!(project_path_probe_allowed(Path::new(r"C:\project"), None));
+        assert!(project_path_probe_allowed(
+            Path::new(r"\\ordinary-server\wsl$\repo"),
+            None
+        ));
     }
 
     #[test]

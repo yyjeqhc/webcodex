@@ -133,8 +133,10 @@ fn managed_worktree_namespace_candidate(
         let root = validate_configured_managed_worktree_root(policy, Some(source))?;
         return Ok(root);
     }
-    let mut roots =
-        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
+    let mut roots = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(
+        &policy.allowed_roots,
+        source,
+    );
     roots.sort_by_key(|root| std::cmp::Reverse(root.components().count()));
     for root in roots {
         if !webcodex_runner_config::paths::path_is_within(source, &root) {
@@ -753,8 +755,8 @@ pub(crate) fn handle_prepare_managed_worktree_operation(
         // an unresolvable root stays denied. The derived worktree destination is
         // not part of this check; allowed_roots above still governs it.
         let admitted = granted_roots.iter().any(|root| {
-            canonicalize_existing(root)
-                .is_ok_and(|root| webcodex_runner_config::paths::path_is_within(&source, &root))
+            webcodex_runner_config::paths::canonicalize_project_candidate(root, &source)
+                .is_some_and(|root| webcodex_runner_config::paths::path_is_within(&source, &root))
         });
         if !admitted {
             return managed_worktree_error(

@@ -939,6 +939,7 @@ impl SessionStore {
         &self,
         project: &str,
         owner_authority_fingerprint: &str,
+        project_identity: Option<&str>,
         lifecycle: Option<SessionLifecycle>,
         offset: usize,
         limit: usize,
@@ -953,6 +954,7 @@ impl SessionStore {
                 .filter(|record| {
                     record.project() == Some(project)
                         && record.owner_authority_fingerprint() == owner_authority_fingerprint
+                        && project_identity.is_none_or(|id| record.project_identity() == Some(id))
                 })
                 .inspect(|_| has_project_history = true)
                 .filter(|record| lifecycle.is_none_or(|state| record.lifecycle() == state))
@@ -970,6 +972,8 @@ impl SessionStore {
                 self.with_record_for_query(&session_id, |record, _| {
                     if record.project.as_deref() != Some(project)
                         || record.owner_authority_fingerprint != owner_authority_fingerprint
+                        || project_identity
+                            .is_some_and(|id| record.project_identity.as_deref() != Some(id))
                         || lifecycle.is_some_and(|state| record.lifecycle != state)
                     {
                         return None;

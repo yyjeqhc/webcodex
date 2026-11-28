@@ -185,7 +185,10 @@ pub(crate) fn find_project_shell_context(
     load_runner_project_shell_contexts_from_dir(project_registry_dir)
         .into_iter()
         .filter_map(|project| {
-            let project_path = PathBuf::from(&project.path).canonicalize().ok()?;
+            let project_path = webcodex_runner_config::paths::canonicalize_project_candidate(
+                Path::new(&project.path),
+                &cwd,
+            )?;
             // Windows filesystems are case-insensitive and `canonicalize` may
             // return `\\?\`-prefixed paths, so containment uses the shared
             // path identity rules instead of raw `==`/`starts_with`.
@@ -562,15 +565,21 @@ fn runner_project_summary_with_shutdown(
     // identity. Report the actual root, not a mutable symlink alias, so a
     // retargeted project registration cannot inherit another repository's
     // current Workflow Session.
-    let canonical_root = canonicalize_existing(Path::new(&project.path))
-        .ok()
-        .filter(|path| path.is_dir());
+    let path = Path::new(&project.path);
+    let probe = webcodex_runner_config::paths::project_path_probe_allowed(path, None);
+    let canonical_root = if probe {
+        canonicalize_existing(path)
+            .ok()
+            .filter(|path| path.is_dir())
+    } else {
+        None
+    };
     let root_fingerprint = canonical_root.as_deref().map(project_root_fingerprint);
     let resolved_path = canonical_root
         .unwrap_or_else(|| PathBuf::from(&project.path))
         .to_string_lossy()
         .to_string();
-    let (git_branch, git_head, git_dirty) = if include_git {
+    let (git_branch, git_head, git_dirty) = if probe && include_git {
         let branch = run_git_capture(
             &resolved_path,
             &["rev-parse", "--abbrev-ref", "HEAD"],
@@ -593,6 +602,7 @@ fn runner_project_summary_with_shutdown(
     // temporarily project that sentinel on the wire when there is no genuine
     // project kind. New Servers ignore it in favor of `registration_source`.
     RunnerProjectSummary {
+        deferred_root_path: (!probe).then(|| project.path.clone()),
         id: project.id.clone(),
         name: project.name.clone().or_else(|| Some(project.id.clone())),
         path: resolved_path,

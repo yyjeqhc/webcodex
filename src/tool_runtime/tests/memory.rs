@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 fn resolved(id: &str, client: &str, root: &str) -> ResolvedProject {
     ResolvedProject {
+        root_probe_deferred: false,
         input: id.to_string(),
         resolved_id: id.to_string(),
         config: ProjectConfig {

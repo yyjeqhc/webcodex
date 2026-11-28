@@ -265,6 +265,7 @@ fn synthetic_project_summary(index: usize, path_bytes: Option<usize>) -> RunnerP
         None => format!("/tmp/project-{index:04}"),
     };
     RunnerProjectSummary {
+        deferred_root_path: None,
         registration_incarnation: None,
         id: format!("project-{index:04}"),
         name: Some(format!("Project {index:04}")),
@@ -299,6 +300,7 @@ fn inventory_status(
         total_synced,
         last_error_code: None,
         last_sync_at: Some(1),
+        supports_deferred_roots: true,
         max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
         max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
     }
@@ -489,14 +491,25 @@ fn hot_capacity_metadata_retries_backpressure_and_registration_uses_active_gener
         let path = temp.path().join("runner.toml");
         let cfg = test_runner_config("http://127.0.0.1:1".into());
         let runtime = ReloadableRunnerConfig::new(cfg.clone(), path.clone());
-        std::fs::write(&path, "server_url='http://127.0.0.1:1'\ntoken='test-token'\nclient_id='oe'\nmax_concurrent_jobs=6\n").unwrap();
+        std::fs::write(&path, "server_url='http://127.0.0.1:1'\ntoken='test-token'\nclient_id='oe'\nmax_concurrent_jobs=6\n[policy]\nallowed_roots=['hot-root']\n").unwrap();
         assert_eq!(runtime.reload_config(1).valid, Some(true));
         let (tx, mut rx) = mpsc::channel(1);
         tx.try_send(RunnerEnvelope::Pong { ts: 1 }).unwrap();
         send_provider_metadata(transport, &tx, &runtime, Some(1));
         assert!(matches!(rx.try_recv(), Ok(RunnerEnvelope::Pong { .. })));
         send_provider_metadata(transport, &tx, &runtime, Some(1));
-        let RunnerEnvelope::RuntimeMetadata { job_capacity: Some(capacity), .. } = rx.try_recv().unwrap() else { panic!("missing capacity"); };
+        let RunnerEnvelope::RuntimeMetadata {
+            job_capacity: Some(capacity),
+            file_access: Some(access),
+            ..
+        } = rx.try_recv().unwrap()
+        else {
+            panic!("missing reload metadata");
+        };
+        assert_eq!(
+            access.allowed_roots,
+            vec![std::path::PathBuf::from("hot-root")]
+        );
         assert_eq!(capacity.generation, 2);
         assert_eq!(capacity.limit, 6);
         assert_eq!(runtime.jobs.concurrency_limit(), 6);
@@ -504,5 +517,6 @@ fn hot_capacity_metadata_retries_backpressure_and_registration_uses_active_gener
         // remains the immutable startup/transport identity.
         let (registered, _, _) = build_register_request_with_provider_status(&cfg, &runtime, "instance", 0, runtime.jobs.inventory());
         assert_eq!(registered.job_concurrency_limit, Some(6));
+        assert_eq!(registered.policy.unwrap().file_access, access);
     }
 }

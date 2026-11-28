@@ -127,7 +127,29 @@ async fn observe_many_uses_one_inventory_request() {
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].path, "D:\\repo");
-    assert_eq!(task.await.unwrap().len(), 1);
+    let calls = task.await.unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["params"]["project"], "agent:mini:repo");
+}
+
+#[tokio::test]
+async fn batch_observation_finds_a_selected_registration_beyond_the_first_page() {
+    let mut page = inventory();
+    page["output"]["truncated"] = json!(true);
+    let mut exact = inventory();
+    exact["output"]["projects"][0]["id"] = json!("agent:mini:last");
+    let (url, calls) = server(vec![page, exact]).await;
+    let fixture = Fixture::new(url);
+    let rows = observe_many(
+        &fixture.runtime,
+        &["agent:mini:repo".into(), "agent:mini:last".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows[1].project, "agent:mini:last");
+    let calls = calls.await.unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1]["params"]["project"], "agent:mini:last");
 }
 
 #[tokio::test]
@@ -161,7 +183,8 @@ async fn changed_revision_never_dispatches_removal() {
     let fixture = Fixture::new(url);
     let mut request = fixture.request();
     request.expected_revision = format!("sha256:{}", "b".repeat(64));
-    assert!(unregister(&fixture.runtime, &request).await.is_err());
+    let error = unregister(&fixture.runtime, &request).await.unwrap_err();
+    assert_eq!(error.code, "project_revision_changed");
     assert_eq!(task.await.unwrap().len(), 1);
 }
 
@@ -189,6 +212,26 @@ async fn rejection_and_wrong_project_outcomes_are_not_retried() {
             .await
             .is_err());
         assert_eq!(task.await.unwrap().len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn projection_failure_reports_only_an_exact_confirmed_removal() {
+    for (project, code) in [
+        ("agent:mini:repo", "project_projection_reconcile_required"),
+        ("agent:other:repo", "project_unregister_uncertain"),
+    ] {
+        let response = json!({"success":false,"output":{
+            "error":{"code":"project_projection_reconcile_required"},
+            "authoritative_outcome":"unregistered","project":project
+        }});
+        let (url, calls) = server(vec![inventory(), response]).await;
+        let fixture = Fixture::new(url);
+        let error = unregister(&fixture.runtime, &fixture.request())
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, code);
+        assert_eq!(calls.await.unwrap().len(), 2);
     }
 }
 

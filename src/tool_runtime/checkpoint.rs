@@ -313,8 +313,17 @@ impl ToolRuntime {
             Ok(resolved) => resolved,
             Err(err) => return err.into_tool_result(),
         };
+        self.list_resolved_checkpoints(&project, &resolved.resolved_id, limit)
+    }
+
+    pub(super) fn list_resolved_checkpoints(
+        &self,
+        project: &str,
+        resolved_id: &str,
+        limit: Option<usize>,
+    ) -> ToolResult {
         let limit = limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, MAX_LIST_LIMIT);
-        let checkpoints = match self.checkpoint_store.list(&resolved.resolved_id, limit) {
+        let checkpoints = match self.checkpoint_store.list(resolved_id, limit) {
             Ok(values) => values,
             Err(err) => return ToolResult::err(err),
         };
@@ -324,7 +333,7 @@ impl ToolRuntime {
             .collect();
         ToolResult::ok(json!({
             "project": project,
-            "resolved_project": resolved.resolved_id,
+            "resolved_project": resolved_id,
             "limit": limit,
             "checkpoints": items,
         }))

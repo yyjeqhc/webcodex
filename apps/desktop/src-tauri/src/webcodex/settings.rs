@@ -249,6 +249,17 @@ fn validate(paths: &[String]) -> DesktopResult<()> {
 }
 
 fn validate_allowed_roots(current: &[String], roots: &[String]) -> DesktopResult<()> {
+    // A config written by the CLI can already exceed the Desktop add limit.
+    // An exact deletion preserves the spelling and order of every survivor
+    // and needs no filesystem access (including for unavailable WSL shares).
+    let mut existing = current.iter();
+    if roots.len() < current.len()
+        && roots
+            .iter()
+            .all(|root| existing.by_ref().any(|old| old == root))
+    {
+        return Ok(());
+    }
     validate(roots)?;
     for root in roots {
         if current.iter().any(|existing| {

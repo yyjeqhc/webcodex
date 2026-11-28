@@ -80,6 +80,8 @@ pub enum RunnerEnvelope {
     /// active transport and never requires an acknowledgement round trip.
     RuntimeMetadata {
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_access: Option<super::RunnerFileAccessPolicy>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         job_capacity: Option<super::RunnerJobCapacity>,
         tool_providers: ToolProvidersStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]

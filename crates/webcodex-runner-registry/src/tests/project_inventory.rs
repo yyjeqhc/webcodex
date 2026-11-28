@@ -1111,3 +1111,108 @@ async fn staging_capacity_and_timeout_are_bounded_without_taking_runners_offline
     );
     assert!(expired.connected);
 }
+
+#[tokio::test]
+async fn deferred_project_identity_is_fenced_and_passive_refresh_keeps_only_matching_proof() {
+    let registry = RunnerRegistry::default();
+    let client = "deferred";
+    let instance = "deferred-instance";
+    let mut registration = paged_registration(client, instance);
+    registration.capabilities.project_path_registration = true;
+    registry.register(registration).await.unwrap();
+    let mut project = project_summary("repo", "/fixture");
+    project.deferred_root_path = Some(project.path.clone());
+    let revision = format!("sha256:{}", "1".repeat(64));
+    let incarnation = uuid::Uuid::new_v4().to_string();
+    let fingerprint = format!("wc_projroot_{}", "2".repeat(64));
+    project.revision = Some(revision.clone());
+    project.registration_incarnation = Some(incarnation.clone());
+    apply_snapshot(&registry, client, instance, "first", 1, &[project.clone()]).await;
+    let target = "agent:deferred:repo";
+    assert!(registry
+        .with_live_session_registration(None, target, "s", |_, _| ())
+        .await
+        .is_none());
+    assert!(registry
+        .enqueue_project_identity_probe(client, "wrong", &project, None)
+        .await
+        .is_err());
+    assert!(registry
+        .record_deferred_project_root(
+            None,
+            client,
+            instance,
+            "repo",
+            "/fixture",
+            "wrong",
+            &incarnation,
+            &fingerprint,
+            "/canonical"
+        )
+        .await
+        .is_err());
+    assert!(registry
+        .record_deferred_project_root(
+            None,
+            client,
+            instance,
+            "repo",
+            "/fixture",
+            &revision,
+            &incarnation,
+            "invalid",
+            "/canonical"
+        )
+        .await
+        .is_err());
+    registry
+        .record_deferred_project_root(
+            None,
+            client,
+            instance,
+            "repo",
+            "/fixture",
+            &revision,
+            &incarnation,
+            &fingerprint,
+            "/canonical",
+        )
+        .await
+        .unwrap();
+    let identity = registry
+        .with_live_session_registration(None, target, "s", |id, _| id.to_owned())
+        .await
+        .unwrap();
+    apply_snapshot(&registry, client, instance, "second", 2, &[project.clone()]).await;
+    assert_eq!(
+        registry
+            .with_live_session_registration(None, target, "s", |id, _| id.to_owned())
+            .await,
+        Some(identity)
+    );
+    let view = registry
+        .get_runner_view_for_auth(client, None)
+        .await
+        .unwrap();
+    assert_eq!(view.projects[0].path, "/canonical");
+    assert_eq!(
+        view.projects[0].deferred_root_path.as_deref(),
+        Some("/fixture")
+    );
+    let (request_id, _rx) = registry
+        .enqueue_project_identity_probe(client, instance, &project, None)
+        .await
+        .unwrap();
+    project.revision = Some(format!("sha256:{}", "3".repeat(64)));
+    apply_snapshot(&registry, client, instance, "third", 3, &[project]).await;
+    assert!(registry
+        .with_live_session_registration(None, target, "s", |_, _| ())
+        .await
+        .is_none());
+    let inner = registry.inner.lock().await;
+    let pending = inner.pending_by_id.get(&request_id).unwrap();
+    assert!(pending
+        .dispatch_fence
+        .synchronous_rejection(&pending.operation, inner.runners.get(client))
+        .is_some());
+}

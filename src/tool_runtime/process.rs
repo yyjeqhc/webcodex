@@ -1,3 +1,4 @@
+use super::project_resolution::ResolvedProject;
 use serde_json::json;
 
 use super::helpers::{
@@ -138,6 +139,17 @@ pub(crate) fn process_tool_failure_result(
             "failure_kind": failure_kind,
             "tool_failure": true,
         }),
+    )
+}
+
+pub(super) fn execution_project_rejected(error: super::ProjectResolverError) -> ToolResult {
+    process_tool_failure_result(
+        command_rejected_message(
+            error.to_message(),
+            "verify the project id with list_projects, then retry with a registered project.",
+        ),
+        "agent_offline",
+        ShellCommandExecutionState::NotStarted,
     )
 }
 
@@ -462,7 +474,7 @@ impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_process_with_contract_for_resource(
         &self,
-        project: String,
+        target: ResolvedProject,
         executable: String,
         args: Vec<String>,
         stdin: Option<String>,
@@ -476,7 +488,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         self.run_process_with_contract_mode(
-            project,
+            target,
             executable,
             args,
             stdin,
@@ -497,7 +509,7 @@ impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_skill_resource_with_contract(
         &self,
-        project: String,
+        target: ResolvedProject,
         request: RunnerSkillExecutionRequest,
         timeout_secs: Option<u64>,
         sync_wait_secs: Option<u64>,
@@ -507,7 +519,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         self.run_process_with_contract_mode(
-            project,
+            target,
             String::new(),
             Vec::new(),
             None,
@@ -531,7 +543,7 @@ impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_detached_process_with_contract(
         &self,
-        project: String,
+        target: ResolvedProject,
         idempotency_key: String,
         executable: String,
         args: Vec<String>,
@@ -543,6 +555,8 @@ impl ToolRuntime {
         session_id: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let project = target.resolved_id;
+        let proj = target.config;
         let requested_timeout_secs =
             timeout_secs.unwrap_or(STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS);
         let budget = match StructuredExecutionBudget::resolve_process(timeout_secs) {
@@ -582,19 +596,7 @@ impl ToolRuntime {
         }
         let summary = format!("detached process ({} args)", process.args.len());
         let declared_purpose = purpose.unwrap_or_default();
-        let proj = match self.resolve_project(&project).await {
-            Ok(project) => project,
-            Err(error) => {
-                return process_tool_failure_result(
-                    command_rejected_message(
-                        error.to_message(),
-                        "verify the project id with list_projects, then retry with a registered Runner project.",
-                    ),
-                    "agent_offline",
-                    ShellCommandExecutionState::NotStarted,
-                )
-            }
-        };
+
         let client_id = proj.client_id.clone();
         let effective_cwd = match resolve_runner_cwd(&proj, cwd.as_deref()) {
             Ok(cwd) => cwd,
@@ -775,6 +777,10 @@ impl ToolRuntime {
         args: Vec<String>,
         timeout_secs: u64,
     ) -> ToolResult {
+        let project = match self.resolve_project_input(&project).await {
+            Ok(project) => project,
+            Err(error) => return execution_project_rejected(error),
+        };
         self.run_process_with_contract_mode(
             project,
             executable,
@@ -797,7 +803,7 @@ impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
     async fn run_process_with_contract_mode(
         &self,
-        project: String,
+        target: ResolvedProject,
         executable: String,
         args: Vec<String>,
         stdin: Option<String>,
@@ -812,6 +818,8 @@ impl ToolRuntime {
         allow_async_handoff: bool,
         skill_resource: Option<RunnerSkillExecutionRequest>,
     ) -> ToolResult {
+        let project = target.resolved_id;
+        let proj = target.config;
         let budget = match if skill_resource.is_some() {
             StructuredExecutionBudget::resolve_with_sync_wait(timeout_secs, sync_wait_secs)
         } else {
@@ -911,19 +919,7 @@ impl ToolRuntime {
             }
             identity
         });
-        let proj = match self.resolve_project(&project).await {
-            Ok(project) => project,
-            Err(error) => {
-                return process_tool_failure_result(
-                    command_rejected_message(
-                        error.to_message(),
-                        "verify the project id with list_projects, then retry with a registered project.",
-                    ),
-                    "agent_offline",
-                    ShellCommandExecutionState::NotStarted,
-                )
-            }
-        };
+
         let client_id = proj.client_id.clone();
         let (budget, timeout_notice) = apply_runner_timeout_cap(
             &self.runner_registry,

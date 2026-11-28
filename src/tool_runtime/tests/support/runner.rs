@@ -834,6 +834,7 @@ pub(in crate::tool_runtime::tests) fn registered_project(
     path: &str,
 ) -> RunnerProjectSummary {
     RunnerProjectSummary {
+        deferred_root_path: None,
         id: id.to_string(),
         name: Some(id.to_string()),
         path: path.to_string(),
@@ -864,6 +865,7 @@ pub(in crate::tool_runtime::tests) fn named_registered_project(
 ) -> RunnerProjectSummary {
     let _ = client_id;
     RunnerProjectSummary {
+        deferred_root_path: None,
         id: id.to_string(),
         name: Some(name.to_string()),
         path: path.to_string(),

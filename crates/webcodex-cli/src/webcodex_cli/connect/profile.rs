@@ -360,7 +360,11 @@ pub(crate) fn read_enabled_project_count(project_registry_dir: &Path) -> Result<
 }
 
 pub(super) fn stored_project_matches(project: &ProjectFile, canonical_project: &Path) -> bool {
-    Path::new(&project.path).canonicalize().is_ok_and(|path| {
+    webcodex_runner_config::paths::canonicalize_project_candidate(
+        Path::new(&project.path),
+        canonical_project,
+    )
+    .is_some_and(|path| {
         // Windows `canonicalize` can return `\\?\`-prefixed extended paths and
         // the filesystem is case-insensitive, so identity uses the shared
         // normalization instead of raw `Path` equality.

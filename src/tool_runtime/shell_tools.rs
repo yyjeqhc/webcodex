@@ -1,5 +1,6 @@
 //! Runtime dispatch adapter for shell tool calls.
 
+use super::project_resolution::ResolvedProject;
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
@@ -7,6 +8,7 @@ impl ToolRuntime {
     pub(crate) async fn dispatch_shell_tool(
         &self,
         call: ToolCall,
+        target: ResolvedProject,
         ssh_resource: Option<&str>,
         validation_assertion_name: Option<&str>,
         auth: Option<&AuthContext>,
@@ -14,7 +16,7 @@ impl ToolRuntime {
         match call {
             ToolCall::RunProcess {
                 interactive,
-                project,
+                project: _,
                 executable,
                 args,
                 stdin,
@@ -27,7 +29,7 @@ impl ToolRuntime {
                 if interactive {
                     return self
                         .run_interactive_process(
-                            project,
+                            target,
                             executable,
                             args,
                             stdin,
@@ -41,7 +43,7 @@ impl ToolRuntime {
                         .await;
                 }
                 self.run_process_with_contract_for_resource(
-                    project,
+                    target,
                     executable,
                     args,
                     stdin,
@@ -57,7 +59,7 @@ impl ToolRuntime {
                 .await
             }
             ToolCall::RunDetachedProcess {
-                project,
+                project: _,
                 idempotency_key,
                 executable,
                 args,
@@ -68,7 +70,7 @@ impl ToolRuntime {
                 purpose,
             } => {
                 self.run_detached_process_with_contract(
-                    project,
+                    target,
                     idempotency_key,
                     executable,
                     args,
@@ -83,7 +85,7 @@ impl ToolRuntime {
                 .await
             }
             ToolCall::RunScript {
-                project,
+                project: _,
                 language,
                 script,
                 args,
@@ -95,7 +97,7 @@ impl ToolRuntime {
                 purpose,
             } => {
                 self.run_script_with_contract_for_resource(
-                    project,
+                    target,
                     language,
                     script,
                     args,
@@ -112,7 +114,7 @@ impl ToolRuntime {
                 .await
             }
             ToolCall::RunShell {
-                project,
+                project: _,
                 command,
                 session_id,
                 timeout_secs,
@@ -123,7 +125,7 @@ impl ToolRuntime {
                 login,
             } => {
                 self.run_shell_with_contract_for_resource(
-                    project,
+                    std::future::ready(Ok(target)),
                     command,
                     timeout_secs,
                     sync_wait_secs,

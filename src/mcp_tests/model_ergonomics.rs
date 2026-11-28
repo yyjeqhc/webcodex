@@ -187,6 +187,7 @@ async fn model_ergonomics_normalization_reaches_api_and_mcp_action_audit_without
         "input-audit",
         "inst-input-audit",
         vec![RunnerProjectSummary {
+            deferred_root_path: None,
             registration_incarnation: None,
             id: "demo".to_string(),
             name: None,
@@ -684,6 +685,7 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
         "code-mode-audit",
         "inst-code-mode-audit",
         vec![RunnerProjectSummary {
+            deferred_root_path: None,
             registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
             id: "demo".to_string(),
             name: Some("Code Mode audit".to_string()),

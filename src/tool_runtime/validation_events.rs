@@ -51,15 +51,16 @@ impl ToolRuntime {
         limit: Option<usize>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        if let Err(result) = self
+        let resolved = match self
             .authorize_session_target(&session_id, "read_validation_summary", Some(&project), auth)
             .await
         {
-            return result;
-        }
-        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
-            Ok(resolved) => resolved,
-            Err(err) => return err.into_tool_result(),
+            Ok(Some(resolved)) => resolved,
+            Ok(None) => match self.resolve_project_metadata_for_auth(&project, auth).await {
+                Ok(resolved) => resolved,
+                Err(error) => return error.into_tool_result(),
+            },
+            Err(result) => return result,
         };
         let Some(summary) = self
             .sessions

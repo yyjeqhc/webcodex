@@ -34,6 +34,7 @@ mod window_visibility;
 
 fn project(id: &str, private_path: &str) -> RunnerProjectSummary {
     RunnerProjectSummary {
+        deferred_root_path: None,
         registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
         id: id.to_string(),
         name: Some(format!("Project {id}")),

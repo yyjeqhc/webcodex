@@ -265,14 +265,16 @@ pub(super) fn run_polling_session(
                 jobs.prepared_profiles().len(),
                 &jobs,
             ) {
-                Ok((projects_count, registered_jobs, registered_projects, _inventory_status)) => {
+                Ok((projects_count, registered_jobs, registered_projects, inventory_status)) => {
+                    runtime.set_inventory_contract(&inventory_status);
                     registered = true;
                     lease_conflict_started = None;
                     recovery_backoff.reset();
                     idle_backoff.reset();
                     project_refresh.mark_sent(Instant::now());
-                    project_inventory_sync =
-                        Some(paged_sync_after_registration(registered_projects));
+                    project_inventory_sync = Some(paged_sync_after_registration(
+                        runtime.inventory_for_server(registered_projects),
+                    ));
                     let sink = RunnerSink::Http(HttpSendConfig {
                         client: client.clone(),
                         server_url: cfg.server_url.clone(),
@@ -402,7 +404,9 @@ pub(super) fn run_polling_session(
             None
         };
         if let Some(projects) = refresh_projects {
-            project_inventory_sync = Some(ProjectInventorySync::new(projects));
+            project_inventory_sync = Some(ProjectInventorySync::new(
+                runtime.inventory_for_server(projects),
+            ));
         }
 
         let mut project_inventory_page = None;

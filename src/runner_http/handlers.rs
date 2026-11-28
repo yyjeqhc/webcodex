@@ -214,14 +214,19 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
             body.job_capacity,
         )
         .await;
-    let _ = registry
+    if let Err(error) = registry
         .update_runtime_metadata(
             &body.request.client_id,
             &body.request.runner_instance_id,
+            None,
+            body.file_access,
             body.tool_providers,
             body.mcp_gateway_providers,
         )
-        .await;
+        .await
+    {
+        tracing::warn!(client_id = %body.request.client_id, %error, "Runner runtime metadata update rejected");
+    }
     let _ = registry
         .update_computer_control_epoch(
             &body.request.client_id,

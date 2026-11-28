@@ -562,3 +562,253 @@ async fn stale_project_ref_never_retargets_and_survives_store_reopen() {
         canonical
     );
 }
+
+#[tokio::test]
+async fn deferred_root_discovery_is_passive_and_explicit_reference_rechecks_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let open = || {
+        let db = tmp.path().join("refs.db");
+        runtime_with_reference_db(&db)
+            .with_session_database(&db, &tmp.path().join("sessions.json"))
+            .unwrap()
+    };
+    let runtime = open();
+    let canonical = "agent:deferred:repo";
+    let owner_auth = auth_context(Some("owner"), false);
+    let auth = Some(&owner_auth);
+    let path = r"\\wsl.localhost\Distro\repo";
+    let canonical_path = r"\\?\UNC\wsl.localhost\Distro\repo";
+    let mut row = project("deferred", "repo", "repo", path, '5');
+    row.revision = Some(format!("sha256:{}", "1".repeat(64)));
+    let caps = RunnerCapabilities {
+        project_path_registration: true,
+        shell: true,
+        internal_posix_script: true,
+        ..Default::default()
+    };
+    register_agent_projects(
+        &runtime,
+        "deferred",
+        Some("owner"),
+        caps.clone(),
+        vec![row.clone()],
+    )
+    .await;
+    let before = runtime
+        .resolve_project_input_for_auth(canonical, auth)
+        .await
+        .unwrap();
+    let reference = runtime
+        .project_reference_for_resolved(&before, auth)
+        .unwrap();
+    let identity = before.workflow_project_identity().unwrap();
+    let owner = crate::tool_runtime::workflow_session_authority_fingerprint(auth).unwrap();
+    let start = |identity: String| {
+        runtime
+            .sessions
+            .start_session_with_options(
+                webcodex_workflow_session::SessionCreateOptions::new(
+                    Some(canonical.into()),
+                    None,
+                    crate::tool_runtime::SessionMode::Normal,
+                    Default::default(),
+                )
+                .with_owner_authority_fingerprint(Some(owner.clone()))
+                .with_project_identity(Some(identity)),
+            )
+            .unwrap()
+            .session_id
+    };
+    let original_session = start(identity.clone());
+    start("f".repeat(64));
+    runtime.sessions.flush().await.unwrap();
+    row.root_fingerprint = None;
+    row.deferred_root_path = Some(row.path.clone());
+    drop(runtime);
+    let runtime = open();
+    register_agent_projects(&runtime, "deferred", Some("owner"), caps, vec![row.clone()]).await;
+    // Metadata discovery must not wait for any request to the remote filesystem.
+    let passive = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        runtime.resolve_project_metadata_for_auth(canonical, auth),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(passive.root_probe_deferred);
+    let history = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        runtime.list_sessions_tool(reference.clone(), None, None, None, auth),
+    )
+    .await
+    .unwrap();
+    assert!(history.success, "{history:?}");
+    assert_eq!(history.output["total"], 1);
+    assert_eq!(
+        history.output["sessions"][0]["session_id"],
+        original_session
+    );
+    let summary = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        runtime.validation_summary_tool(reference.clone(), original_session.clone(), None, auth),
+    )
+    .await
+    .unwrap();
+    assert!(summary.success, "{summary:?}");
+    let default_handoff = || async {
+        let handoff = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            runtime.session_handoff_summary(
+                original_session.clone(),
+                Some(reference.clone()),
+                None,
+                None,
+                None,
+                true,
+                None,
+                auth,
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(handoff.success, "{handoff:?}");
+        assert!(handoff.output.get("workspace").is_none());
+        assert!(handoff.output.get("checkpoints").is_none());
+    };
+    default_handoff().await;
+    async fn reply(
+        runtime: &ToolRuntime,
+        row: &RunnerProjectSummary,
+        path: &str,
+        fingerprint: String,
+    ) {
+        let request =
+            wait_for_runner_request_for_instance(runtime, "deferred", "inst-deferred").await;
+        assert_eq!(request.kind, "project_probe_identity");
+        let output = json!({"agent_project_id":"repo","revision":row.revision,
+            "registration_incarnation":row.registration_incarnation, "outcome":"observed",
+            "changed":false,"path":path,"root_fingerprint":fingerprint});
+        complete_patch_agent_request_for_instance(
+            runtime,
+            "deferred",
+            "inst-deferred",
+            &request.request_id,
+            0,
+            &output.to_string(),
+            "",
+        )
+        .await;
+    }
+    let (resolved, ()) = tokio::join!(
+        runtime.resolve_project_input_for_auth(&reference, auth),
+        reply(&runtime, &row, canonical_path, root('5'))
+    );
+    let resolved = resolved.unwrap();
+    assert_eq!(
+        resolved.config.path, canonical_path,
+        "dispatch must use the observed canonical path"
+    );
+    assert_eq!(
+        resolved.workflow_project_identity().as_deref(),
+        Some(identity.as_str())
+    );
+    default_handoff().await;
+    let (explicit_handoff, ()) = tokio::join!(
+        runtime.session_handoff_summary(
+            original_session.clone(),
+            Some(reference.clone()),
+            Some(true),
+            Some(true),
+            None,
+            true,
+            None,
+            auth
+        ),
+        async {
+            reply(&runtime, &row, canonical_path, root('5')).await;
+            let request =
+                wait_for_runner_request_for_instance(&runtime, "deferred", "inst-deferred").await;
+            assert_ne!(
+                request.kind, "project_probe_identity",
+                "workspace must reuse the authorized root"
+            );
+            assert_eq!(request.cwd.as_deref(), Some(canonical_path));
+            let stdout = crate::tool_runtime::framed_clean_show_changes_test_stdout("head", false);
+            complete_patch_agent_request_for_instance(
+                &runtime,
+                "deferred",
+                "inst-deferred",
+                &request.request_id,
+                0,
+                &stdout,
+                "",
+            )
+            .await;
+        }
+    );
+    assert!(explicit_handoff.success, "{explicit_handoff:?}");
+    assert_eq!(explicit_handoff.output["workspace"]["git_available"], true);
+    // A separate execution verifies even a previously observed ordinary root.
+    // Its Session guard and shell executor share that single observation.
+    let call = ToolCall::from_tool_name(
+        "run_shell",
+        json!({"project":reference,"session_id":original_session,
+        "command":"pwd","timeout_secs":10,"sync_wait_secs":10}),
+    )
+    .unwrap();
+    tokio::join!(
+        async {
+            let result = runtime.dispatch_with_auth(call, auth).await;
+            assert!(result.success, "{result:?}");
+        },
+        async {
+            reply(&runtime, &row, canonical_path, root('5')).await;
+            let command =
+                wait_for_runner_request_for_instance(&runtime, "deferred", "inst-deferred").await;
+            assert_eq!(
+                command.command, "pwd",
+                "unexpected second root probe: {}",
+                command.kind
+            );
+            assert_eq!(command.cwd.as_deref(), Some(canonical_path));
+            complete_patch_agent_request_for_instance(
+                &runtime,
+                "deferred",
+                "inst-deferred",
+                &command.request_id,
+                0,
+                canonical_path,
+                "",
+            )
+            .await;
+        }
+    );
+    // The registration, revision and allowed roots stay the same when the
+    // directory becomes a symlink. Neither the previous Ref nor the Session
+    // may inherit the newly observed root.
+    let (stale_ref, ()) = tokio::join!(
+        runtime.resolve_project_input_for_auth(&reference, auth),
+        reply(&runtime, &row, "/retargeted/path", root('6'))
+    );
+    assert!(stale_ref.is_err());
+    let session_call = ToolCall::from_tool_name(
+        "run_shell",
+        json!({
+            "project":canonical, "session_id":original_session, "command":"pwd"
+        }),
+    )
+    .unwrap();
+    let (denied, ()) = tokio::join!(
+        runtime.dispatch_with_auth(session_call, auth),
+        reply(&runtime, &row, "/retargeted/path", root('6'))
+    );
+    assert!(!denied.success, "{denied:?}");
+    assert_eq!(
+        denied.output["error_kind"],
+        "session_project_identity_changed"
+    );
+    assert!(runtime
+        .resolve_project_input_for_auth(&reference, auth)
+        .await
+        .is_err());
+}

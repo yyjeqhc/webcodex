@@ -54,9 +54,11 @@ impl PreparedInvocation {
         let scopes_allow_binding = tool_scope.is_ok() && resolution_scope.is_ok();
         let recorder_access = |requested_project| {
             if scopes_allow_binding {
-                SessionAccess::Live { requested_project }
+                SessionAccess::for_business(&request.tool_name, requested_project, None)
             } else {
-                SessionAccess::BoundTarget
+                SessionAccess::BoundTarget {
+                    requested_project: None,
+                }
             }
         };
         // A wrapper recording_session_id is authority-bearing internal context,
@@ -123,19 +125,16 @@ impl PreparedInvocation {
                     .unwrap_or(&recorder_metadata.ack_session_message_ids),
             )
         });
-        if collaboration_session_tool(&request.tool_name) {
-            if let (Some(recorder_session_id), Some(target_session_id)) = (
-                context.session_id,
-                collaboration_target_session_id(&request.tool_name, &concrete_arguments),
-            ) {
+        if collaboration_session_tool(&request.tool_name) && context.session_id.is_some() {
+            if let Some(target_session_id) =
+                collaboration_target_session_id(&request.tool_name, &concrete_arguments)
+                    .filter(|target| Some(*target) != context.session_id)
+            {
                 // Both ends of a cross-Session collaboration relationship must
                 // be independently authorized before comparing scope. This makes
                 // None/None safe while rejecting either mixed scoped/unscoped
                 // direction without any cross-project escape.
-                let recorder_project = runtime
-                    .sessions
-                    .session_project(recorder_session_id)
-                    .expect("authorized recording Session must exist");
+                let recorder_project = recorder_metadata.recording_session_project.clone();
                 if let Err(result) = runtime
                     .authorize_session_access(
                         target_session_id,
@@ -167,19 +166,19 @@ impl PreparedInvocation {
             }
         }
         let session_contract = sessions::session_tool_contract(&request.tool_name);
-        let recording_session_project_mismatch = match context.session_id {
-            Some(session_id) => {
-                runtime
-                    .recording_session_project_mismatch(
-                        session_id,
-                        &request.tool_name,
-                        &concrete_arguments,
-                        context.auth,
-                    )
-                    .await
-            }
-            None => None,
-        };
+        let recording_session_project_mismatch =
+            match recorder_metadata.recording_session_project.as_deref() {
+                Some(session_project) => {
+                    runtime
+                        .recording_session_project_mismatch(
+                            session_project,
+                            &concrete_arguments,
+                            context.auth,
+                        )
+                        .await
+                }
+                None => None,
+            };
         if let (Some(session_id), Some(mismatch)) = (
             context.session_id,
             recording_session_project_mismatch.as_ref(),
@@ -512,27 +511,28 @@ impl ToolRuntime {
 
     async fn recording_session_project_mismatch(
         &self,
-        session_id: &str,
-        _tool_name: &str,
+        session_project: &str,
         arguments: &Value,
         auth: Option<&AuthContext>,
     ) -> Option<session_context::SessionProjectMismatch> {
-        let session_project = self.sessions.session_project(session_id)??;
         let request_project = arguments
             .as_object()
             .and_then(|obj| obj.get("project"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|project| !project.is_empty())?;
+        if request_project == session_project {
+            return None;
+        }
         let resolved = self
-            .resolve_project_input_for_auth(request_project, auth)
+            .resolve_project_metadata_for_auth(request_project, auth)
             .await
             .ok()?;
         if session_project == resolved.resolved_id {
             return None;
         }
         Some(session_context::SessionProjectMismatch {
-            session_project,
+            session_project: session_project.to_owned(),
             request_project: resolved.resolved_id,
         })
     }

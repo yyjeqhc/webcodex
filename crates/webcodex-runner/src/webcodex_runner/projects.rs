@@ -38,13 +38,15 @@ pub(crate) use managed_worktree::handle_prepare_managed_worktree_operation;
 
 #[cfg(test)]
 use registration::build_project_toml;
-pub(crate) use registration::handle_resolve_or_register_project_operation;
 #[cfg(all(test, unix))]
 use registration::sync_parent_dir;
 #[cfg(test)]
 pub(crate) use registration::{
     fail_next_project_parent_sync_after_rename, fail_next_project_publish_before_rename,
     validate_project_path_policy,
+};
+pub(crate) use registration::{
+    handle_probe_project_identity, handle_resolve_or_register_project_operation,
 };
 
 static PROJECT_REGISTRY_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -275,6 +277,71 @@ mod durability_tests {
         let projects = load_runner_project_summaries_from_dir(&project_registry_dir);
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].id, "demo");
+    }
+
+    #[test]
+    fn identity_probe_is_read_only_and_rechecks_exact_registration_and_policy() {
+        use webcodex_core::runner_operation::{RunnerProjectOperation, RunnerProjectOperationKind};
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = tmp.path().join("registry");
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&registry).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let content = build_project_toml("demo", "Demo", root.to_str().unwrap(), &None, true);
+        let mut project = parse_runner_project_toml(&content).unwrap();
+        project.registration_incarnation = Some(uuid::Uuid::new_v4().to_string());
+        let content = toml::to_string(&project).unwrap();
+        let file = registry.join("demo.toml");
+        std::fs::write(&file, &content).unwrap();
+        let summary = runner_project_summary(&project, 1, false);
+        let mut payload = serde_json::json!({"project_id":"demo", "path":project.path,
+            "revision":summary.revision, "incarnation":project.registration_incarnation});
+        let mut policy = RunnerPolicy::default();
+        policy.allowed_roots = vec![root.clone()];
+        let probe = |policy: &RunnerPolicy, payload: &serde_json::Value| {
+            handle_probe_project_identity(
+                policy,
+                &registry,
+                "fixture",
+                &RunnerProjectOperation {
+                    kind: RunnerProjectOperationKind::ProbeIdentity,
+                    payload: payload.to_string(),
+                },
+            )
+        };
+        let result = probe(&policy, &payload);
+        assert_eq!(result.exit_code, Some(0), "{result:?}");
+        let output: serde_json::Value = serde_json::from_str(&result.stdout.unwrap()).unwrap();
+        assert_eq!(output["outcome"], "observed");
+        assert_eq!(
+            output["root_fingerprint"],
+            serde_json::json!(summary.root_fingerprint)
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), content);
+        #[cfg(unix)]
+        {
+            let other = tmp.path().join("other");
+            std::fs::create_dir(&other).unwrap();
+            policy.allowed_roots.push(other.clone());
+            std::fs::remove_dir(&root).unwrap();
+            std::os::unix::fs::symlink(&other, &root).unwrap();
+            let result = probe(&policy, &payload);
+            assert_eq!(result.exit_code, Some(0), "{result:?}");
+            let observed: serde_json::Value =
+                serde_json::from_str(&result.stdout.unwrap()).unwrap();
+            assert_eq!(
+                observed["path"],
+                other.canonicalize().unwrap().to_str().unwrap()
+            );
+            assert_ne!(observed["root_fingerprint"], output["root_fingerprint"]);
+            assert_eq!(observed["revision"], output["revision"]);
+        }
+        let mut denied = policy.clone();
+        denied.allowed_roots = vec![registry.clone()];
+        assert_ne!(probe(&denied, &payload).exit_code, Some(0));
+        payload["revision"] = serde_json::json!("stale");
+        assert_ne!(probe(&policy, &payload).exit_code, Some(0));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), content);
     }
 
     #[cfg(unix)]

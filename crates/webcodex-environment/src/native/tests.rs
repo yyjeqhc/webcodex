@@ -1024,6 +1024,51 @@ fn project_authority_check_reuses_parent_root_and_expands_only_outside_it() {
 }
 
 #[tokio::test]
+async fn confirmed_live_project_removal_accepts_a_registration_outside_setup_history() {
+    let temp = crate::test_tempdir().unwrap();
+    let selected = temp.path().join("external-registration");
+    let (url, requests, server) = fixture(4, move |request| match request.path.as_str() {
+        "/api/tools/call" if request.body["tool"] == "list_projects" => (
+            200,
+            vec![],
+            json!({"success":true,"output":{"projects":[{"id":"agent:alice-client:external","revision":"rev-1","path":selected}]}}),
+        ),
+        "/api/tools/call" if request.body["tool"] == "unregister_project" => (
+            200,
+            vec![],
+            json!({"success":true,"output":{"project":"agent:alice-client:external","outcome":"unregistered"}}),
+        ),
+        "/api/runtime-console/overview" => (
+            200,
+            vec![],
+            json!({"authenticated_user":"alice","service":"webcodex"}),
+        ),
+        "/api/runtime-console/runner" => (200, vec![], json!({"connected":true,"projects":[]})),
+        other => panic!("unexpected removal route: {other}"),
+    });
+    let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+    atomic_private_write(
+        &store.root().join("webcodex-user-token"),
+        b"test-credential",
+    )
+    .unwrap();
+    let mut environment = record(url, None, EnvironmentMode::Join);
+    environment.username = Some("alice".into());
+    environment.runner_client_id = Some("alice-client".into());
+    store.save_environment(&environment).unwrap();
+    let mut backend = NativeEnvironment::new().unwrap();
+    backend
+        .remove_project(&store, "agent:alice-client:external", Some("rev-1"))
+        .await
+        .unwrap();
+    server.join().unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests[1].body["params"]["expected_revision"], "rev-1");
+    assert!(!store.root().join("remove-project.json").exists());
+    assert!(!store.root().join("removed-projects.json").exists());
+}
+
+#[tokio::test]
 async fn uncertain_project_removal_is_not_dispatched_again() {
     let (url, requests, server) = fixture(5, |request| match request.path.as_str() {
         "/api/tools/call" if request.body["tool"] == "list_projects" => (

@@ -602,6 +602,7 @@ async fn dispatch_inbound(
             }
         }
         RunnerEnvelope::RuntimeMetadata {
+            file_access,
             job_capacity,
             tool_providers,
             mcp_gateway_providers,
@@ -624,15 +625,19 @@ async fn dispatch_inbound(
                     job_capacity,
                 )
                 .await;
-            let _ = registry
-                .update_runtime_metadata_for_connection(
+            if let Err(error) = registry
+                .update_runtime_metadata(
                     client_id,
                     runner_instance_id,
-                    connection_id,
+                    Some(connection_id),
+                    file_access,
                     Some(tool_providers),
                     mcp_gateway_providers,
                 )
-                .await;
+                .await
+            {
+                tracing::warn!(%client_id, %error, "Runner runtime metadata update rejected");
+            }
             let _ = registry
                 .update_computer_session_availability(
                     client_id,

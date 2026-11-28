@@ -267,7 +267,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> Result<String, ToolResult> {
         let resolved = self
-            .resolve_project_input_for_auth(project, auth)
+            .resolve_project_metadata_for_auth(project, auth)
             .await
             .map_err(|error| error.into_tool_result())?;
         let issued_ref = matches!(

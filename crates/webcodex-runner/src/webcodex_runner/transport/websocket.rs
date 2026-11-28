@@ -140,7 +140,7 @@ where
         .map_err(|_| "register ack was not text".to_string())?;
     let ack = RunnerEnvelope::from_slice(ack_text.as_bytes())
         .map_err(|e| format!("register ack is not a valid envelope: {}", e))?;
-    let _inventory_status = registered_ack(ack)?;
+    runtime.set_inventory_contract(&registered_ack(ack)?);
     provider.mark_status_reported(provider_revision);
     eprintln!(
         "{}",

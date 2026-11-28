@@ -33,7 +33,8 @@ use webcodex_core::coding_agent::{
 };
 use webcodex_core::mcp_gateway::validate_providers;
 use webcodex_core::runner_protocol::{
-    RunnerRegisterRequest, RunnerView, RUNNER_JOB_CONCURRENCY_MAX, RUNNER_JOB_CONCURRENCY_MIN,
+    RunnerFileAccessPolicy, RunnerRegisterRequest, RunnerView, RUNNER_JOB_CONCURRENCY_MAX,
+    RUNNER_JOB_CONCURRENCY_MIN,
 };
 
 use webcodex_core::runner_operation::valid_computer_control_epoch;
@@ -745,45 +746,8 @@ impl RunnerRegistry {
         &self,
         client_id: &str,
         runner_instance_id: &str,
-        tool_providers: Option<webcodex_core::runner_protocol::ToolProvidersStatus>,
-        mcp_gateway_providers: Option<Vec<webcodex_core::mcp_gateway::McpGatewayProvider>>,
-    ) -> Result<(), String> {
-        self.update_runtime_metadata_checked(
-            client_id,
-            runner_instance_id,
-            None,
-            tool_providers,
-            mcp_gateway_providers,
-        )
-        .await
-    }
-
-    /// Connection-scoped runtime metadata for long-lived transports. The exact
-    /// connection lease prevents a superseded same-instance stream from
-    /// overwriting current routing authority.
-    pub async fn update_runtime_metadata_for_connection(
-        &self,
-        client_id: &str,
-        runner_instance_id: &str,
-        connection_id: &str,
-        tool_providers: Option<webcodex_core::runner_protocol::ToolProvidersStatus>,
-        mcp_gateway_providers: Option<Vec<webcodex_core::mcp_gateway::McpGatewayProvider>>,
-    ) -> Result<(), String> {
-        self.update_runtime_metadata_checked(
-            client_id,
-            runner_instance_id,
-            Some(connection_id),
-            tool_providers,
-            mcp_gateway_providers,
-        )
-        .await
-    }
-
-    async fn update_runtime_metadata_checked(
-        &self,
-        client_id: &str,
-        runner_instance_id: &str,
         expected_connection_id: Option<&str>,
+        file_access: Option<RunnerFileAccessPolicy>,
         tool_providers: Option<webcodex_core::runner_protocol::ToolProvidersStatus>,
         mcp_gateway_providers: Option<Vec<webcodex_core::mcp_gateway::McpGatewayProvider>>,
     ) -> Result<(), String> {
@@ -791,6 +755,9 @@ impl RunnerRegistry {
         if let Some(providers) = mcp_gateway_providers.as_ref() {
             validate_providers(providers)
                 .map_err(|error| format!("invalid MCP gateway provider inventory: {error}"))?;
+        }
+        if file_access.is_some() && tool_providers.is_none() {
+            return Err("Runner file access update requires a config generation".into());
         }
         if tool_providers.is_none() && mcp_gateway_providers.is_none() {
             return Ok(());
@@ -806,16 +773,31 @@ impl RunnerRegistry {
                 client_id
             ));
         }
-        if let Some(expected) = expected_connection_id {
-            if runner.connection_id.as_deref() != Some(expected) {
-                return Err(format!(
-                    "runner {} transport connection is no longer active",
-                    client_id
-                ));
-            }
+        if runner.disconnected_at.is_some()
+            || runner.connection_id.as_deref() != expected_connection_id
+            || (expected_connection_id.is_none() && runner.transport != RunnerTransport::Polling)
+        {
+            return Err(format!(
+                "runner {} transport connection is no longer active",
+                client_id
+            ));
         }
         if let Some(policy) = runner.policy.as_mut() {
             if let Some(status) = tool_providers {
+                let generation = status.config_reload.generation;
+                if let Some(active) = policy.tool_providers.as_ref() {
+                    if generation < active.config_reload.generation
+                        || (generation == active.config_reload.generation
+                            && file_access
+                                .as_ref()
+                                .is_some_and(|access| access != &policy.file_access))
+                    {
+                        return Err("stale or conflicting Runner policy generation".into());
+                    }
+                }
+                if let Some(access) = file_access {
+                    policy.file_access = access;
+                }
                 policy.tool_providers = Some(status);
             }
             if let Some(providers) = mcp_gateway_providers {
@@ -935,7 +917,7 @@ impl RunnerRegistry {
         runner_instance_id: &str,
         status: Option<webcodex_core::runner_protocol::ToolProvidersStatus>,
     ) -> Result<(), String> {
-        self.update_runtime_metadata(client_id, runner_instance_id, status, None)
+        self.update_runtime_metadata(client_id, runner_instance_id, None, None, status, None)
             .await
     }
 
@@ -950,10 +932,11 @@ impl RunnerRegistry {
         connection_id: &str,
         status: Option<webcodex_core::runner_protocol::ToolProvidersStatus>,
     ) -> Result<(), String> {
-        self.update_runtime_metadata_for_connection(
+        self.update_runtime_metadata(
             client_id,
             runner_instance_id,
-            connection_id,
+            Some(connection_id),
+            None,
             status,
             None,
         )

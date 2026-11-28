@@ -42,6 +42,7 @@ async fn mcp_export_runtime_inner(
         "exporter",
         "inst-export",
         vec![RunnerProjectSummary {
+            deferred_root_path: None,
             registration_incarnation: None,
             id: "demo".to_string(),
             name: Some("demo".to_string()),

@@ -120,8 +120,10 @@ impl AppState {
                     "Choose an existing directory that this account can access.",
                 )
             })?;
-            let canonical_roots =
-                webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective_roots);
+            let canonical_roots = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(
+                &effective_roots,
+                &canonical_project,
+            );
             Ok::<_, DesktopError>(
                 webcodex_runner_config::paths::validate_project_path_policy(
                     &canonical_project,

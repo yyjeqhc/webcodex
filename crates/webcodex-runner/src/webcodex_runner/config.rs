@@ -81,8 +81,10 @@ fn validate_managed_worktree_root_config(policy: &RunnerPolicy) -> Result<(), St
             "policy.managed_worktree_root must not contain redirected path components".to_string(),
         );
     }
-    let roots =
-        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
+    let roots = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(
+        &policy.allowed_roots,
+        &canonical,
+    );
     if !roots
         .iter()
         .any(|root| webcodex_runner_config::paths::path_is_within(&canonical, root))
@@ -615,6 +617,15 @@ impl HotRunnerConfig {
             external_tools: Arc::new(ExternalToolRouter::new(&cfg.tool_providers)),
             reload_status: Mutex::new(status),
         })
+    }
+
+    pub(crate) fn file_access_policy(
+        &self,
+    ) -> webcodex_core::runner_protocol::RunnerFileAccessPolicy {
+        webcodex_core::runner_protocol::RunnerFileAccessPolicy {
+            allow_cwd_anywhere: self.policy.allow_cwd_anywhere,
+            allowed_roots: self.policy.allowed_roots.clone(),
+        }
     }
 
     pub(crate) fn reload_status(&self) -> RunnerConfigReloadStatus {

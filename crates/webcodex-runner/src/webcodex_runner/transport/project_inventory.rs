@@ -53,6 +53,7 @@ pub(super) type ProjectScanReceiver = tokio::sync::watch::Receiver<Option<Projec
 /// Shared across transport sessions so a mutation fences an in-flight scan even
 /// after its original stream disconnects.
 pub(super) struct InitialProjectScanState {
+    pub(super) legacy_root_identity: bool,
     pub(super) receiver: Option<ProjectScanReceiver>,
     pub(super) generation: u64,
     pub(super) changed: tokio::sync::watch::Sender<()>,
@@ -62,6 +63,7 @@ impl Default for InitialProjectScanState {
     fn default() -> Self {
         let (changed, _) = tokio::sync::watch::channel(());
         Self {
+            legacy_root_identity: false,
             receiver: None,
             generation: 0,
             changed,

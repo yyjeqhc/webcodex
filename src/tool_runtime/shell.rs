@@ -1,3 +1,4 @@
+use super::project_resolution::ResolvedProject;
 use serde_json::json;
 use std::time::Duration;
 
@@ -117,8 +118,14 @@ impl ToolRuntime {
         timeout_secs: u64,
         cwd: Option<String>,
     ) -> Result<ProjectCommandOutput, String> {
-        self.run_project_command_capture_impl(project, command, timeout_secs, cwd, false)
-            .await
+        self.run_resolved_project_command_capture(
+            &self.resolve_project(project).await?,
+            command,
+            timeout_secs,
+            cwd,
+            false,
+        )
+        .await
     }
 
     pub(crate) async fn run_project_internal_posix_script_capture(
@@ -128,19 +135,24 @@ impl ToolRuntime {
         timeout_secs: u64,
         cwd: Option<String>,
     ) -> Result<ProjectCommandOutput, String> {
-        self.run_project_command_capture_impl(project, script, timeout_secs, cwd, true)
-            .await
+        self.run_resolved_project_command_capture(
+            &self.resolve_project(project).await?,
+            script,
+            timeout_secs,
+            cwd,
+            true,
+        )
+        .await
     }
 
-    async fn run_project_command_capture_impl(
+    pub(super) async fn run_resolved_project_command_capture(
         &self,
-        project: &str,
+        proj: &crate::projects::ProjectConfig,
         command: String,
         timeout_secs: u64,
         cwd: Option<String>,
         internal_posix_script: bool,
     ) -> Result<ProjectCommandOutput, String> {
-        let proj = self.resolve_project(project).await?;
         // Shared root of the sync agent-wait contract: wait_timeout_secs and
         // command timeout must both stay within 1..=120 before enqueue so
         // Runner HTTP validation never rejects with implementation-detail
@@ -152,7 +164,7 @@ impl ToolRuntime {
         }
         let timeout = timeout_secs;
         let client_id = proj.client_id.clone();
-        let effective_cwd = Some(resolve_runner_cwd(&proj, cwd.as_deref())?);
+        let effective_cwd = Some(resolve_runner_cwd(proj, cwd.as_deref())?);
         let wait_timeout = timeout;
         let (request_id, rx) = if internal_posix_script {
             self.runner_registry
@@ -338,7 +350,7 @@ impl ToolRuntime {
         shell: Option<ExecutionShell>,
     ) -> ToolResult {
         self.run_shell_with_contract_for_resource(
-            project,
+            self.resolve_project_input(&project),
             command,
             timeout_secs,
             sync_wait_secs,
@@ -356,7 +368,8 @@ impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_shell_with_contract_for_resource(
         &self,
-        project: String,
+        target: impl std::future::Future<Output = Result<ResolvedProject, super::ProjectResolverError>>
+            + Send,
         command: String,
         timeout_secs: Option<u64>,
         sync_wait_secs: Option<u64>,
@@ -422,19 +435,13 @@ impl ToolRuntime {
                 ShellCommandExecutionState::NotStarted,
             );
         }
-        let proj = match self.resolve_project(&project).await {
-            Ok(p) => p,
-            Err(e) => {
-                return process_tool_failure_result(
-                    command_rejected_message(
-                        e.to_message(),
-                        "verify the project id with list_projects, then retry with a registered project.",
-                    ),
-                    "agent_offline",
-                    ShellCommandExecutionState::NotStarted,
-                )
-            }
+
+        let target = match target.await {
+            Ok(target) => target,
+            Err(error) => return super::process::execution_project_rejected(error),
         };
+        let project = target.resolved_id;
+        let proj = target.config;
         let declared_purpose = purpose.unwrap_or_default();
         let command_summary = command_preview(&command);
         let client_id = proj.client_id.clone();

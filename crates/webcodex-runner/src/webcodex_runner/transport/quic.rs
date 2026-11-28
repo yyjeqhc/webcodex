@@ -264,7 +264,7 @@ pub(super) async fn quic_session(
     let ack = ack_result
         .map_err(|_| "quic register ack timed out".to_string())?
         .map_err(|e| format!("failed to read quic register ack: {}", e))?;
-    let _inventory_status = registered_ack(ack)?;
+    runtime.set_inventory_contract(&registered_ack(ack)?);
     provider.mark_status_reported(provider_revision);
     eprintln!(
         "{}",

@@ -142,7 +142,7 @@ impl ToolRuntime {
                     );
                     None
                 } else {
-                    match self.resolve_project_input_for_auth(&input, auth).await {
+                    match self.resolve_project_metadata_for_auth(&input, auth).await {
                         Ok(resolved) => Some(resolved.resolved_id),
                         Err(_) => {
                             section_error(

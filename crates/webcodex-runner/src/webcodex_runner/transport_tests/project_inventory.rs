@@ -1,4 +1,41 @@
 #[test]
+fn registration_ack_preserves_released_root_identity_until_server_upgrades() {
+    let root = tempfile::tempdir().unwrap();
+    let cfg = test_runner_config("http://127.0.0.1:1".to_owned());
+    let runtime = test_runtime(&cfg);
+    let status = inventory_status("pending", "", 0, 0);
+    let mut released = serde_json::to_value(&status).unwrap();
+    released
+        .as_object_mut()
+        .unwrap()
+        .remove("supports_deferred_roots");
+    let mut project = synthetic_project_summary(0, None);
+    project.path = root.path().display().to_string();
+    project.deferred_root_path = Some(project.path.clone());
+    let mut missing = synthetic_project_summary(1, None);
+    missing.deferred_root_path = Some(root.path().join("missing").display().to_string());
+    let rows = vec![project, missing];
+    runtime.set_inventory_contract(&serde_json::from_value(released).unwrap());
+    let projected = runtime.inventory_for_server(rows.clone());
+    assert_eq!(projected.len(), 1);
+    let canonical = root.path().canonicalize().unwrap();
+    assert_eq!(projected[0].path, canonical.to_string_lossy());
+    assert_eq!(
+        projected[0].root_fingerprint,
+        Some(crate::webcodex_runner::projects::project_root_fingerprint(
+            &canonical
+        ))
+    );
+    assert!(projected[0].deferred_root_path.is_none());
+    runtime.set_inventory_contract(&status);
+    let current = runtime.inventory_for_server(rows);
+    assert_eq!(current.len(), 2);
+    assert!(current
+        .iter()
+        .all(|row| row.root_fingerprint.is_none() && row.deferred_root_path.is_some()));
+}
+
+#[test]
 fn project_inventory_pager_honors_count_byte_and_ack_boundaries() {
     for count in [64usize, 65, 100, 256, 1024] {
         let projects = (0..count)
@@ -158,6 +195,7 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
             total_synced: 7,
             last_error_code: Some("project_inventory_staging_capacity".to_string()),
             last_sync_at: Some(1),
+            supports_deferred_roots: true,
             max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
             max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
         };
@@ -281,6 +319,7 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
             total_synced: 0,
             last_error_code: Some("project_inventory_page_too_large".to_string()),
             last_sync_at: Some(1),
+            supports_deferred_roots: true,
             max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
             max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
         };
@@ -395,6 +434,7 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
                 total_synced: 1,
                 last_error_code: Some("project_inventory_stale_generation".to_string()),
                 last_sync_at: Some(1),
+                supports_deferred_roots: true,
                 max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
                 max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
             },
@@ -544,6 +584,7 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
                 total_synced: 1,
                 last_error_code: Some("project_inventory_staging_capacity".to_string()),
                 last_sync_at: Some(1),
+                supports_deferred_roots: true,
                 max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
                 max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
             },
@@ -605,6 +646,7 @@ async fn streaming_permanent_inventory_error_does_not_fresh_resnapshot() {
                 total_synced: 0,
                 last_error_code: Some("project_inventory_page_too_large".to_string()),
                 last_sync_at: Some(1),
+                supports_deferred_roots: true,
                 max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
                 max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
             },

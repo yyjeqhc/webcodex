@@ -525,6 +525,9 @@ pub(crate) fn handle_one_poll(
             });
     let computer_session_update = webcodex_runner::computer_session::changed_availability();
     let poll = RunnerPollPayload {
+        file_access: provider_update
+            .as_ref()
+            .map(|_| metadata_config.file_access_policy()),
         job_capacity: Some(webcodex_core::runner_protocol::RunnerJobCapacity {
             generation: metadata_config.generation,
             limit: metadata_config.max_concurrent_jobs,

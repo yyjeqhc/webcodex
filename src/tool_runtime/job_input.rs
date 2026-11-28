@@ -1,4 +1,5 @@
 //! Explicit pipe interaction on the existing public Job and authorization path.
+use super::project_resolution::ResolvedProject;
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use serde_json::json;
@@ -38,7 +39,7 @@ impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_interactive_process(
         &self,
-        project: String,
+        target: ResolvedProject,
         executable: String,
         args: Vec<String>,
         stdin: Option<String>,
@@ -59,14 +60,8 @@ impl ToolRuntime {
         if super::process::validate_process_input(&process, None, cwd.as_deref()).is_err() {
             return rejected("interactive_process_arguments_invalid");
         }
-        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
-            Ok(v) => v,
-            Err(error) => return error.into_tool_result(),
-        };
-        let target = match self.resolve_project(&resolved.resolved_id).await {
-            Ok(v) => v,
-            Err(_) => return rejected("interactive_process_project_unavailable"),
-        };
+        let project = target.resolved_id;
+        let target = target.config;
         let effective_cwd = match super::helpers::resolve_runner_cwd(&target, cwd.as_deref()) {
             Ok(v) => v,
             Err(_) => return rejected("interactive_process_cwd_invalid"),
@@ -86,7 +81,7 @@ impl ToolRuntime {
                     timeout_secs: budget.effective_timeout_secs,
                     execution: JobStartExecution::InteractiveProcess(process),
                     context: JobStartContext {
-                        project_id: Some(resolved.resolved_id),
+                        project_id: Some(project),
                         session_id: session_id,
                         project_cwd: cwd,
                         purpose: purpose.map(|p| p.as_str().into()),

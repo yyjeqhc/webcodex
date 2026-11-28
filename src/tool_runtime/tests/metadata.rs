@@ -1472,8 +1472,10 @@ async fn list_projects_shows_shell_profile_resolution() {
     };
     let policy = RunnerPolicySummary {
         allow_raw_shell: true,
-        allow_cwd_anywhere: true,
-        allowed_roots: Vec::new(),
+        file_access: crate::runner_protocol::RunnerFileAccessPolicy {
+            allow_cwd_anywhere: true,
+            allowed_roots: Vec::new(),
+        },
         max_timeout_secs: 3600,
         max_output_bytes: 262144,
         shell_profiles: Some(summary),
@@ -1606,8 +1608,10 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
             owner: Some("alice".to_string()),
             policy: Some(RunnerPolicySummary {
                 allow_raw_shell: true,
-                allow_cwd_anywhere: false,
-                allowed_roots: Vec::new(),
+                file_access: crate::runner_protocol::RunnerFileAccessPolicy {
+                    allow_cwd_anywhere: false,
+                    allowed_roots: Vec::new(),
+                },
                 max_timeout_secs: 3600,
                 max_output_bytes: 262144,
                 shell_profiles: Some(summary),
@@ -2562,9 +2566,12 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
     let _env = crate::test_support::TestEnvGuard::new();
     let runtime = test_runtime();
     let policy = RunnerPolicySummary {
-        allowed_roots: vec![PathBuf::from(
-            "/tmp/runtime-compact-allowed-root-never-emit",
-        )],
+        file_access: crate::runner_protocol::RunnerFileAccessPolicy {
+            allow_cwd_anywhere: false,
+            allowed_roots: vec![PathBuf::from(
+                "/tmp/runtime-compact-allowed-root-never-emit",
+            )],
+        },
         shell_profiles: Some(ShellProfilesSummary {
             default_dialect: None,
             available_dialects: None,
@@ -2925,8 +2932,10 @@ async fn runtime_status_includes_sanitized_policy_summary() {
     registration.owner = Some("alice".to_string());
     registration.policy = Some(RunnerPolicySummary {
         allow_raw_shell: true,
-        allow_cwd_anywhere: false,
-        allowed_roots: vec![std::path::PathBuf::from("/root")],
+        file_access: crate::runner_protocol::RunnerFileAccessPolicy {
+            allow_cwd_anywhere: false,
+            allowed_roots: vec![std::path::PathBuf::from("/root")],
+        },
         max_timeout_secs: 3600,
         max_output_bytes: 262144,
         shell_profiles: None,
@@ -3370,8 +3379,10 @@ async fn list_runners_includes_sanitized_policy_summary() {
     registration.owner = Some("alice".to_string());
     registration.policy = Some(RunnerPolicySummary {
         allow_raw_shell: false,
-        allow_cwd_anywhere: true,
-        allowed_roots: vec![],
+        file_access: crate::runner_protocol::RunnerFileAccessPolicy {
+            allow_cwd_anywhere: true,
+            allowed_roots: vec![],
+        },
         max_timeout_secs: 120,
         max_output_bytes: 4096,
         shell_profiles: None,

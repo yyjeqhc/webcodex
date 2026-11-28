@@ -813,6 +813,10 @@ mod tests {
 
         ws.send(TungsteniteMessage::Text(
             RunnerEnvelope::RuntimeMetadata {
+                file_access: Some(crate::runner_protocol::RunnerFileAccessPolicy {
+                    allowed_roots: vec!["/new".into()],
+                    allow_cwd_anywhere: false,
+                }),
                 job_capacity: Some(crate::runner_protocol::RunnerJobCapacity {
                     generation: 2,
                     limit: 6,
@@ -852,6 +856,10 @@ mod tests {
         }
         let view = registry.get_runner_view("ws-roundtrip").await.unwrap();
         assert_eq!(view.job_concurrency_limit, Some(6));
+        assert_eq!(
+            view.policy.as_ref().unwrap().file_access.allowed_roots,
+            vec![std::path::PathBuf::from("/new")]
+        );
         let call = view
             .policy
             .unwrap()

@@ -59,8 +59,10 @@ pub(super) fn validate_model_network_project_ingress_authority(
         // A configured mapped drive may canonicalize to the same UNC share. It is
         // safe to resolve configured roots here because those roots are already
         // user-authorized; never canonicalize the untrusted target before this gate.
-        let canonical_roots =
-            webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
+        let canonical_roots = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(
+            &policy.allowed_roots,
+            path,
+        );
         if canonical_roots
             .iter()
             .any(|root| webcodex_runner_config::paths::path_is_within(path, root))
@@ -189,8 +191,10 @@ pub(crate) fn validate_project_path_policy(
     policy: &RunnerPolicy,
     canonical_path: &Path,
 ) -> Result<(), String> {
-    let canonical_roots =
-        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
+    let canonical_roots = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(
+        &policy.allowed_roots,
+        canonical_path,
+    );
     webcodex_runner_config::paths::validate_project_path_policy(
         canonical_path,
         &canonical_roots,
@@ -364,7 +368,10 @@ pub(super) fn projects_matching_canonical_path(
     projects
         .iter()
         .filter_map(|project| {
-            let registered_path = canonicalize_existing(Path::new(&project.path)).ok()?;
+            let registered_path = webcodex_runner_config::paths::canonicalize_project_candidate(
+                Path::new(&project.path),
+                canonical_path,
+            )?;
             (registered_path.is_dir() && paths_equal(&registered_path, canonical_path))
                 .then(|| project.clone())
         })
@@ -572,8 +579,69 @@ fn existing_path_resolution_result(
     ))
 }
 
+/// An explicit, read-only observation of one exact registration. This must
+/// never fall back to registration or create a directory.
+pub(crate) fn handle_probe_project_identity(
+    policy: &RunnerPolicy,
+    project_registry_dir: &Path,
+    client_id: &str,
+    operation: &RunnerProjectOperation,
+) -> CommandResult {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Request {
+        project_id: String,
+        path: String,
+        revision: String,
+        incarnation: String,
+    }
+    let start = Instant::now();
+    let fail = |code| structured_project_error_cmd(start, code, false, serde_json::json!({}));
+    let Ok(request) = serde_json::from_str::<Request>(&operation.payload) else {
+        return fail("invalid_request");
+    };
+    let Ok(_guard) = project_registry_write_lock().lock() else {
+        return fail("operation_failed");
+    };
+    let projects = match load_project_files_for_path_resolution(project_registry_dir) {
+        Ok(projects) => projects,
+        Err(code) => return fail(code),
+    };
+    let mut matches = projects.iter().filter(|p| p.id == request.project_id);
+    let Some(project) = matches.next() else {
+        return fail("project_not_found");
+    };
+    if matches.next().is_some()
+        || project.path != request.path
+        || project_revision(project) != request.revision
+        || project.registration_incarnation.as_deref() != Some(request.incarnation.as_str())
+    {
+        return fail("revision_conflict");
+    }
+    let path = Path::new(&project.path);
+    if let Err(code) = validate_windows_project_root(path) {
+        return fail(code);
+    }
+    if let Err(code) = validate_model_network_project_ingress_authority(policy, path) {
+        return fail(code);
+    }
+    let Ok(canonical) = canonicalize_existing(path) else {
+        return fail("project_path_unavailable");
+    };
+    if let Err(code) = validate_windows_project_root(&canonical) {
+        return fail(code);
+    }
+    if !canonical.is_dir() || validate_project_path_policy(policy, &canonical).is_err() {
+        return fail("path_outside_allowed_roots");
+    }
+    ok_cmd(
+        start,
+        path_resolution_success(client_id, project, &canonical, "observed", false, None),
+    )
+}
+
 /// Resolve an existing Runner registration by canonical path or atomically
-/// persist a new one. This is an internal Server↔Runner operation, not a
+/// persist a new one. This is an internal Server-Runner operation, not a
 /// model-visible runtime tool.
 pub(crate) fn handle_resolve_or_register_project_operation(
     policy: &RunnerPolicy,
@@ -759,9 +827,10 @@ pub(crate) fn handle_resolve_or_register_project_operation(
         // the grant, and the Runner filesystem allowed_roots above is a coarser
         // boundary that never substitutes for it.
         let admitted = granted_roots.iter().any(|root| {
-            canonicalize_existing(root).is_ok_and(|root| {
-                webcodex_runner_config::paths::path_is_within(&canonical_path, &root)
-            })
+            webcodex_runner_config::paths::canonicalize_project_candidate(root, &canonical_path)
+                .is_some_and(|root| {
+                    webcodex_runner_config::paths::path_is_within(&canonical_path, &root)
+                })
         });
         if !admitted {
             return structured_project_error_cmd(

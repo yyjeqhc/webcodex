@@ -1882,6 +1882,7 @@ mod tests {
             SessionGuards::default(),
         );
         let resolved = ResolvedProject {
+            root_probe_deferred: false,
             input: "agent:size:demo".to_string(),
             resolved_id: "agent:size:demo".to_string(),
             config: ProjectConfig {

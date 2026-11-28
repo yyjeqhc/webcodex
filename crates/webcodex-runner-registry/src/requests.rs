@@ -2507,6 +2507,63 @@ impl RunnerRegistry {
         Ok((request_id, rx))
     }
 
+    /// Observe a deferred root on the exact Runner and registration selected by the caller.
+    pub async fn enqueue_project_identity_probe(
+        &self,
+        client_id: &str,
+        instance: &str,
+        project: &webcodex_core::runner_protocol::RunnerProjectSummary,
+        access: Option<&crate::RunnerAccess>,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        let revision = project.revision.clone().ok_or("missing Project revision")?;
+        let incarnation = project
+            .registration_incarnation
+            .clone()
+            .ok_or("missing Project incarnation")?;
+        let path = project
+            .deferred_root_path
+            .clone()
+            .ok_or("Project root is not deferred")?;
+        let operation = RunnerOperation::Project(RunnerProjectOperation {
+            kind: RunnerProjectOperationKind::ProbeIdentity,
+            payload: serde_json::json!({"project_id":project.id,"path":path,
+                "revision":revision,"incarnation":incarnation})
+            .to_string(),
+        });
+        let fence = PendingDispatchFence::ProjectIdentity {
+            runner_instance_id: instance.to_owned(),
+            project_id: project.id.clone(),
+            path,
+            revision,
+            incarnation,
+            access: access.cloned(),
+        };
+        let mut inner = self.inner.lock().await;
+        if let Some(error) = fence.synchronous_rejection(&operation, inner.runners.get(client_id)) {
+            return Err(error);
+        }
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = encode_runner_operation(
+            &request_id,
+            client_id,
+            "project_identity_observation".to_owned(),
+            operation,
+        )?;
+        enqueue_pending_request_with_fence_locked(
+            self.telemetry.as_ref(),
+            &mut inner,
+            client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+            fence,
+        )?;
+        notify_runner_locked(&inner, client_id);
+        Ok((request_id, rx))
+    }
+
     /// Enqueue one typed bounded computer request. The payload is bounded JSON
     /// in stdin and command is always empty. Owner/auth and the exact per-kind
     /// computer capability requirements are rechecked under the registry lock so a

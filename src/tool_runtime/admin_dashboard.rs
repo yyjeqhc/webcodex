@@ -273,6 +273,7 @@ mod tests {
 
     fn project(id: &str, disabled: bool) -> RunnerProjectSummary {
         RunnerProjectSummary {
+            deferred_root_path: None,
             registration_incarnation: None,
             id: id.to_string(),
             name: Some(id.to_string()),

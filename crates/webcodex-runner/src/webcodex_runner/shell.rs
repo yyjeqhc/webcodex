@@ -101,8 +101,19 @@ pub(crate) struct PreparedDetachedProcessLaunch {
 mod desktop_mcp_env_tests;
 
 pub(crate) fn canonicalize_existing(path: &Path) -> Result<PathBuf, String> {
-    path.canonicalize()
-        .map_err(|e| format!("failed to access {}: {}", path.display(), e))
+    let result = path.canonicalize();
+    #[cfg(windows)]
+    let result = result.or_else(|error| {
+        // The first UNC open can start a stopped WSL2 distribution and still
+        // return ERROR_BAD_NET_NAME. Reopen only that share, before any effect.
+        if error.raw_os_error() == Some(windows_sys::Win32::Foundation::ERROR_BAD_NET_NAME as i32)
+            && webcodex_runner_config::paths::wsl_distribution(path).is_some()
+        {
+            return path.canonicalize();
+        }
+        Err(error)
+    });
+    result.map_err(|e| format!("failed to access {}: {}", path.display(), e))
 }
 
 pub(crate) fn cwd_allowed(policy: &RunnerPolicy, cwd: &Path) -> Result<(), String> {
@@ -111,7 +122,9 @@ pub(crate) fn cwd_allowed(policy: &RunnerPolicy, cwd: &Path) -> Result<(), Strin
     }
     let cwd = canonicalize_existing(cwd)?;
     for root in &policy.allowed_roots {
-        if let Ok(root) = canonicalize_existing(root) {
+        if let Some(root) =
+            webcodex_runner_config::paths::canonicalize_project_candidate(root, &cwd)
+        {
             // Case-insensitive component-wise containment on Windows.
             if webcodex_runner_config::paths::path_is_within(&cwd, &root) {
                 return Ok(());

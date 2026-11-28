@@ -454,7 +454,10 @@ impl PluginManager {
             let Some(configured_cwd) = provider.config.cwd.as_deref() else {
                 continue;
             };
-            let Ok(provider_root) = Path::new(configured_cwd).canonicalize() else {
+            let Some(provider_root) = webcodex_runner_config::paths::canonicalize_project_candidate(
+                Path::new(configured_cwd),
+                project_root,
+            ) else {
                 continue;
             };
             if !webcodex_runner_config::paths::paths_equal(&provider_root, project_root) {

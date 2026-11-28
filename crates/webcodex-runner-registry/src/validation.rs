@@ -680,6 +680,13 @@ pub(super) fn validate_project_summary(project: &RunnerProjectSummary) -> Result
         return Err("project_summary_invalid_path");
     }
     if project
+        .deferred_root_path
+        .as_deref()
+        .is_some_and(|path| path.is_empty() || path.len() > 4096 || path.contains('\0'))
+    {
+        return Err("project_summary_invalid_deferred_root_path");
+    }
+    if project
         .name
         .as_deref()
         .is_some_and(|value| value.is_empty() || value.len() > 120 || value.contains('\0'))

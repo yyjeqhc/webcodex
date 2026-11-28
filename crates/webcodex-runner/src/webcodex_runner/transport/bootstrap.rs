@@ -36,6 +36,7 @@ pub(super) fn send_provider_metadata(
                 transport,
                 tx,
                 RunnerEnvelope::RuntimeMetadata {
+                    file_access: Some(config.file_access_policy()),
                     job_capacity: Some(webcodex_core::runner_protocol::RunnerJobCapacity {
                         generation: config.generation,
                         limit: config.max_concurrent_jobs,

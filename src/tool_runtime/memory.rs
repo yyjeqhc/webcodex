@@ -763,6 +763,7 @@ mod tests {
     fn scope_identity_changes_with_runner_or_registered_root_without_exposure() {
         fn resolved(client: &str, path: &str) -> ResolvedProject {
             ResolvedProject {
+                root_probe_deferred: false,
                 input: "demo".to_string(),
                 resolved_id: format!("agent:{client}:demo"),
                 config: crate::projects::ProjectConfig {

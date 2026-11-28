@@ -1095,7 +1095,7 @@ impl ToolRuntime {
         };
         let mut result = self
             .run_skill_resource_with_contract(
-                project.resolved_id.clone(),
+                project.clone(),
                 execution_request,
                 timeout_secs,
                 sync_wait_secs,

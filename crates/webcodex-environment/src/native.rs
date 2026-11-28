@@ -64,7 +64,8 @@ fn project_requires_authority(config: &toml::Value, path: &Path) -> SetupResultV
         .unwrap_or(false);
     let effective = webcodex_runner_config::effective_allowed_roots(&roots, allow_cwd_anywhere)
         .map_err(|_| diagnostic("runner_policy", "Runner allowed roots are invalid"))?;
-    let canonical = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective);
+    let canonical =
+        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective, path);
     Ok(webcodex_runner_config::paths::validate_project_path_policy(
         path,
         &canonical,
@@ -404,29 +405,11 @@ impl NativeEnvironment {
         })?;
         let prefix = format!("agent:{client_id}:");
         let id = project_id.strip_prefix(&prefix).unwrap_or(project_id);
-        let mut pending: ProjectRemoval =
-            if let Some(pending) = store.read_json("remove-project.json")? {
-                pending
-            } else {
-                let project = record
-                    .projects
-                    .iter()
-                    .find(|project| project.id == id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        diagnostic(
-                            "local_project_required",
-                            "Only a registered project of this local Runner can be removed",
-                        )
-                    })?;
-                ProjectRemoval {
-                    project,
-                    revision: None,
-                    dispatched: false,
-                    confirmed: false,
-                }
-            };
-        if pending.project.id != id {
+        let saved: Option<ProjectRemoval> = store.read_json("remove-project.json")?;
+        if saved
+            .as_ref()
+            .is_some_and(|pending| pending.project.id != id)
+        {
             return Err(diagnostic(
                 "project_operation_conflict",
                 "Another project removal is unfinished",
@@ -438,7 +421,6 @@ impl NativeEnvironment {
                 "The saved project identity is invalid",
             ));
         }
-        store.write_json("remove-project.json", &pending)?;
         let token = read_secret(&store.root().join("webcodex-user-token"))?;
         let selector = format!("{prefix}{id}");
         let inventory = self
@@ -461,6 +443,41 @@ impl NativeEnvironment {
         let visible = projects
             .iter()
             .find(|project| project.get("id").and_then(Value::as_str) == Some(selector.as_str()));
+        let mut pending = match saved {
+            Some(pending) => pending,
+            None => {
+                // Desktop can select an exact live registration created outside
+                // Environment setup. Require its observed revision before dispatch.
+                let project = record
+                    .projects
+                    .iter()
+                    .find(|p| p.id == id)
+                    .cloned()
+                    .or_else(|| {
+                        let row = visible?;
+                        if project_id != selector || expected_revision.is_none() {
+                            return None;
+                        }
+                        let path = PathBuf::from(row.get("path")?.as_str()?);
+                        path.is_absolute().then(|| ProjectRecord {
+                            id: id.to_owned(),
+                            path,
+                        })
+                    })
+                    .ok_or_else(|| {
+                        diagnostic(
+                            "local_project_required",
+                            "Only a registered project of this local Runner can be removed",
+                        )
+                    })?;
+                ProjectRemoval {
+                    project,
+                    revision: None,
+                    dispatched: false,
+                    confirmed: false,
+                }
+            }
+        };
         if !pending.confirmed && pending.dispatched {
             let observation = self.observe(store, &record).await?;
             if visible.is_none()
@@ -503,21 +520,43 @@ impl NativeEnvironment {
                     .or_else(|| response.pointer("/output/error_code"))
                     .or_else(|| response.pointer("/output/error_kind"))
                     .and_then(Value::as_str);
-                if matches!(
-                    code,
-                    Some(
-                        "active_jobs_conflict"
-                            | "agent_unavailable"
-                            | "unsupported_runner_version"
-                            | "revision_conflict"
-                            | "project_not_found"
-                            | "invalid_request"
+                if code == Some("project_projection_reconcile_required")
+                    && response.pointer("/output/project").and_then(Value::as_str)
+                        == Some(selector.as_str())
+                    && matches!(
+                        response
+                            .pointer("/output/authoritative_outcome")
+                            .and_then(Value::as_str),
+                        Some("unregistered" | "already_unregistered")
                     )
-                ) {
-                    pending.dispatched = false;
-                    store.write_json("remove-project.json", &pending)?;
+                {
+                    return Err(diagnostic(
+                        "project_projection_reconcile_required",
+                        "Runner confirmed removal but Server inventory is pending",
+                    ));
                 }
-                return Err(diagnostic("project_remove_rejected", "Server did not confirm removal; inspect active tasks and the project revision before retrying"));
+                if let Some(
+                    code @ ("active_jobs_conflict"
+                    | "agent_unavailable"
+                    | "unsupported_runner_version"
+                    | "revision_conflict"
+                    | "project_not_found"
+                    | "invalid_request"),
+                ) = code
+                {
+                    // The authoritative gate rejected this operation before any effect.
+                    std::fs::remove_file(store.root().join("remove-project.json"))
+                        .map_err(|_| SetupDiagnostic::io())?;
+                    return Err(SetupDiagnostic::new(
+                        code,
+                        "Server rejected project removal",
+                        "Refresh the project revision and inspect active jobs before trying again",
+                    ));
+                }
+                return Err(diagnostic(
+                    "project_reconcile_required",
+                    "Server did not confirm removal; reconcile this exact project before retrying",
+                ));
             }
             let output = tool_output(&response)?;
             if output.get("project").and_then(Value::as_str) != Some(selector.as_str())
@@ -537,10 +576,10 @@ impl NativeEnvironment {
         let mut removed: Vec<ProjectRecord> = store
             .read_json("removed-projects.json")?
             .unwrap_or_default();
-        if !removed.contains(&pending.project) {
+        if record.projects.contains(&pending.project) && !removed.contains(&pending.project) {
             removed.push(pending.project.clone());
+            store.write_json("removed-projects.json", &removed)?;
         }
-        store.write_json("removed-projects.json", &removed)?;
         record.projects.retain(|project| project.id != id);
         if let Some(mut journal) = store.load_journal()? {
             journal.environment = record.clone();

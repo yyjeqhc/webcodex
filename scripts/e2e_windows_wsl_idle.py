@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -35,7 +36,10 @@ def stop_distribution(distro):
         time.sleep(0.2)
 
 
-def run(smoke, distro):
+def run(smoke, distro, released):
+    candidate = smoke.bin_dir
+    if released:
+        smoke.bin_dir = released
     name = distro.casefold()
     remote = rf"\\wsl.localhost\{distro}\tmp"
     local = smoke.root / "local"
@@ -63,8 +67,10 @@ def run(smoke, distro):
             'allow_cwd_anywhere = false', f'allowed_roots = {json.dumps(roots)}']), encoding="utf-8")
 
     def call(tool, **params):
-        response = smoke.post("/api/tools/call", {"tool": tool, "params": params}, owner)
-        check(response.get("success") is True, f"{tool} did not succeed")
+        response = smoke.post("/api/tools/call", {"tool": tool, "params": params}, owner, timeout=90)
+        output = response.get("output", {})
+        check(response.get("success") is True, f"{tool} failed: {response.get('error')} "
+              f"({output.get('error_kind') or output.get('error_code')})")
         return response["output"]
 
     def stopped():
@@ -77,29 +83,76 @@ def run(smoke, distro):
     local_id, remote_id = [f"agent:{client}:{p}" for p in ("local", "wsl")]
     smoke.wait_ready(local_id, owner)
     stopped()
+    if released:
+        # Set up the released baseline on an already reachable share.
+        wsl("--distribution", distro, "--exec", "/bin/true")
     call("register_project", client_id=client, id="wsl", name="WSL", path=remote)
     check(name in names("--running"), "explicit WSL registration did not start the test distribution")
+
+    def project_ref():
+        rows = call("list_projects", project=remote_id, limit=1)["projects"]
+        return rows[0]["project_ref"]
+
+    call("start_session", project=remote_id)
+    original, = call("list_sessions", project=remote_id)["sessions"]
+    session_id, session_ref = original["session_id"], original["session_ref"]
+    ref = project_ref()
+
+    def resume(selector):
+        result = call("work_on_project", project=ref, session_id=selector,
+                      instruction="Resume the exact WSL task")
+        check(result["session_id"] == session_id, "existing selector resolved to a different Session")
+
+    def restart_runner(restart_server=False):
+        previous = call("list_runners", client_id=client, summary_only=False)["runners"][0]["runner_instance_id"]
+        smoke.runner.terminate()
+        smoke.runner.wait(timeout=20)
+        smoke.runner = None
+        smoke.bin_dir = candidate
+        if restart_server:
+            smoke.server.terminate()
+            smoke.server.wait(timeout=20)
+            smoke.start_server()
+        smoke.runner = smoke.launch("webcodex-runner", ["--config", str(config)], smoke.env)
+        deadline = time.monotonic() + 45
+        while True:
+            rows = call("list_runners", client_id=client, summary_only=False, include_projects=True)["runners"]
+            if any(row["connected"] and row["runner_instance_id"] != previous
+                   and row["project_inventory"]["sync_state"] == "complete"
+                   and any(p["id"] == "wsl" for p in row["projects"]) for row in rows):
+                return
+            check(time.monotonic() < deadline, "fresh Runner inventory did not arrive")
+            time.sleep(0.2)
+
+    if released:
+        stop_distribution(distro)
+        restart_runner()
+        resume(session_id)
+        resume(session_ref)
+        print("PASS: released Server resumed original Project and Session refs with the new Runner", flush=True)
+
+    # Clear the Server's in-memory observation. Only durable refs and Session
+    # bindings survive, and the new catalog must leave the distribution asleep.
     stop_distribution(distro)
+    restart_runner(restart_server=True)
+    sessions = call("list_sessions", project=ref)["sessions"]
+    check(any(s["session_id"] == session_id and s["session_ref"] == session_ref for s in sessions),
+          "original Project Ref lost authorized history after restart")
+    stopped()
+
+    def task(project, directory):
+        program = ("from pathlib import Path\nimport sys\n"
+                   "if Path.cwd().name != sys.argv[1]: sys.exit(1)\n"
+                   "print('verified-cwd=' + sys.argv[1])")
+        result = call("run_process", project=project, executable=sys.executable,
+                      args=["-c", program, directory], timeout_secs=20, sync_wait_secs=20)
+        # Successful compact results carry stdout and omit the zero exit code.
+        check(result.get("exit_code", 0) == 0 and f"verified-cwd={directory}" in result.get("stdout_tail", ""),
+              f"Task did not confirm its working directory: {directory}")
 
     def local_task():
-        call("run_shell", project=local_id, command="if ((Get-Item -LiteralPath .).Name -ne 'local') { exit 1 }")
+        task(local_id, "local")
         stopped()
-
-    # Force fresh inventory from persisted registrations with the distro stopped.
-    previous = call("list_runners", client_id=client, summary_only=False)["runners"][0]["runner_instance_id"]
-    smoke.runner.terminate()
-    smoke.runner.wait(timeout=20)
-    smoke.runner = smoke.launch("webcodex-runner", ["--config", str(config)], smoke.env)
-    deadline = time.monotonic() + 45
-    while True:
-        stopped()
-        rows = call("list_runners", client_id=client, summary_only=False, include_projects=True)["runners"]
-        if any(row["connected"] and row["runner_instance_id"] != previous
-               and row["project_inventory"]["sync_state"] == "complete"
-               and any(p["id"] == "wsl" for p in row["projects"]) for row in rows):
-            break
-        check(time.monotonic() < deadline, "fresh Runner inventory did not arrive")
-        time.sleep(0.2)
 
     def idle_window():
         for _ in range(12):
@@ -108,20 +161,11 @@ def run(smoke, distro):
 
     idle_window()
     local_task()
-    call("run_shell", project=remote_id, command="if ((Get-Item -LiteralPath .).Name -ne 'tmp') { exit 1 }")
+    print("PASS: cold Project Ref history, idle inventory and native Windows task", flush=True)
+    task(remote_id, "tmp")
     check(name in names("--running"), "explicit WSL task did not start its distribution")
-    started = call("work_on_project", project=remote_id, instruction="WSL identity regression")
-    session_id = started["session_id"]
-    stop_distribution(distro)
-    idle_window()
-    local_task()
-    sessions = call("list_sessions", project=remote_id)
-    check(any(s["session_id"] == session_id for s in sessions["sessions"]), "passive Session discovery lost the task")
-    stopped()
-    resumed = call("work_on_project", project=remote_id, session_id=session_id,
-                   instruction="Resume the exact WSL task")
-    check(resumed["session_id"] == session_id, "WSL root deferral changed Session identity")
-    check(name in names("--running"), "explicit Session resume did not observe its WSL root")
+    resume(session_ref)
+    resume(session_id)
     stop_distribution(distro)
     listed = call("list_projects", project=remote_id, limit=1, summary_only=False)
     removed = call("unregister_project", project=remote_id, expected_revision=listed["projects"][0]["revision"])
@@ -146,6 +190,7 @@ def run(smoke, distro):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--distro", required=True)
+    parser.add_argument("--released-bin-dir", type=Path, help="Exercise an in-place upgrade from a released Server and Runner")
     parser.add_argument("--bin-dir", type=Path, default=ROOT / "target/dogfood")
     args = parser.parse_args()
     check(os.name == "nt", "This smoke requires a native Windows host with WSL2")
@@ -156,7 +201,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="webcodex-wsl-smoke-") as root:
         smoke = Smoke(args.bin_dir.resolve(), Path(root))
         try:
-            run(smoke, args.distro)
+            run(smoke, args.distro, args.released_bin_dir.resolve() if args.released_bin_dir else None)
         finally:
             for process in [smoke.runner, smoke.server]:
                 if process and process.poll() is None:

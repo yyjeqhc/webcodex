@@ -64,10 +64,10 @@ pub(crate) struct ResolvedProject {
     pub(crate) input: String,
     pub(crate) resolved_id: String,
     pub(crate) config: ProjectConfig,
+    pub(crate) root_probe_deferred: bool,
     /// Root identity from the same Runner project-inventory snapshot that
     /// produced this resolution. It is descriptive only and never authorizes
     /// access by itself.
-    pub(crate) root_probe_deferred: bool,
     pub(crate) root_fingerprint: Option<String>,
     pub(crate) registration_incarnation: Option<String>,
     pub(crate) runner_instance_id: String,
@@ -78,6 +78,19 @@ pub(crate) struct ResolvedProject {
 }
 
 impl ResolvedProject {
+    // Only a stored Session binding may be compared with this historical pin.
+    // Execution and first binding require a fingerprint supplied by the Runner.
+    pub(super) fn deferred_history_identity(&self, pin: Option<&str>) -> Option<String> {
+        if self.root_fingerprint.is_some() {
+            return None;
+        }
+        webcodex_core::runner_protocol::workflow_project_identity(
+            Some(pin?),
+            &self.config.path,
+            self.registration_incarnation.as_deref(),
+        )
+    }
+
     pub(crate) fn workflow_project_identity(&self) -> Option<String> {
         if self.root_probe_deferred && self.root_fingerprint.is_none() {
             return None;
@@ -493,7 +506,13 @@ impl ToolRuntime {
             name: project.name.clone(),
             path: project.path.clone(),
             allow_patch: project.allow_patch,
-            root_probe_deferred: project.deferred_root_path.is_some(),
+            // A known redirect can change without editing its registration TOML.
+            root_probe_deferred: project.deferred_root_path.as_ref().is_some_and(|raw| {
+                let verbatim_unc = project.path.strip_prefix(r"\\?\UNC\");
+                let same_root = raw == &project.path
+                    || verbatim_unc.is_some_and(|tail| raw.strip_prefix(r"\\") == Some(tail));
+                project.root_fingerprint.is_none() || !same_root
+            }),
             root_fingerprint: project.root_fingerprint.clone(),
             // Keep the registration identity from the last complete inventory
             // across a disconnect. An incomplete inventory proves no binding.
@@ -645,25 +664,8 @@ impl ToolRuntime {
         project: &str,
         auth: Option<&AuthContext>,
     ) -> Result<ResolvedProject, ProjectResolverError> {
-        let reference = project_reference_index(project.trim())
-            .and_then(Result::ok)
-            .and_then(|index| self.lookup_project_reference(index, auth));
-        let mut resolved = match self.resolve_project_metadata_for_auth(project, auth).await {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                let Some(reference) = reference.as_ref() else {
-                    return Err(error);
-                };
-                let candidate = self
-                    .resolve_project_metadata_for_auth(&reference.canonical_project_id, auth)
-                    .await?;
-                if !candidate.root_probe_deferred || !candidate.runner_connected {
-                    return Err(error);
-                }
-                candidate
-            }
-        };
-        if !resolved.root_probe_deferred || !resolved.runner_connected {
+        let (mut resolved, reference_root) = self.select_project_for_auth(project, auth).await?;
+        if !resolved.root_probe_deferred {
             return Ok(resolved);
         }
         let unavailable = || ProjectResolverError {
@@ -671,6 +673,9 @@ impl ToolRuntime {
             project: project.to_owned(),
             candidates: Vec::new(),
         };
+        if !resolved.runner_connected {
+            return Err(unavailable());
+        }
         let access = crate::runner_http::runner_access_from_auth(auth);
         let view = self
             .runner_registry
@@ -699,13 +704,9 @@ impl ToolRuntime {
             .observe_deferred_project_root(&view.client_id, &view.runner_instance_id, row, auth)
             .await
             .map_err(|_| unavailable())?;
-        if reference
-            .as_ref()
-            .is_some_and(|r| r.root_fingerprint != fingerprint)
-        {
+        if reference_root.is_some_and(|root| root != fingerprint) {
             return Err(unavailable());
         }
-        resolved.input = project.to_owned();
         resolved.config.path = path;
         resolved.root_fingerprint = Some(fingerprint);
         Ok(resolved)
@@ -716,6 +717,24 @@ impl ToolRuntime {
         project: &str,
         auth: Option<&AuthContext>,
     ) -> Result<ResolvedProject, ProjectResolverError> {
+        let (resolved, reference_root) = self.select_project_for_auth(project, auth).await?;
+        if reference_root.is_some() && resolved.root_fingerprint.is_none() {
+            return Err(ProjectResolverError {
+                kind: ProjectResolverErrorKind::IdentityUnavailable,
+                project: project.into(),
+                candidates: Vec::new(),
+            });
+        }
+        Ok(resolved)
+    }
+
+    // The optional root belongs to the principal's durable Ref. It is a pin to
+    // compare with live evidence or stored Session history, never live evidence itself.
+    pub(super) async fn select_project_for_auth(
+        &self,
+        project: &str,
+        auth: Option<&AuthContext>,
+    ) -> Result<(ResolvedProject, Option<String>), ProjectResolverError> {
         let raw = project.trim();
         if raw.is_empty() {
             return Err(ProjectResolverError {
@@ -747,10 +766,18 @@ impl ToolRuntime {
             };
             if let Some(candidate) = all_candidates.iter().find(|candidate| {
                 candidate.id == reference.canonical_project_id
-                    && candidate.root_fingerprint.as_deref()
-                        == Some(reference.root_fingerprint.as_str())
+                    && match candidate.root_fingerprint.as_deref() {
+                        Some(root) => root == reference.root_fingerprint,
+                        None => {
+                            candidate.root_probe_deferred
+                                && candidate.registration_incarnation.is_some()
+                        }
+                    }
             }) {
-                return Ok(Self::resolved_from_candidate(project, candidate));
+                return Ok((
+                    Self::resolved_from_candidate(project, candidate),
+                    Some(reference.root_fingerprint),
+                ));
             }
             return Err(ProjectResolverError {
                 kind: ProjectResolverErrorKind::UnknownProject,
@@ -778,7 +805,7 @@ impl ToolRuntime {
                 });
             }
             if let Some(candidate) = all_candidates.iter().find(|candidate| candidate.id == raw) {
-                return Ok(Self::resolved_from_candidate(project, candidate));
+                return Ok((Self::resolved_from_candidate(project, candidate), None));
             }
             let mut same_client: Vec<ProjectResolverCandidate> = all_candidates
                 .iter()
@@ -807,7 +834,7 @@ impl ToolRuntime {
                 match matches.len() {
                     1 => {
                         let candidate = matches.remove(0);
-                        return Ok(Self::resolved_from_candidate(project, &candidate));
+                        return Ok((Self::resolved_from_candidate(project, &candidate), None));
                     }
                     0 => {
                         let mut same_client: Vec<ProjectResolverCandidate> = all_candidates
@@ -842,7 +869,7 @@ impl ToolRuntime {
         match short_id_matches.len() {
             1 => {
                 let candidate = short_id_matches.remove(0);
-                return Ok(Self::resolved_from_candidate(project, &candidate));
+                return Ok((Self::resolved_from_candidate(project, &candidate), None));
             }
             n if n > 1 => {
                 return Err(ProjectResolverError {
@@ -863,7 +890,7 @@ impl ToolRuntime {
         match name_matches.len() {
             1 => {
                 let candidate = name_matches.remove(0);
-                Ok(Self::resolved_from_candidate(project, &candidate))
+                Ok((Self::resolved_from_candidate(project, &candidate), None))
             }
             n if n > 1 => Err(ProjectResolverError {
                 kind: ProjectResolverErrorKind::AmbiguousProject,

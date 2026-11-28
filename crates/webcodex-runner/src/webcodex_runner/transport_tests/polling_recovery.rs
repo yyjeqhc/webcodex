@@ -1161,16 +1161,7 @@ async fn send_registered_ack_only(ws: &mut tokio_tungstenite::WebSocketStream<to
         "pending_requests": 0,
         "projects": [],
         "agent_protocol_generation": RUNNER_PROTOCOL_GENERATION_V2.get(),
-        "project_inventory": {
-            "sync_state": "pending",
-            "generation": null,
-            "total_reported": null,
-            "total_synced": 0,
-            "last_error_code": null,
-            "last_sync_at": null,
-            "max_summaries_per_page": PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
-            "max_serialized_bytes_per_page": PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES
-        }
+        "project_inventory": ShellProjectInventoryStatus::pending(0)
     }))
     .unwrap();
     let ack = RunnerEnvelope::Registered {

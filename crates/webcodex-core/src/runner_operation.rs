@@ -3534,6 +3534,7 @@ mod tests {
             "register_project",
             "create_project",
             "resolve_or_register_project",
+            "project_probe_identity",
             "prepare_managed_worktree",
             "project_lifecycle_enable",
             "project_lifecycle_disable",

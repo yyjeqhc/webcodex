@@ -14,8 +14,42 @@ use sha2::{Digest, Sha256};
 #[derive(Clone, Copy)]
 pub(super) enum SessionAccess<'a> {
     Record,
-    BoundTarget,
-    Live { requested_project: Option<&'a str> },
+    BoundTarget {
+        requested_project: Option<&'a str>,
+    },
+    Live {
+        requested_project: Option<&'a str>,
+        resolved: Option<&'a super::project_resolution::ResolvedProject>,
+    },
+}
+
+pub(super) fn passive_project_read(tool: &str) -> bool {
+    matches!(
+        tool,
+        "list_sessions"
+            | "read_session_handoff"
+            | "get_work_result_state"
+            | "read_work_result_activity_detail"
+            | "list_external_observations"
+            | "read_validation_summary"
+    )
+}
+
+impl<'a> SessionAccess<'a> {
+    pub(super) fn for_business(
+        tool: &str,
+        requested_project: Option<&'a str>,
+        resolved: Option<&'a super::project_resolution::ResolvedProject>,
+    ) -> Self {
+        if passive_project_read(tool) {
+            Self::BoundTarget { requested_project }
+        } else {
+            Self::Live {
+                requested_project,
+                resolved,
+            }
+        }
+    }
 }
 
 impl ToolRuntime {
@@ -220,12 +254,16 @@ impl ToolRuntime {
         limit: Option<usize>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        // Aliases and Project refs retain their ordinary live resolution. An
-        // exact retired Project ID can also select the caller's stored history.
-        let resolution = self.resolve_project_metadata_for_auth(&project, auth).await;
+        // A cold deferred root can still match the original owner's persisted
+        // Session binding. Reading history never promotes that pin to live authority.
+        let resolution = self.select_project_for_auth(&project, auth).await;
+        let history_identity = resolution
+            .as_ref()
+            .ok()
+            .and_then(|(p, pin)| p.deferred_history_identity(pin.as_deref()));
         let project = resolution
             .as_ref()
-            .map_or(project.as_str(), |p| p.resolved_id.as_str());
+            .map_or(project.as_str(), |(p, _)| p.resolved_id.as_str());
         if !self.session_project_history_visible(project, auth).await {
             if let Err(error) = resolution {
                 return error.into_tool_result();
@@ -263,6 +301,7 @@ impl ToolRuntime {
         let page = self.sessions.discover_sessions(
             project,
             &owner,
+            history_identity.as_deref(),
             lifecycle,
             offset,
             limit.unwrap_or(10),
@@ -639,8 +678,15 @@ impl ToolRuntime {
         tool_name: &str,
         auth: Option<&AuthContext>,
     ) -> Result<Option<super::project_resolution::ResolvedProject>, ToolResult> {
-        self.authorize_session_access(session_id, tool_name, auth, SessionAccess::BoundTarget)
-            .await
+        self.authorize_session_access(
+            session_id,
+            tool_name,
+            auth,
+            SessionAccess::BoundTarget {
+                requested_project: None,
+            },
+        )
+        .await
     }
 
     pub(crate) async fn authorize_session_target(
@@ -654,7 +700,7 @@ impl ToolRuntime {
             session_id,
             tool_name,
             auth,
-            SessionAccess::Live { requested_project },
+            SessionAccess::for_business(tool_name, requested_project, None),
         )
         .await
     }
@@ -675,6 +721,9 @@ impl ToolRuntime {
         #[cfg(not(test))]
         let fixture = false;
 
+        let owner_matches = fixture
+            || workflow_session_authority_fingerprint(auth).ok().as_deref() == Some(owner.as_str());
+        let mut history_identity = None;
         let resolved = match (project.as_deref(), access) {
             _ if fixture && auth.is_none() => None,
             (None, _) if !fixture && auth.is_some_and(AuthContext::is_open_anonymous) => {
@@ -687,11 +736,40 @@ impl ToolRuntime {
                 }
                 None
             }
-            (Some(project), SessionAccess::BoundTarget) => Some(
-                self.resolve_project_metadata_for_auth(project, auth)
+            (Some(project), SessionAccess::BoundTarget { requested_project }) => {
+                let selector = requested_project
+                    .filter(|p| !p.trim().is_empty())
+                    .unwrap_or(project);
+                let (target, pin) = self
+                    .select_project_for_auth(selector, auth)
                     .await
-                    .map_err(super::ProjectResolverError::into_tool_result)?,
-            ),
+                    .map_err(super::ProjectResolverError::into_tool_result)?;
+                if target.resolved_id != project {
+                    self.resolve_project_metadata_for_auth(project, auth)
+                        .await
+                        .map_err(super::ProjectResolverError::into_tool_result)?;
+                    if !owner_matches {
+                        return Err(session_authority_denied_result(session_id, tool_name));
+                    }
+                    return Err(session_project_mismatch_result(
+                        session_id,
+                        tool_name,
+                        &SessionProjectMismatch {
+                            session_project: project.into(),
+                            request_project: target.resolved_id,
+                        },
+                    ));
+                }
+                history_identity = target.deferred_history_identity(pin.as_deref());
+                Some(target)
+            }
+            (
+                Some(project),
+                SessionAccess::Live {
+                    resolved: Some(target),
+                    ..
+                },
+            ) if target.resolved_id == project => Some(target.clone()),
             (Some(project), _) => Some(
                 self.resolve_session_project(session_id, tool_name, project, project, auth)
                     .await?,
@@ -699,9 +777,7 @@ impl ToolRuntime {
         };
         // Resolve the stored Project in the caller's partition first. A caller who
         // cannot see it gets the usual unknown_project response for the exact ID.
-        if !fixture
-            && workflow_session_authority_fingerprint(auth).ok().as_deref() != Some(owner.as_str())
-        {
+        if !owner_matches {
             return Err(session_authority_denied_result(session_id, tool_name));
         }
         self.sessions
@@ -712,17 +788,24 @@ impl ToolRuntime {
             return Ok(None);
         };
         if !fixture {
-            let identity = resolved.require_live_workflow_project_identity()?;
+            let identity = match history_identity {
+                Some(identity) if resolved.runner_connected => identity,
+                _ => resolved.require_live_workflow_project_identity()?,
+            };
             match (self.sessions.session_project_identity(session_id), access) {
                 (Some(Some(stored)), _) if stored == identity => {}
-                (Some(None), SessionAccess::Live { requested_project }) => {
+                (
+                    Some(None),
+                    SessionAccess::Live {
+                        requested_project, ..
+                    },
+                ) => {
                     if auth.is_some_and(|a| !a.has_scope(crate::auth::SCOPE_PROJECT_READ)) {
                         return Err(session_authority_denied_result(session_id, tool_name));
                     }
-                    if let Some(input) = requested_project
-                        .map(str::trim)
-                        .filter(|p| !p.is_empty() && *p != resolved.resolved_id)
-                    {
+                    if let Some(input) = requested_project.map(str::trim).filter(|p| {
+                        !p.is_empty() && *p != resolved.resolved_id && *p != resolved.input
+                    }) {
                         self.resolve_session_project(
                             session_id,
                             tool_name,
@@ -742,7 +825,7 @@ impl ToolRuntime {
                     )
                     .await?;
                 }
-                (Some(None), SessionAccess::BoundTarget) => {
+                (Some(None), SessionAccess::BoundTarget { .. }) => {
                     return Err(session_authority_denied_result(session_id, tool_name))
                 }
                 _ => {

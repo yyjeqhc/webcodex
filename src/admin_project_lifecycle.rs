@@ -324,12 +324,9 @@ impl AdminProjectLifecycleService {
             return Err(api_error(409, "unsupported_runner_version"));
         }
         if action == "update_allow_patch" {
-            if let Some(project) = client
-                .view
-                .projects
-                .iter()
-                .find(|p| p.id == project_id && p.deferred_root_path.is_some())
-            {
+            if let Some(project) = client.view.projects.iter().find(|p| {
+                p.id == project_id && p.deferred_root_path.is_some() && p.root_fingerprint.is_none()
+            }) {
                 if project.revision.as_deref() != Some(expected_revision) {
                     return Err(api_error(409, "revision_conflict"));
                 }

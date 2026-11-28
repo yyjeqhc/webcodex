@@ -224,11 +224,9 @@ mod tests {
             purpose: None,
             shell: None,
         };
-        let (shell_project, shell_output) = canonical_execution_project_binding(&mut shell)
-            .expect("legacy shell execution needs canonical binding");
-        assert_eq!(shell_output, CanonicalProjectOutput::Canonical);
-        shell_project.clone_from(&"agent:special:webcodex".to_string());
-        assert_eq!(shell.project(), Some("agent:special:webcodex"));
+        // Shell execution receives the authorized ResolvedProject directly.
+        assert!(canonical_execution_project_binding(&mut shell).is_none());
+        assert_eq!(shell.project(), Some("~p7"));
 
         let mut hygiene = ToolCall::WorkspaceHygieneCheck {
             project: "~p7".to_string(),

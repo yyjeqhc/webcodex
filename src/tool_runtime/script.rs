@@ -1,3 +1,4 @@
+use super::project_resolution::ResolvedProject;
 use serde_json::json;
 
 use super::helpers::{command_rejected_message, project_relative_runner_cwd, resolve_runner_cwd};
@@ -40,7 +41,7 @@ impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_script_with_contract_for_resource(
         &self,
-        project: String,
+        target: ResolvedProject,
         language: ShellScriptLanguage,
         script: String,
         args: Vec<String>,
@@ -54,6 +55,8 @@ impl ToolRuntime {
         validation_assertion_name: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let project = target.resolved_id;
+        let proj = target.config;
         let budget =
             match StructuredExecutionBudget::resolve_script_with_sync_wait(timeout_secs, sync_wait_secs) {
             Ok(budget) => budget,
@@ -112,19 +115,7 @@ impl ToolRuntime {
             }
             identity
         });
-        let proj = match self.resolve_project(&project).await {
-            Ok(project) => project,
-            Err(error) => {
-                return process_tool_failure_result(
-                    command_rejected_message(
-                        error.to_message(),
-                        "verify the project id with list_projects, then retry with a registered project.",
-                    ),
-                    "agent_offline",
-                    ShellCommandExecutionState::NotStarted,
-                )
-            }
-        };
+
         let client_id = proj.client_id.clone();
         let (budget, timeout_notice) = apply_runner_timeout_cap(
             &self.runner_registry,

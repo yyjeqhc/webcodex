@@ -179,29 +179,45 @@ impl ToolRuntime {
             .filter(|n| *n > 0)
             .unwrap_or(DEFAULT_HANDOFF_LIMIT)
             .min(MAX_HANDOFF_LIMIT);
-        let include_workspace = include_workspace.unwrap_or(true);
-        let include_checkpoints = include_checkpoints.unwrap_or(true);
-        #[cfg(not(feature = "workspace-checkpoints"))]
-        let _ = include_checkpoints;
-        let include_validation = include_validation.unwrap_or(true);
-
-        let authorized_target = match self
+        let authorized_target = self
             .authorize_session_target(
                 &session_id,
                 "read_session_handoff",
                 project.as_deref(),
                 auth,
             )
-            .await
-        {
-            Ok(resolved) => resolved,
-            Err(result) => return Err(result),
-        };
+            .await?;
+        // The ledger remains readable with a cold Project Ref. Only an explicit
+        // workspace/checkpoint request may open that root for live evidence.
+        let deferred_target = authorized_target.as_ref().filter(|p| p.root_probe_deferred);
+        let include_workspace = include_workspace.unwrap_or(deferred_target.is_none());
+        let include_checkpoints = include_checkpoints.unwrap_or(deferred_target.is_none());
+        let include_validation = include_validation.unwrap_or(true);
+        if let Some(target) = deferred_target.filter(|_| {
+            include_workspace || (cfg!(feature = "workspace-checkpoints") && include_checkpoints)
+        }) {
+            let observed = self
+                .resolve_project_input_for_auth(&target.input, auth)
+                .await
+                .map_err(super::ProjectResolverError::into_tool_result)?;
+            self.authorize_session_access(
+                &session_id,
+                "read_session_handoff",
+                auth,
+                super::session_tools::SessionAccess::Live {
+                    requested_project: project.as_deref(),
+                    resolved: Some(&observed),
+                },
+            )
+            .await?;
+        }
         let session_project = self
             .sessions
             .session_project(&session_id)
             .expect("authorized Workflow Session must still exist");
-        let requested_project = if let Some(request_project) = project
+        let requested_project = if authorized_target.is_some() {
+            authorized_target
+        } else if let Some(request_project) = project
             .as_deref()
             .map(str::trim)
             .filter(|project| !project.is_empty())
@@ -236,8 +252,6 @@ impl ToolRuntime {
         // already-authorized stored Project instead of treating it as unscoped.
         let project = if let Some(requested) = requested_project {
             Some(requested.resolved_id)
-        } else if let Some(target) = authorized_target {
-            Some(target.resolved_id)
         } else {
             // The Session project was canonicalized and authority-fenced when the
             // Session was created. Concrete workspace/Job reads keep their own
@@ -360,21 +374,12 @@ impl ToolRuntime {
         });
 
         let mut warnings = Vec::new();
-        let jobs_project = match project
+        let jobs_project = project
             .as_deref()
-            .map(str::trim)
-            .filter(|project| !project.is_empty())
-        {
-            Some(project) => self
-                .resolve_project_metadata_for_auth(project, auth)
-                .await
-                .map(|resolved| resolved.resolved_id)
-                .unwrap_or_else(|_| project.to_string()),
-            None => summary.project.clone().unwrap_or_default(),
-        };
-        let jobs_project = (!jobs_project.is_empty()).then_some(jobs_project);
+            .or(summary.project.as_deref())
+            .filter(|p| !p.is_empty());
         let job_snapshot = self
-            .active_jobs_snapshot(jobs_project.as_deref(), Some(&summary.session_id), auth, 10)
+            .active_jobs_snapshot(jobs_project, Some(&summary.session_id), auth, 10)
             .await;
         let jobs = job_snapshot.to_value();
         if let Some(job_warnings) = jobs.get("warnings").and_then(Value::as_array) {

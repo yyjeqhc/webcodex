@@ -76,15 +76,7 @@ impl ToolRuntime {
         let recorder_metadata = &context.recorder;
         let project_resolution = match call.project() {
             Some(project)
-                if matches!(
-                    call.tool_name(),
-                    "list_sessions"
-                        | "read_session_handoff"
-                        | "work_result_state"
-                        | "work_result_activity_detail"
-                        | "list_external_observations"
-                        | "read_validation_summary"
-                ) =>
+                if super::super::session_tools::passive_project_read(call.tool_name()) =>
             {
                 Some(self.resolve_project_metadata_for_auth(project, auth).await)
             }
@@ -136,7 +128,16 @@ impl ToolRuntime {
             // Fence that exact Session before lifecycle/guard inheritance,
             // project mismatch logic, or any ledger mutation.
             if let Err(mut result) = self
-                .authorize_session_target(session_id, call.tool_name(), call.project(), auth)
+                .authorize_session_access(
+                    session_id,
+                    call.tool_name(),
+                    auth,
+                    super::super::session_tools::SessionAccess::for_business(
+                        call.tool_name(),
+                        call.project(),
+                        resolved_project,
+                    ),
+                )
                 .await
             {
                 decorate_structured_execution_prestart_denial(

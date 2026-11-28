@@ -1553,6 +1553,9 @@ pub struct ShellProjectInventoryStatus {
     pub last_error_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_sync_at: Option<i64>,
+    /// The receiving Server can verify a deferred Project root on explicit access.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_deferred_roots: bool,
     pub max_summaries_per_page: usize,
     pub max_serialized_bytes_per_page: usize,
 }
@@ -1566,6 +1569,7 @@ impl ShellProjectInventoryStatus {
             total_synced,
             last_error_code: None,
             last_sync_at: None,
+            supports_deferred_roots: true,
             max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
             max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
         }

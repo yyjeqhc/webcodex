@@ -3,7 +3,7 @@
 use super::observations::repository_overview_not_requested;
 use super::project::{
     attach_permission, attach_project_resolution, invalid_project_source, resolve_project_source,
-    ManagedWorktreeRequest,
+    CodingProjectSource, ManagedWorktreeRequest,
 };
 use super::projection::{
     owning_runner_available, project_coding_agent_providers, project_work_on_project_output_inner,
@@ -141,6 +141,9 @@ impl ToolRuntime {
             trusted_recording_session_id,
             trusted_recording_session_project,
         ) {
+            (Some(id), Some(_)) if Some(id) == resume_session_id.as_deref() => {
+                resume_session_project.clone()
+            }
             (Some(id), Some(_)) => match self
                 .explicit_coding_session_project(id, Some(&project), startup.tool_name, auth)
                 .await
@@ -195,6 +198,8 @@ impl ToolRuntime {
             }
             None => None,
         };
+        let existing_checkout = matches!(project_source, CodingProjectSource::Existing { .. })
+            && managed_worktree.is_none();
         let (project, mut project_resolution) = match self
             .resolve_coding_startup_project(
                 project_source,
@@ -211,11 +216,18 @@ impl ToolRuntime {
             Ok(resolved) => resolved,
             Err(result) => return result,
         };
-        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
-            Ok(resolved) => resolved,
-            Err(err) => {
-                return attach_project_resolution(err.into_tool_result(), &project_resolution)
-            }
+        let resolved = match resume_session_project
+            .as_ref()
+            .or(trusted_recording_session_resolved_project.as_ref())
+            .filter(|p| existing_checkout && (p.resolved_id == project || p.input == project))
+        {
+            Some(verified) => verified.clone(),
+            None => match self.resolve_project_input_for_auth(&project, auth).await {
+                Ok(resolved) => resolved,
+                Err(err) => {
+                    return attach_project_resolution(err.into_tool_result(), &project_resolution)
+                }
+            },
         };
         project_resolution.resolved_project = resolved.resolved_id.clone();
         // Reject already-closed exact resumes before startup observations. The

@@ -26,6 +26,7 @@ fn status(
         total_synced,
         last_error_code,
         last_sync_at,
+        supports_deferred_roots: true,
         max_summaries_per_page: PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
         max_serialized_bytes_per_page: PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
     }

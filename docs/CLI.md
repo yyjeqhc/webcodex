@@ -172,6 +172,10 @@ On Windows, background project inventory lists registrations under `\\wsl.localh
 are omitted to keep the distribution asleep. Explicit registration and project tasks
 can start the selected distribution and check the actual path. Unregistering a
 project preserves its file access grant, which can be revoked separately in Desktop.
+After a Server restart, the original Project Ref can list the caller’s bound Session
+history while WSL is stopped. During a Runner-first upgrade, the Runner supplies
+the canonical root to older Servers so existing Sessions keep their identity.
+Background root checks stop once both components support deferred inventory.
 
 Root login also provides a foreground Runner command, with a warning that project
 commands run as root. On Linux its system-service installation command includes

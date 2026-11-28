@@ -79,13 +79,13 @@ class Smoke:
         return subprocess.Popen([str(self.bin_dir / binary), *args], env=env,
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=log)
 
-    def post(self, path: str, body: dict, token: str) -> dict:
+    def post(self, path: str, body: dict, token: str, *, timeout: int = 20) -> dict:
         request = Request(self.url + path, json.dumps(body).encode(), method="POST",
                           headers={"Authorization": "Bearer " + token,
                                    "Content-Type": "application/json",
                                    "Accept": "application/json, text/event-stream"})
         try:
-            with self.opener.open(request, timeout=20) as response:
+            with self.opener.open(request, timeout=timeout) as response:
                 raw = response.read(2 * 1024 * 1024)
         except HTTPError as error:
             raw = error.read(2 * 1024 * 1024)

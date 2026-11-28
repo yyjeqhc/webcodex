@@ -68,8 +68,19 @@ impl ToolRuntime {
             | ToolCall::RunDetachedProcess { .. }
             | ToolCall::RunScript { .. }
             | ToolCall::RunShell { .. }) => {
-                self.dispatch_shell_tool(call, ssh_resource, validation_assertion_name, auth)
-                    .await
+                let target = match project_resolution {
+                    Some(Ok(target)) => target,
+                    Some(Err(error)) => return error.into_tool_result(),
+                    None => return ToolResult::err("execution requires a resolved Project"),
+                };
+                self.dispatch_shell_tool(
+                    call,
+                    target,
+                    ssh_resource,
+                    validation_assertion_name,
+                    auth,
+                )
+                .await
             }
 
             ToolCall::ProjectFormat {

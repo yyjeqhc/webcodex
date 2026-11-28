@@ -390,30 +390,31 @@ fn is_windows_drive_root(_canonical_path: &Path) -> bool {
     false
 }
 
+#[cfg(windows)]
+pub fn wsl_distribution(path: &Path) -> Option<&std::ffi::OsStr> {
+    use std::path::{Component, Prefix};
+    let Component::Prefix(prefix) = path.components().next()? else {
+        return None;
+    };
+    match prefix.kind() {
+        Prefix::UNC(host, share) | Prefix::VerbatimUNC(host, share)
+            if host.eq_ignore_ascii_case("wsl$") || host.eq_ignore_ascii_case("wsl.localhost") =>
+        {
+            Some(share)
+        }
+        _ => None,
+    }
+}
+
 /// Opening a Windows WSL share can start its distribution. Inventory has no
 /// target; a targeted lookup may probe that distribution only. This is an I/O
 /// filter. Authorization still compares the actual canonical paths.
 pub fn project_path_probe_allowed(candidate: &Path, target: Option<&Path>) -> bool {
     #[cfg(windows)]
     {
-        fn distribution(path: &Path) -> Option<&std::ffi::OsStr> {
-            use std::path::{Component, Prefix};
-            let Component::Prefix(prefix) = path.components().next()? else {
-                return None;
-            };
-            match prefix.kind() {
-                Prefix::UNC(host, share) | Prefix::VerbatimUNC(host, share)
-                    if host.eq_ignore_ascii_case("wsl$")
-                        || host.eq_ignore_ascii_case("wsl.localhost") =>
-                {
-                    Some(share)
-                }
-                _ => None,
-            }
-        }
-        distribution(candidate).is_none_or(|distro| {
+        wsl_distribution(candidate).is_none_or(|distro| {
             target
-                .and_then(distribution)
+                .and_then(wsl_distribution)
                 .is_some_and(|selected| distro.eq_ignore_ascii_case(selected))
         })
     }

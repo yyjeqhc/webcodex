@@ -1,3 +1,4 @@
+use super::project_resolution::ResolvedProject;
 use serde_json::json;
 use std::time::Duration;
 
@@ -337,6 +338,10 @@ impl ToolRuntime {
         purpose: Option<ExecutionPurpose>,
         shell: Option<ExecutionShell>,
     ) -> ToolResult {
+        let project = match self.resolve_project_input(&project).await {
+            Ok(project) => project,
+            Err(error) => return super::process::execution_project_rejected(error),
+        };
         self.run_shell_with_contract_for_resource(
             project,
             command,
@@ -356,7 +361,7 @@ impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_shell_with_contract_for_resource(
         &self,
-        project: String,
+        target: ResolvedProject,
         command: String,
         timeout_secs: Option<u64>,
         sync_wait_secs: Option<u64>,
@@ -368,6 +373,8 @@ impl ToolRuntime {
         session_id: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let project = target.resolved_id;
+        let proj = target.config;
         if login && (shell != Some(ExecutionShell::Bash) || ssh_resource.is_some()) {
             return process_tool_failure_result(
                 "run_shell login=true requires local shell=bash".to_string(),
@@ -422,19 +429,7 @@ impl ToolRuntime {
                 ShellCommandExecutionState::NotStarted,
             );
         }
-        let proj = match self.resolve_project(&project).await {
-            Ok(p) => p,
-            Err(e) => {
-                return process_tool_failure_result(
-                    command_rejected_message(
-                        e.to_message(),
-                        "verify the project id with list_projects, then retry with a registered project.",
-                    ),
-                    "agent_offline",
-                    ShellCommandExecutionState::NotStarted,
-                )
-            }
-        };
+
         let declared_purpose = purpose.unwrap_or_default();
         let command_summary = command_preview(&command);
         let client_id = proj.client_id.clone();

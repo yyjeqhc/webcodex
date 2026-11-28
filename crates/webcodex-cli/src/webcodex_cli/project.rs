@@ -102,17 +102,27 @@ fn authorize_canonical_project(
     // Root discovery may return empty when HOME is absent: this local explicit
     // selection supplies its own root below. The actual policy flag is unchanged.
     let effective_roots = webcodex_runner_config::effective_allowed_roots(configured_roots, true)?;
-    let canonical_roots =
-        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective_roots);
+    let canonical_roots = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(
+        &effective_roots,
+        canonical_project,
+    );
 
     match webcodex_runner_config::paths::validate_project_path_policy(
         canonical_project,
         &canonical_roots,
         allow_cwd_anywhere,
     ) {
-        // Preserve the pre-existing local registration/output contract: callers
-        // see canonical usable roots when no authority extension was needed.
-        Ok(()) => Ok((canonical_roots, false)),
+        Ok(()) => {
+            // Report configured grants that were deliberately left unprobed as well.
+            let mut reported = canonical_roots;
+            reported.extend(effective_roots.into_iter().filter(|root| {
+                !webcodex_runner_config::paths::project_path_probe_allowed(
+                    root,
+                    Some(canonical_project),
+                )
+            }));
+            Ok((reported, false))
+        }
         Err(_) => {
             // Only local CLI/Desktop callers reach this helper. The explicit
             // selection grants the exact canonical root, never its parent.
@@ -508,13 +518,14 @@ async fn reconcile_project_from_inventory(
         };
         let candidate = Path::new(path);
         if webcodex_runner_config::paths::paths_equal(candidate, canonical_project)
-            || candidate
-                .canonicalize()
-                .ok()
-                .as_ref()
-                .is_some_and(|resolved| {
-                    webcodex_runner_config::paths::paths_equal(resolved, canonical_project)
-                })
+            || webcodex_runner_config::paths::canonicalize_project_candidate(
+                candidate,
+                canonical_project,
+            )
+            .as_ref()
+            .is_some_and(|resolved| {
+                webcodex_runner_config::paths::paths_equal(resolved, canonical_project)
+            })
         {
             return Ok(Some(project.clone()));
         }

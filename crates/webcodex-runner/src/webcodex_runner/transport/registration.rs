@@ -693,8 +693,7 @@ pub(crate) fn register_policy_summary(
 ) -> RunnerPolicySummary {
     RunnerPolicySummary {
         allow_raw_shell: cfg.policy.allow_raw_shell,
-        allow_cwd_anywhere: cfg.policy.allow_cwd_anywhere,
-        allowed_roots: cfg.policy.allowed_roots.clone(),
+        file_access: cfg.file_access_policy(),
         max_timeout_secs: cfg.policy.max_timeout_secs,
         max_output_bytes: cfg.policy.max_output_bytes,
         shell_profiles: Some(build_shell_profiles_summary(

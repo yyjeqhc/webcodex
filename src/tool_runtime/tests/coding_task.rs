@@ -291,7 +291,10 @@ async fn coding_workflow_minimal_brief_is_bounded_and_path_safe() {
     init_git_repo(tmp.path());
     let runtime = test_runtime();
     let policy = RunnerPolicySummary {
-        allowed_roots: vec![PathBuf::from("/tmp/startup-full-allowed-root")],
+        file_access: crate::runner_protocol::RunnerFileAccessPolicy {
+            allow_cwd_anywhere: false,
+            allowed_roots: vec![PathBuf::from("/tmp/startup-full-allowed-root")],
+        },
         ..Default::default()
     };
     register_agent_with_shell_profiles(
@@ -356,7 +359,10 @@ async fn coding_workflow_standard_returns_model_facing_brief_without_diagnostics
     init_git_repo(tmp.path());
     let runtime = test_runtime();
     let policy = RunnerPolicySummary {
-        allowed_roots: vec![PathBuf::from("/tmp/compact-allowed-root-never-emit")],
+        file_access: crate::runner_protocol::RunnerFileAccessPolicy {
+            allow_cwd_anywhere: false,
+            allowed_roots: vec![PathBuf::from("/tmp/compact-allowed-root-never-emit")],
+        },
         ..Default::default()
     };
     register_agent_with_shell_profiles(

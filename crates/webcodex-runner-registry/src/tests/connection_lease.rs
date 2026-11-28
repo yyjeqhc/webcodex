@@ -391,12 +391,19 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
 
     // Current connection B reports both observational provider status and the
     // authoritative MCP routing inventory in one lease-fenced metadata update.
+    let access = webcodex_core::runner_protocol::RunnerFileAccessPolicy {
+        allowed_roots: vec!["/new".into()],
+        allow_cwd_anywhere: false,
+    };
+    let mut current = provider_status("claude_code");
+    current.config_reload.generation = 2;
     registry
-        .update_runtime_metadata_for_connection(
+        .update_runtime_metadata(
             "oe",
             "inst-x",
-            "conn-b",
-            Some(provider_status("claude_code")),
+            Some("conn-b"),
+            Some(access.clone()),
+            Some(current.clone()),
             Some(mcp_inventory("mcp-b")),
         )
         .await
@@ -428,13 +435,44 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
         );
     }
 
+    for (lease, generation) in [
+        (Some("conn-b"), 1),
+        (Some("conn-b"), 2),
+        (None, 3),
+        (Some("conn-a"), 3),
+    ] {
+        let mut delayed = current.clone();
+        delayed.config_reload.generation = generation;
+        assert!(registry
+            .update_runtime_metadata(
+                "oe",
+                "inst-x",
+                lease,
+                Some(Default::default()),
+                Some(delayed),
+                None
+            )
+            .await
+            .is_err());
+    }
+    assert_eq!(
+        registry
+            .get_runner_view("oe")
+            .await
+            .unwrap()
+            .policy
+            .unwrap()
+            .file_access,
+        access
+    );
     // Stale connection A tries to overwrite both metadata families. The exact
     // connection lease rejects the whole update, including MCP routing authority.
     let err = registry
-        .update_runtime_metadata_for_connection(
+        .update_runtime_metadata(
             "oe",
             "inst-x",
-            "conn-a",
+            Some("conn-a"),
+            None,
             Some(provider_status("native")),
             Some(mcp_inventory("mcp-stale")),
         )
@@ -476,7 +514,7 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
     // The active connection can explicitly clear the MCP inventory. `None`
     // means no update, while `Some([])` is an authoritative empty inventory.
     registry
-        .update_runtime_metadata_for_connection("oe", "inst-x", "conn-b", None, Some(Vec::new()))
+        .update_runtime_metadata("oe", "inst-x", Some("conn-b"), None, None, Some(Vec::new()))
         .await
         .unwrap();
     let inner = registry.inner.lock().await;

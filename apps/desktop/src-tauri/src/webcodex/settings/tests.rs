@@ -267,6 +267,24 @@ fn file_access_can_remove_stale_roots_one_at_a_time() {
     assert_eq!(projection.file_access.configured_roots, vec![stale_b]);
 }
 
+#[test]
+fn file_access_can_revoke_from_oversized_configuration_without_adding_authority() {
+    let f = Fixture::new();
+    let original = (0..23)
+        .map(|i| {
+            f.dir
+                .join(format!("stale-{i}"))
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    let mut remaining = original.clone();
+    remaining.remove(10);
+    validate_allowed_roots(&original, &remaining).unwrap();
+    remaining[0] = f.dir.to_string_lossy().into_owned();
+    assert!(validate_allowed_roots(&original, &remaining).is_err());
+}
+
 #[cfg(windows)]
 #[test]
 fn file_access_accepts_existing_windows_drive_root() {

@@ -59,8 +59,10 @@ pub(super) fn validate_model_network_project_ingress_authority(
         // A configured mapped drive may canonicalize to the same UNC share. It is
         // safe to resolve configured roots here because those roots are already
         // user-authorized; never canonicalize the untrusted target before this gate.
-        let canonical_roots =
-            webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
+        let canonical_roots = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(
+            &policy.allowed_roots,
+            path,
+        );
         if canonical_roots
             .iter()
             .any(|root| webcodex_runner_config::paths::path_is_within(path, root))
@@ -189,8 +191,10 @@ pub(crate) fn validate_project_path_policy(
     policy: &RunnerPolicy,
     canonical_path: &Path,
 ) -> Result<(), String> {
-    let canonical_roots =
-        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
+    let canonical_roots = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(
+        &policy.allowed_roots,
+        canonical_path,
+    );
     webcodex_runner_config::paths::validate_project_path_policy(
         canonical_path,
         &canonical_roots,
@@ -364,7 +368,10 @@ pub(super) fn projects_matching_canonical_path(
     projects
         .iter()
         .filter_map(|project| {
-            let registered_path = canonicalize_existing(Path::new(&project.path)).ok()?;
+            let registered_path = webcodex_runner_config::paths::canonicalize_project_candidate(
+                Path::new(&project.path),
+                canonical_path,
+            )?;
             (registered_path.is_dir() && paths_equal(&registered_path, canonical_path))
                 .then(|| project.clone())
         })
@@ -759,9 +766,10 @@ pub(crate) fn handle_resolve_or_register_project_operation(
         // the grant, and the Runner filesystem allowed_roots above is a coarser
         // boundary that never substitutes for it.
         let admitted = granted_roots.iter().any(|root| {
-            canonicalize_existing(root).is_ok_and(|root| {
-                webcodex_runner_config::paths::path_is_within(&canonical_path, &root)
-            })
+            webcodex_runner_config::paths::canonicalize_project_candidate(root, &canonical_path)
+                .is_some_and(|root| {
+                    webcodex_runner_config::paths::path_is_within(&canonical_path, &root)
+                })
         });
         if !admitted {
             return structured_project_error_cmd(

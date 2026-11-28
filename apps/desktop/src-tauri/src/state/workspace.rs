@@ -116,7 +116,7 @@ impl AppState {
             let observations = crate::project_inventory::observe_many(&runtime, &ids).await?;
             for (item, observed) in request.items.iter().zip(observations.iter()) {
                 if observed.expected_revision != item.expected_revision {
-                    return Err(crate::workspace::unavailable());
+                    return Err(crate::project_inventory::revision_changed());
                 }
             }
             let items =
@@ -178,14 +178,8 @@ impl AppState {
                 crate::webcodex::settings::verify_target(&runtime, &request.target)?;
                 let observed =
                     crate::project_inventory::observe(&runtime, &request.project).await?;
-                if observed.expected_revision != request.expected_revision
-                    || observed.path.is_empty()
-                {
-                    return Err(DesktopError::new(
-                        "project_revision_changed",
-                        "The project changed since confirmation",
-                        "Review the current project again before removing it.",
-                    ));
+                if observed.expected_revision != request.expected_revision {
+                    return Err(crate::project_inventory::revision_changed());
                 }
                 let store = super::environment::store()?;
                 let mut native = webcodex_environment::NativeEnvironment::new()

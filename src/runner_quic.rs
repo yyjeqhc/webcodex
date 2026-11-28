@@ -958,6 +958,7 @@ mod tests {
                 write_quic_frame(
                     &mut send,
                     &RunnerEnvelope::RuntimeMetadata {
+                        file_access: None,
                         job_capacity: Some(RunnerJobCapacity {
                             generation: update_generation,
                             limit: update_limit,

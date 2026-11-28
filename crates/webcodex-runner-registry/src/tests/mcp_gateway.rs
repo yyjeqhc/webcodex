@@ -428,7 +428,14 @@ async fn invalid_runtime_mcp_inventory_is_rejected_without_mutating_authority() 
         },
     ];
     assert!(registry
-        .update_runtime_metadata("bridge-runner", "bridge-instance", None, Some(duplicate),)
+        .update_runtime_metadata(
+            "bridge-runner",
+            "bridge-instance",
+            None,
+            None,
+            None,
+            Some(duplicate),
+        )
         .await
         .unwrap_err()
         .contains("invalid MCP gateway provider inventory"));
@@ -459,6 +466,8 @@ async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change(
         .update_runtime_metadata(
             "bridge-runner",
             "bridge-instance",
+            None,
+            None,
             None,
             Some(vec![bridge_provider("replacement-provider-instance")]),
         )

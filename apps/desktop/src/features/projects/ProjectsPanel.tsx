@@ -1,3 +1,4 @@
+import { normalizeDesktopError } from "../../i18n/presentation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Select, TextInput } from "@mantine/core";
 import { Search } from "lucide-react";
@@ -50,7 +51,7 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
   };
   const [removal, setRemoval] = useState<UnregisterObservation | null>(null);
   const [removing, setRemoving] = useState(false);
-  const [removeError, setRemoveError] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [batchConfirm, setBatchConfirm] = useState<UnregisterObservation[] | null>(null);
   const [batchProgress, setBatchProgress] = useState("");
@@ -78,7 +79,7 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
     setRemoval(null);
     setBatchConfirm(null);
     setBatchIssues([]);
-    setRemoveError(false);
+    setRemoveError(null);
   }, [workspace.contextKey]);
   const canManageProjects = Boolean(onState && workspace.state.workspace_runner);
 
@@ -86,12 +87,12 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
     if (!canManageProjects || removing || workspace.state.current_operation || !project.id) return;
     const owner = beginRemoval();
     if (!owner) return;
-    setRemoveError(false);
+    setRemoveError(null);
     try {
       const observation = await desktopApi.prepareProjectUnregister(project.id);
       if (removalOwner.current === owner) setRemoval(observation);
-    } catch {
-      if (removalOwner.current === owner) setRemoveError(true);
+    } catch (error) {
+      if (removalOwner.current === owner) setRemoveError(normalizeDesktopError(error).code);
     } finally {
       finishRemoval(owner);
     }
@@ -101,15 +102,15 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
     if (!removal || !onState || removing || workspace.state.current_operation) return;
     const owner = beginRemoval();
     if (!owner) return;
-    setRemoveError(false);
+    setRemoveError(null);
     try {
       const state = await desktopApi.unregisterProject(removal);
       if (removalOwner.current === owner) {
         onState(state);
         workspace.removeProject(removal.project);
       }
-    } catch {
-      if (removalOwner.current === owner) setRemoveError(true);
+    } catch (error) {
+      if (removalOwner.current === owner) setRemoveError(normalizeDesktopError(error).code);
     } finally {
       if (removalOwner.current === owner) {
         setRemoval(null);
@@ -125,7 +126,7 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
     if (!ids.length) return;
     const owner = beginRemoval();
     if (!owner) return;
-    setRemoveError(false);
+    setRemoveError(null);
     setBatchIssues([]);
     setBatchConfirm(null);
     try {
@@ -142,8 +143,8 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
       // The confirmation owns these exact paths and revisions. Never replace
       // them with a fresh inventory after the user has confirmed.
       setBatchConfirm(observations);
-    } catch {
-      if (removalOwner.current === owner) setRemoveError(true);
+    } catch (error) {
+      if (removalOwner.current === owner) setRemoveError(normalizeDesktopError(error).code);
     } finally {
       finishRemoval(owner);
     }
@@ -154,7 +155,7 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
     const observations = batchConfirm;
     const owner = beginRemoval();
     if (!owner) return;
-    setRemoveError(false);
+    setRemoveError(null);
     setBatchIssues([]);
     setBatchConfirm(null);
     try {
@@ -173,9 +174,9 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
               setSelected(current => current.filter(id => id !== observation.project));
               completed++;
               setBatchProgress(`${completed}/${observations.length}`);
-            } catch {
+            } catch (error) {
               if (removalOwner.current === owner) {
-                setRemoveError(true);
+                setRemoveError(normalizeDesktopError(error).code);
                 setBatchIssues([observation.project]);
               }
               return;
@@ -193,13 +194,13 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
           const issues = result.items.filter(item => !item.success).map(item => `${item.project}: ${item.status}`);
           if (issues.length || result.items.length !== chunk.length) {
             setBatchIssues(issues.length ? issues : chunk.map(item => item.project));
-            setRemoveError(true);
+            setRemoveError("project_unregister_uncertain");
             return;
           }
         }
       }
-    } catch {
-      if (removalOwner.current === owner) setRemoveError(true);
+    } catch (error) {
+      if (removalOwner.current === owner) setRemoveError(normalizeDesktopError(error).code);
     } finally {
       if (removalOwner.current === owner) {
         setBatchProgress("");
@@ -245,7 +246,7 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
       </div>
     </div>
     <ProjectRows projects={rows} onUnregister={canManageProjects ? prepareRemoval : undefined} onSelect={canManageProjects ? (id, checked) => setSelected(current => checked ? Array.from(new Set([...current, id])) : current.filter(value => value !== id)) : undefined} selected={selected} busy={removing || Boolean(workspace.state.current_operation)} />
-    {removeError && <p role="alert" className="workspace-notice">{p("unregisterError")}</p>}
+    {removeError && <p role="alert" className="workspace-notice">{p(removeError === "project_projection_reconcile_required" ? "unregisterSyncPending" : "unregisterError")} <code>{removeError}</code></p>}
     {batchIssues.length > 0 && <ul aria-label={p("failedProjects")} className="workspace-notice">{batchIssues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
     {batchConfirm && <WorkspaceDialog title={p("removeSelectedProjects").replace("{count}", String(batchConfirm.length))} onClose={() => setBatchConfirm(null)} busy={removing}>
       <p>{p("unregisterDescription")}</p>

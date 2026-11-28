@@ -1688,8 +1688,8 @@ fn sanitized_policy_summary(policy: Option<&crate::runner_protocol::RunnerPolicy
     match policy {
         Some(p) => json!({
             "allow_raw_shell": p.allow_raw_shell,
-            "allow_cwd_anywhere": p.allow_cwd_anywhere,
-            "allowed_roots": p.allowed_roots,
+            "allow_cwd_anywhere": p.file_access.allow_cwd_anywhere,
+            "allowed_roots": p.file_access.allowed_roots,
             "max_timeout_secs": p.max_timeout_secs,
             "max_output_bytes": p.max_output_bytes,
         }),

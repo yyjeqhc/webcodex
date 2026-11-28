@@ -167,6 +167,12 @@ Model-facing registration requires preconfigured network authority even with
 `allow_cwd_anywhere = true`; use a direct path without `..` components.
 Creating new network projects with `create_project` remains unsupported.
 
+On Windows, background project inventory lists registrations under `\\wsl.localhost` and
+`\\wsl$` from the saved configuration. Git status and the canonical root fingerprint
+are omitted to keep the distribution asleep. Explicit registration and project tasks
+can start the selected distribution and check the actual path. Unregistering a
+project preserves its file access grant, which can be revoked separately in Desktop.
+
 Root login also provides a foreground Runner command, with a warning that project
 commands run as root. On Linux its system-service installation command includes
 `--allow-root-runner`. The same login credentials are reused.

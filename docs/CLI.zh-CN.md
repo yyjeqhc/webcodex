@@ -110,6 +110,10 @@ structured unregister，再删除本地 registration；Runner 已停止时，只
 `..` traversal 仍拒绝。模型注册入口仍受既有 Runner policy 约束，UNC 仍先检查网络授权。
 已运行 Runner 若需要 reload，按命令输出处理。
 
+在 Windows 上，后台项目列表从配置读取 `\\wsl.localhost` 和 `\\wsl$` 下的注册记录。
+为避免唤醒发行版，列表会省略这些项目的 Git 状态和真实根目录指纹。显式注册项目或运行项目任务时，
+Runner 可以启动目标发行版并检查实际路径。取消注册会保留文件访问授权，可在 Desktop 中单独撤销。
+
 root login 会给出可直接运行的 foreground 命令，并提示项目命令拥有 root 权限；
 Linux system service 安装命令明确包含 `--allow-root-runner`，无需重新 login。
 

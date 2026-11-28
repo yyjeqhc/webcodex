@@ -36,13 +36,14 @@ impl AppState {
     ) -> DesktopResult<crate::webcodex::settings::RunnerSettings> {
         let (runtime, environment, generation) = {
             let slot = self.core.lock().await;
+            let generation = self.operations.idle_generation()?;
             let core = slot
                 .as_ref()
-                .ok_or_else(|| self.operations.missing_core_error())?;
+                .ok_or_else(crate::operation::core_unavailable)?;
             (
                 core.runner_settings_runtime()?,
                 core.config.persistent_environment.clone(),
-                self.operations.generation(),
+                generation,
             )
         };
         // A slow supervisor or configuration file must not hold the mutation slot.
@@ -65,10 +66,11 @@ impl AppState {
         .await
         .map_err(|_| desktop_state_unavailable("Settings worker stopped"))?;
         let slot = self.core.lock().await;
+        let current_generation = self.operations.idle_generation()?;
         let core = slot
             .as_ref()
-            .ok_or_else(|| self.operations.missing_core_error())?;
-        if self.operations.generation() != generation
+            .ok_or_else(crate::operation::core_unavailable)?;
+        if current_generation != generation
             || core.config.runtime.as_ref() != Some(&runtime)
             || core.config.persistent_environment != environment
         {

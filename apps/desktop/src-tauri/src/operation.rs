@@ -2,7 +2,7 @@ use crate::activity::{ActivityEventKind, ActivityLevel, ActivityLog};
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::{DesktopOperationKind, DesktopOperationPhase, DesktopOperationSnapshot};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
@@ -186,6 +186,12 @@ impl OperationController {
         self.next_id.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn idle_generation(&self) -> DesktopResult<u64> {
+        // Sample the counter under the same lock that admits a writer.
+        let _idle = self.idle_slot()?;
+        Ok(self.generation())
+    }
+
     pub(crate) fn new(activity: ActivityLog) -> Self {
         Self {
             active: Mutex::new(OperationSlot::Idle),
@@ -194,21 +200,24 @@ impl OperationController {
         }
     }
 
+    fn idle_slot(&self) -> DesktopResult<MutexGuard<'_, OperationSlot>> {
+        let slot = self
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*slot {
+            OperationSlot::Idle => Ok(slot),
+            OperationSlot::Active(current) => Err(busy_error(&current.snapshot())),
+            OperationSlot::Interrupted(error) => Err(error.clone()),
+        }
+    }
+
     pub(crate) fn admit(
         &self,
         kind: DesktopOperationKind,
         cancellable: bool,
     ) -> DesktopResult<OperationAdmission<'_>> {
-        let mut active = self
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match &*active {
-            OperationSlot::Active(current) => return Err(busy_error(&current.snapshot())),
-            OperationSlot::Interrupted(error) => return Err(error.clone()),
-            OperationSlot::Idle => {}
-        }
-
+        let mut active = self.idle_slot()?;
         let sequence = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let id = format!("desktop-operation-{sequence}");
         let snapshot = DesktopOperationSnapshot {

@@ -762,23 +762,8 @@ impl AppState {
         }
         let completion =
             operation_completion::OperationCompletion::new(operation.kind, result.as_ref().err());
-        let recovery_error = || {
-            crate::operation::core_unavailable().with_operation_context(
-                Some(&operation.id),
-                None,
-                None,
-                None,
-            )
-        };
         let cleanup = if completion.requires_process_cleanup() {
-            let mut supervisor =
-                tokio::time::timeout(OPERATION_SLOT_TIMEOUT, self.supervisor.lock())
-                    .await
-                    .map_err(|_| recovery_error())?;
-            Some(
-                self.cleanup_new_owned_processes(&mut supervisor, &baseline)
-                    .await,
-            )
+            Some(self.cleanup_new_owned_processes(&baseline).await)
         } else {
             None
         };
@@ -788,12 +773,7 @@ impl AppState {
         if completion.apply_runtime_error(&mut core.snapshot, core.runtime_last_switch.as_ref()) {
             core.publish_snapshot();
         }
-        {
-            let mut slot = tokio::time::timeout(OPERATION_SLOT_TIMEOUT, self.core.lock())
-                .await
-                .map_err(|_| recovery_error())?;
-            *slot = Some(core);
-        }
+        *self.core.lock().await = Some(core);
         operation.finish(&result);
         match result {
             Ok(_) => Ok(self.get_state()),
@@ -823,11 +803,8 @@ impl AppState {
         }
     }
 
-    async fn cleanup_new_owned_processes(
-        &self,
-        supervisor: &mut ProcessSupervisor,
-        baseline: &ProcessBaseline,
-    ) -> ProcessCleanup {
+    async fn cleanup_new_owned_processes(&self, baseline: &ProcessBaseline) -> ProcessCleanup {
+        let mut supervisor = self.supervisor.lock().await;
         let mut cleanup = ProcessCleanup::default();
         let mut keys = supervisor.keys();
         keys.sort_by_key(|key| match key {

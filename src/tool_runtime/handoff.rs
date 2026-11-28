@@ -207,7 +207,7 @@ impl ToolRuntime {
             .filter(|project| !project.is_empty())
         {
             let requested = match self
-                .resolve_project_input_for_auth(request_project, auth)
+                .resolve_project_metadata_for_auth(request_project, auth)
                 .await
             {
                 Ok(resolved) => resolved,
@@ -366,7 +366,7 @@ impl ToolRuntime {
             .filter(|project| !project.is_empty())
         {
             Some(project) => self
-                .resolve_project_input_for_auth(project, auth)
+                .resolve_project_metadata_for_auth(project, auth)
                 .await
                 .map(|resolved| resolved.resolved_id)
                 .unwrap_or_else(|_| project.to_string()),

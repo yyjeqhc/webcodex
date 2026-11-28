@@ -14,6 +14,7 @@ pub(crate) struct ProjectResolverCandidate {
     pub(crate) name: Option<String>,
     pub(crate) path: String,
     pub(crate) allow_patch: bool,
+    pub(crate) root_probe_deferred: bool,
     pub(crate) root_fingerprint: Option<String>,
     pub(crate) registration_incarnation: Option<String>,
     pub(crate) runner_instance_id: String,
@@ -66,6 +67,7 @@ pub(crate) struct ResolvedProject {
     /// Root identity from the same Runner project-inventory snapshot that
     /// produced this resolution. It is descriptive only and never authorizes
     /// access by itself.
+    pub(crate) root_probe_deferred: bool,
     pub(crate) root_fingerprint: Option<String>,
     pub(crate) registration_incarnation: Option<String>,
     pub(crate) runner_instance_id: String,
@@ -77,6 +79,9 @@ pub(crate) struct ResolvedProject {
 
 impl ResolvedProject {
     pub(crate) fn workflow_project_identity(&self) -> Option<String> {
+        if self.root_probe_deferred && self.root_fingerprint.is_none() {
+            return None;
+        }
         webcodex_core::runner_protocol::workflow_project_identity(
             self.root_fingerprint.as_deref(),
             &self.config.path,
@@ -111,6 +116,7 @@ impl ResolvedProject {
 pub(crate) enum ProjectResolverErrorKind {
     UnknownProject,
     AmbiguousProject,
+    IdentityUnavailable,
 }
 
 impl ProjectResolverErrorKind {
@@ -118,6 +124,7 @@ impl ProjectResolverErrorKind {
         match self {
             Self::UnknownProject => "unknown_project",
             Self::AmbiguousProject => "ambiguous_project",
+            Self::IdentityUnavailable => "project_root_unverified",
         }
     }
 }
@@ -486,6 +493,7 @@ impl ToolRuntime {
             name: project.name.clone(),
             path: project.path.clone(),
             allow_patch: project.allow_patch,
+            root_probe_deferred: project.deferred_root_path.is_some(),
             root_fingerprint: project.root_fingerprint.clone(),
             // Keep the registration identity from the last complete inventory
             // across a disconnect. An incomplete inventory proves no binding.
@@ -519,6 +527,7 @@ impl ToolRuntime {
             input: input.to_string(),
             resolved_id: candidate.id.clone(),
             config: Self::project_config_from_candidate(candidate),
+            root_probe_deferred: candidate.root_probe_deferred,
             root_fingerprint: candidate.root_fingerprint.clone(),
             registration_incarnation: candidate.registration_incarnation.clone(),
             runner_instance_id: candidate.runner_instance_id.clone(),
@@ -556,7 +565,153 @@ impl ToolRuntime {
         candidates
     }
 
+    /// Targeted identity observation. Passive inventory never calls this.
+    /// The Runner re-reads the exact registry revision before opening the share;
+    /// the Server does not synthesize a canonical fingerprint from its spelling.
+    pub(crate) async fn observe_deferred_project_root(
+        &self,
+        client_id: &str,
+        instance: &str,
+        project: &RunnerProjectSummary,
+        auth: Option<&AuthContext>,
+    ) -> Result<(String, String), String> {
+        let revision = project
+            .revision
+            .as_deref()
+            .ok_or("missing Project revision")?;
+        let incarnation = project
+            .registration_incarnation
+            .as_deref()
+            .ok_or("missing Project incarnation")?;
+        let access = crate::runner_http::runner_access_from_auth(auth);
+        if access.is_some() {
+            self.runner_registry
+                .assert_runner_access(access.as_ref(), client_id)
+                .await?;
+        }
+        let (request, response) = self
+            .runner_registry
+            .enqueue_project_identity_probe(client_id, instance, project, access.as_ref())
+            .await?;
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(32), response).await
+        {
+            Ok(Ok(result)) => result,
+            _ => {
+                self.runner_registry
+                    .cancel_request_dispatch_state(&request)
+                    .await;
+                return Err("Project root observation unavailable".into());
+            }
+        };
+        if result.exit_code != Some(0) || result.error.is_some() {
+            return Err("Project root observation rejected".into());
+        }
+        let value: Value =
+            serde_json::from_str(result.stdout.as_deref().ok_or("missing observation")?)
+                .map_err(|_| "invalid Project root observation")?;
+        if value["agent_project_id"].as_str() != Some(&project.id)
+            || value["revision"].as_str() != Some(revision)
+            || value["registration_incarnation"].as_str() != Some(incarnation)
+            || value["outcome"].as_str() != Some("observed")
+            || value["changed"].as_bool() != Some(false)
+        {
+            return Err("Project root observation identity changed".into());
+        }
+        let path = value["path"].as_str().ok_or("missing observed path")?;
+        let fingerprint = value["root_fingerprint"]
+            .as_str()
+            .ok_or("missing observed root")?;
+        self.runner_registry
+            .record_deferred_project_root(
+                access.as_ref(),
+                client_id,
+                instance,
+                &project.id,
+                project
+                    .deferred_root_path
+                    .as_deref()
+                    .ok_or("missing deferred path")?,
+                revision,
+                incarnation,
+                fingerprint,
+                path,
+            )
+            .await?;
+        Ok((path.to_owned(), fingerprint.to_owned()))
+    }
+
     pub(crate) async fn resolve_project_input_for_auth(
+        &self,
+        project: &str,
+        auth: Option<&AuthContext>,
+    ) -> Result<ResolvedProject, ProjectResolverError> {
+        let reference = project_reference_index(project.trim())
+            .and_then(Result::ok)
+            .and_then(|index| self.lookup_project_reference(index, auth));
+        let mut resolved = match self.resolve_project_metadata_for_auth(project, auth).await {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let Some(reference) = reference.as_ref() else {
+                    return Err(error);
+                };
+                let candidate = self
+                    .resolve_project_metadata_for_auth(&reference.canonical_project_id, auth)
+                    .await?;
+                if !candidate.root_probe_deferred || !candidate.runner_connected {
+                    return Err(error);
+                }
+                candidate
+            }
+        };
+        if !resolved.root_probe_deferred || !resolved.runner_connected {
+            return Ok(resolved);
+        }
+        let unavailable = || ProjectResolverError {
+            kind: ProjectResolverErrorKind::IdentityUnavailable,
+            project: project.to_owned(),
+            candidates: Vec::new(),
+        };
+        let access = crate::runner_http::runner_access_from_auth(auth);
+        let view = self
+            .runner_registry
+            .get_runner_view_for_auth(&resolved.config.client_id, access.as_ref())
+            .await
+            .ok_or_else(unavailable)?;
+        if view.runner_instance_id != resolved.runner_instance_id {
+            return Err(unavailable());
+        }
+        let id = resolved
+            .resolved_id
+            .strip_prefix(&format!("agent:{}:", view.client_id))
+            .ok_or_else(unavailable)?;
+        let row = view
+            .projects
+            .iter()
+            .find(|row| {
+                row.id == id
+                    && !row.disabled
+                    && row.deferred_root_path.is_some()
+                    && row.path == resolved.config.path
+                    && row.registration_incarnation == resolved.registration_incarnation
+            })
+            .ok_or_else(unavailable)?;
+        let (path, fingerprint) = self
+            .observe_deferred_project_root(&view.client_id, &view.runner_instance_id, row, auth)
+            .await
+            .map_err(|_| unavailable())?;
+        if reference
+            .as_ref()
+            .is_some_and(|r| r.root_fingerprint != fingerprint)
+        {
+            return Err(unavailable());
+        }
+        resolved.input = project.to_owned();
+        resolved.config.path = path;
+        resolved.root_fingerprint = Some(fingerprint);
+        Ok(resolved)
+    }
+
+    pub(crate) async fn resolve_project_metadata_for_auth(
         &self,
         project: &str,
         auth: Option<&AuthContext>,

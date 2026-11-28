@@ -51,7 +51,7 @@ def run(smoke, distro):
     client = "wsl-smoke"
     check(smoke.post("/api/users/create", {"username": "owner"}, smoke.bootstrap)["success"],
           "test owner creation failed")
-    owner = smoke.pat("owner", ["runtime:read", "runner:manage", "project:read", "project:write", "job:run"])
+    owner = smoke.pat("owner", ["runtime:read", "runner:manage", "project:read", "project:write", "job:run", "session:collaborate"])
     agent = smoke.post("/api/agent-tokens/create", {"client_id": client, "username": "owner",
                       "name": "wsl-smoke"}, smoke.bootstrap)
     config = smoke.root / "runner.toml"
@@ -110,6 +110,18 @@ def run(smoke, distro):
     local_task()
     call("run_shell", project=remote_id, command="if ((Get-Item -LiteralPath .).Name -ne 'tmp') { exit 1 }")
     check(name in names("--running"), "explicit WSL task did not start its distribution")
+    started = call("work_on_project", project=remote_id, instruction="WSL identity regression")
+    session_id = started["session_id"]
+    stop_distribution(distro)
+    idle_window()
+    local_task()
+    sessions = call("list_sessions", project=remote_id)
+    check(any(s["session_id"] == session_id for s in sessions["sessions"]), "passive Session discovery lost the task")
+    stopped()
+    resumed = call("work_on_project", project=remote_id, session_id=session_id,
+                   instruction="Resume the exact WSL task")
+    check(resumed["session_id"] == session_id, "WSL root deferral changed Session identity")
+    check(name in names("--running"), "explicit Session resume did not observe its WSL root")
     stop_distribution(distro)
     listed = call("list_projects", project=remote_id, limit=1, summary_only=False)
     removed = call("unregister_project", project=remote_id, expected_revision=listed["projects"][0]["revision"])

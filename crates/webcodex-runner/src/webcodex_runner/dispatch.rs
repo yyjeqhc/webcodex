@@ -5,7 +5,7 @@ use super::transport::ResultSubmission;
 use super::validation::handle_validation_request;
 use super::{
     handle_browser_operation, handle_computer_operation, handle_prepare_managed_worktree_operation,
-    handle_project_lifecycle_operation, handle_project_operation,
+    handle_probe_project_identity, handle_project_lifecycle_operation, handle_project_operation,
     handle_resolve_or_register_project_operation, handle_runner_instruction_request,
     handle_runner_skill_request, run_ssh_shell_with_execution_state, CommandResult,
     HotRunnerConfig, PersistentShellManager, ReloadableRunnerConfig, RunnerSink,
@@ -676,6 +676,12 @@ pub(crate) fn dispatch_request_with_outcome(
                 RunnerProjectOperationKind::Register | RunnerProjectOperationKind::Create => {
                     handle_project_operation(policy, project_registry_dir, &client_id, &operation)
                 }
+                RunnerProjectOperationKind::ProbeIdentity => handle_probe_project_identity(
+                    policy,
+                    project_registry_dir,
+                    &client_id,
+                    &operation,
+                ),
                 RunnerProjectOperationKind::ResolveOrRegister => {
                     handle_resolve_or_register_project_operation(
                         policy,

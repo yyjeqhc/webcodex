@@ -245,7 +245,7 @@ impl ToolRuntime {
             if link.project.as_deref() != Some(project.as_str()) {
                 continue;
             }
-            let Ok(resolved) = self.resolve_project_input_for_auth(&project, auth).await else {
+            let Ok(resolved) = self.resolve_project_metadata_for_auth(&project, auth).await else {
                 continue;
             };
             if resolved.resolved_id != project

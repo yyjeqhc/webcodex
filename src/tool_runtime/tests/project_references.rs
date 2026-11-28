@@ -562,3 +562,76 @@ async fn stale_project_ref_never_retargets_and_survives_store_reopen() {
         canonical
     );
 }
+
+#[tokio::test]
+async fn deferred_root_discovery_is_passive_and_explicit_reference_rechecks_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = runtime_with_reference_db(&tmp.path().join("refs.db"));
+    let canonical = "agent:deferred:repo";
+    let path = "/registered/path";
+    let mut row = project("deferred", "repo", "repo", path, '5');
+    row.revision = Some(format!("sha256:{}", "1".repeat(64)));
+    let caps = RunnerCapabilities {
+        project_path_registration: true,
+        ..Default::default()
+    };
+    register_agent_projects(&runtime, "deferred", None, caps.clone(), vec![row.clone()]).await;
+    let before = runtime.resolve_project_input(canonical).await.unwrap();
+    let reference = runtime
+        .project_reference_for_resolved(&before, None)
+        .unwrap();
+    let identity = before.workflow_project_identity().unwrap();
+    row.root_fingerprint = None;
+    row.deferred_root_path = Some(row.path.clone());
+    drop(runtime);
+    let runtime = runtime_with_reference_db(&tmp.path().join("refs.db"));
+    register_agent_projects(&runtime, "deferred", None, caps, vec![row.clone()]).await;
+    // Metadata discovery must not wait for any request to the remote filesystem.
+    let passive = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        runtime.resolve_project_metadata_for_auth(canonical, None),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(passive.root_probe_deferred);
+    async fn reply(runtime: &ToolRuntime, row: &RunnerProjectSummary, fingerprint: String) {
+        let request =
+            wait_for_runner_request_for_instance(runtime, "deferred", "inst-deferred").await;
+        assert_eq!(request.kind, "project_probe_identity");
+        let output = json!({"agent_project_id":"repo","revision":row.revision,
+            "registration_incarnation":row.registration_incarnation, "outcome":"observed",
+            "changed":false,"path":"/canonical/path","root_fingerprint":fingerprint});
+        complete_patch_agent_request_for_instance(
+            runtime,
+            "deferred",
+            "inst-deferred",
+            &request.request_id,
+            0,
+            &output.to_string(),
+            "",
+        )
+        .await;
+    }
+    let (resolved, ()) = tokio::join!(
+        runtime.resolve_project_input(&reference),
+        reply(&runtime, &row, root('5'))
+    );
+    let resolved = resolved.unwrap();
+    assert_eq!(
+        resolved.config.path, "/canonical/path",
+        "dispatch must use the observed canonical path"
+    );
+    assert_eq!(
+        resolved.workflow_project_identity().as_deref(),
+        Some(identity.as_str())
+    );
+    let (changed, ()) = tokio::join!(
+        runtime.resolve_project_input(&reference),
+        reply(&runtime, &row, root('6'))
+    );
+    assert!(
+        changed.is_err(),
+        "old Project reference must never retarget"
+    );
+}

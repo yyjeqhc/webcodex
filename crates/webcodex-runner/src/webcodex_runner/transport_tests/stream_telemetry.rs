@@ -265,6 +265,7 @@ fn synthetic_project_summary(index: usize, path_bytes: Option<usize>) -> RunnerP
         None => format!("/tmp/project-{index:04}"),
     };
     RunnerProjectSummary {
+        deferred_root_path: None,
         registration_incarnation: None,
         id: format!("project-{index:04}"),
         name: Some(format!("Project {index:04}")),

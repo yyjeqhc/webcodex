@@ -132,6 +132,9 @@ impl RunnerRegistry {
             .projects
             .iter()
             .find(|p| p.id == project && !p.disabled)?;
+        if registered.deferred_root_path.is_some() && registered.root_fingerprint.is_none() {
+            return None;
+        }
         let identity = webcodex_core::runner_protocol::workflow_project_identity(
             registered.root_fingerprint.as_deref(),
             &registered.path,
@@ -262,6 +265,47 @@ impl RunnerRegistry {
             return Err(format!("unknown shell client: {}", client_id));
         };
         Ok(runner.projects.clone())
+    }
+
+    /// Commit a targeted observation only to the exact still-active registration.
+    pub async fn record_deferred_project_root(
+        &self,
+        access: Option<&crate::RunnerAccess>,
+        client_id: &str,
+        instance: &str,
+        id: &str,
+        path: &str,
+        revision: &str,
+        incarnation: &str,
+        fingerprint: &str,
+        canonical_path: &str,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        let runner = inner.runners.get_mut(client_id).ok_or("unknown Runner")?;
+        if runner.runner_instance_id != instance
+            || runner.disconnected_at.is_some()
+            || runner.project_inventory.status.sync_state != "complete"
+            || (access.is_some() && assert_runner_access(access, runner).is_err())
+        {
+            return Err("stale Runner identity observation".into());
+        }
+        let project = runner
+            .projects
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or("Project no longer registered")?;
+        if project.deferred_root_path.as_deref() != Some(path)
+            || project.revision.as_deref() != Some(revision)
+            || project.registration_incarnation.as_deref() != Some(incarnation)
+        {
+            return Err("stale Project identity observation".into());
+        }
+        let mut observed = project.clone();
+        observed.root_fingerprint = Some(fingerprint.to_owned());
+        observed.path = canonical_path.to_owned();
+        validate_project_summary(&observed).map_err(str::to_string)?;
+        *project = observed;
+        Ok(())
     }
 
     /// Insert or replace a single project summary in the cached project list

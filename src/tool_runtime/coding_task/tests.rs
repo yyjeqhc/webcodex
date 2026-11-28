@@ -202,6 +202,7 @@ fn output_guidance_preserves_unproven_validation_and_rejects_invalid_receipts() 
 
 fn resolved_agent(client_id: &str) -> ResolvedProject {
     ResolvedProject {
+        root_probe_deferred: false,
         input: "demo".to_string(),
         resolved_id: format!("agent:{client_id}:demo"),
         config: ProjectConfig {

@@ -222,7 +222,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         // Aliases and Project refs retain their ordinary live resolution. An
         // exact retired Project ID can also select the caller's stored history.
-        let resolution = self.resolve_project_input_for_auth(&project, auth).await;
+        let resolution = self.resolve_project_metadata_for_auth(&project, auth).await;
         let project = resolution
             .as_ref()
             .map_or(project.as_str(), |p| p.resolved_id.as_str());
@@ -687,6 +687,11 @@ impl ToolRuntime {
                 }
                 None
             }
+            (Some(project), SessionAccess::BoundTarget) => Some(
+                self.resolve_project_metadata_for_auth(project, auth)
+                    .await
+                    .map_err(super::ProjectResolverError::into_tool_result)?,
+            ),
             (Some(project), _) => Some(
                 self.resolve_session_project(session_id, tool_name, project, project, auth)
                     .await?,

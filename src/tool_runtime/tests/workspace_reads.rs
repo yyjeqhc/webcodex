@@ -4,6 +4,7 @@ use std::time::Duration;
 
 fn resolved() -> ResolvedProject {
     ResolvedProject {
+        root_probe_deferred: false,
         input: "short-alias".into(),
         resolved_id: "agent:runner:project".into(),
         config: crate::projects::ProjectConfig {

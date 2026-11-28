@@ -26,6 +26,7 @@ async fn setup(
             ..Default::default()
         },
         vec![RunnerProjectSummary {
+            deferred_root_path: None,
             registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
             id: PROJECT_ID.to_string(),
             name: Some(PROJECT_ID.to_string()),
@@ -1134,6 +1135,7 @@ async fn setup_ssh_with_capabilities(
             ..Default::default()
         },
         vec![RunnerProjectSummary {
+            deferred_root_path: None,
             registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
             id: PROJECT_ID.to_string(),
             name: Some(PROJECT_ID.to_string()),

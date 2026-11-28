@@ -139,7 +139,7 @@ impl ToolRuntime {
                 if super::kernel::check_runtime_tool_scope(auth, "list_projects").is_err() {
                     return error("resource_access_denied");
                 }
-                match self.resolve_project_input_for_auth(&raw, auth).await {
+                match self.resolve_project_metadata_for_auth(&raw, auth).await {
                     Ok(r) => Some(r.resolved_id),
                     Err(_) => return error("resource_unavailable"),
                 }
@@ -349,7 +349,7 @@ impl ToolRuntime {
                         incomplete = true;
                         continue;
                     };
-                    let resolved = match self.resolve_project_input_for_auth(id, auth).await {
+                    let resolved = match self.resolve_project_metadata_for_auth(id, auth).await {
                         Ok(r) => r,
                         Err(_) => {
                             incomplete = true;

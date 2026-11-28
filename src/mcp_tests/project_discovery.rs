@@ -61,6 +61,7 @@ async fn bounded_project_discovery_mcp_surfaces() {
                 format!("project-{index:04}")
             };
             RunnerProjectSummary {
+                deferred_root_path: None,
                 registration_incarnation: None,
                 name: Some(format!("Large Fixture Project {index:04}")),
                 path: format!("/tmp/large-fixture/{id}"),

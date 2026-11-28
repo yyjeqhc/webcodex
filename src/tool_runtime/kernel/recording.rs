@@ -525,7 +525,7 @@ impl ToolRuntime {
             .map(str::trim)
             .filter(|project| !project.is_empty())?;
         let resolved = self
-            .resolve_project_input_for_auth(request_project, auth)
+            .resolve_project_metadata_for_auth(request_project, auth)
             .await
             .ok()?;
         if session_project == resolved.resolved_id {

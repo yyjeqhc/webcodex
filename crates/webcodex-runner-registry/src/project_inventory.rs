@@ -397,6 +397,27 @@ impl RunnerRegistry {
             completed
                 .projects
                 .sort_by(|left, right| left.id.cmp(&right.id));
+            for project in &mut completed.projects {
+                if project.deferred_root_path.is_some() && project.root_fingerprint.is_none() {
+                    if let Some(old) = runner.projects.iter().find(|old| {
+                        old.id == project.id
+                            && old.deferred_root_path.as_deref().unwrap_or(&old.path)
+                                == project
+                                    .deferred_root_path
+                                    .as_deref()
+                                    .unwrap_or(&project.path)
+                            && project.revision.is_some()
+                            && old.revision == project.revision
+                            && project.registration_incarnation.is_some()
+                            && old.registration_incarnation == project.registration_incarnation
+                    }) {
+                        if old.root_fingerprint.is_some() {
+                            project.path = old.path.clone();
+                            project.root_fingerprint = old.root_fingerprint.clone();
+                        }
+                    }
+                }
+            }
             runner.projects = completed.projects;
             runner.project_inventory.status = status(
                 "complete",

@@ -602,6 +602,7 @@ fn runner_project_summary_with_shutdown(
     // temporarily project that sentinel on the wire when there is no genuine
     // project kind. New Servers ignore it in favor of `registration_source`.
     RunnerProjectSummary {
+        deferred_root_path: (!probe).then(|| project.path.clone()),
         id: project.id.clone(),
         name: project.name.clone().or_else(|| Some(project.id.clone())),
         path: resolved_path,

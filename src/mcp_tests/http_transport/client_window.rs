@@ -691,6 +691,7 @@ async fn supplied_window_identity_cannot_grant_foreign_project_or_session_author
         "identity-owner-runner",
         "identity-owner-instance",
         vec![RunnerProjectSummary {
+            deferred_root_path: None,
             registration_incarnation: None,
             id: "repo".into(),
             name: None,

@@ -75,6 +75,19 @@ impl ToolRuntime {
         recorder_metadata.mark_business_execution();
         let recorder_metadata = &context.recorder;
         let project_resolution = match call.project() {
+            Some(project)
+                if matches!(
+                    call.tool_name(),
+                    "list_sessions"
+                        | "read_session_handoff"
+                        | "work_result_state"
+                        | "work_result_activity_detail"
+                        | "list_external_observations"
+                        | "read_validation_summary"
+                ) =>
+            {
+                Some(self.resolve_project_metadata_for_auth(project, auth).await)
+            }
             Some(project) => Some(self.resolve_project_input_for_auth(project, auth).await),
             None => None,
         };

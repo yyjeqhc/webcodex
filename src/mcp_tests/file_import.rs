@@ -333,6 +333,7 @@ async fn mcp_import_runtime_inner(
         "importer",
         "inst-import",
         vec![RunnerProjectSummary {
+            deferred_root_path: None,
             registration_incarnation: None,
             id: "demo".to_string(),
             name: Some("demo".to_string()),

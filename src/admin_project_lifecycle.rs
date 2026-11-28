@@ -308,7 +308,7 @@ impl AdminProjectLifecycleService {
                 .await
                 .map_err(|_| api_error(503, "agent_unavailable"))?;
         }
-        let client = runtime
+        let mut client = runtime
             .runner_registry
             .get_runner_semantic_view_for_auth(&client_id, access.as_ref())
             .await
@@ -322,6 +322,29 @@ impl AdminProjectLifecycleService {
         if action == "update_allow_patch" && !client.supports(RunnerFeature::ProjectSettingsUpdate)
         {
             return Err(api_error(409, "unsupported_runner_version"));
+        }
+        if action == "update_allow_patch" {
+            if let Some(project) = client
+                .view
+                .projects
+                .iter()
+                .find(|p| p.id == project_id && p.deferred_root_path.is_some())
+            {
+                if project.revision.as_deref() != Some(expected_revision) {
+                    return Err(api_error(409, "revision_conflict"));
+                }
+                let instance = client.view.runner_instance_id.clone();
+                runtime
+                    .observe_deferred_project_root(&client_id, &instance, project, auth)
+                    .await
+                    .map_err(|_| api_error(409, "project_root_unverified"))?;
+                client = runtime
+                    .runner_registry
+                    .get_runner_semantic_view_for_auth(&client_id, access.as_ref())
+                    .await
+                    .filter(|v| v.view.runner_instance_id == instance && v.view.connected)
+                    .ok_or_else(|| api_error(503, "agent_unavailable"))?;
+            }
         }
         let project = client.view.projects.iter().find(|p| p.id == project_id);
         if action != "unregister" && project.is_none() {
@@ -831,6 +854,7 @@ fn lifecycle_summary(output: &Value, id: &str) -> Option<RunnerProjectSummary> {
     let incarnation = output.get("registration_incarnation")?.as_str()?;
     uuid::Uuid::parse_str(incarnation).ok()?;
     Some(RunnerProjectSummary {
+        deferred_root_path: None,
         registration_incarnation: Some(incarnation.to_string()),
         id: id.to_string(),
         name: output

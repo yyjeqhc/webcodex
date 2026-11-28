@@ -1,7 +1,9 @@
 //! Complete admission-time identities for requests that must not retarget at dequeue.
 use super::state::RunnerRecord;
 use super::RunnerFeature;
-use webcodex_core::runner_operation::{RunnerFileOperation, RunnerOperation};
+use webcodex_core::runner_operation::{
+    RunnerFileOperation, RunnerOperation, RunnerProjectOperationKind,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct ProjectDispatchFence {
@@ -38,6 +40,14 @@ pub struct PersistentShellTarget {
 pub(super) enum PendingDispatchFence {
     Unfenced,
     Project(ProjectDispatchFence),
+    ProjectIdentity {
+        runner_instance_id: String,
+        project_id: String,
+        path: String,
+        revision: String,
+        incarnation: String,
+        access: Option<crate::RunnerAccess>,
+    },
     PersistentShell(PersistentShellTarget),
     McpGateway(McpGatewayDispatchFence),
     RunnerInstruction {
@@ -64,6 +74,27 @@ impl PendingDispatchFence {
         operation: &RunnerOperation,
     ) -> Result<(), &'static str> {
         let valid = match (self, operation) {
+            (Self::Unfenced, RunnerOperation::Project(op))
+                if op.kind == RunnerProjectOperationKind::ProbeIdentity =>
+            {
+                false
+            }
+            (
+                Self::ProjectIdentity {
+                    project_id,
+                    path,
+                    revision,
+                    incarnation,
+                    ..
+                },
+                RunnerOperation::Project(op),
+            ) => {
+                op.kind == RunnerProjectOperationKind::ProbeIdentity
+                    && serde_json::from_str::<serde_json::Value>(&op.payload).is_ok_and(|v| {
+                        v == serde_json::json!({"project_id":project_id,
+                            "path":path,"revision":revision,"incarnation":incarnation})
+                    })
+            }
             (Self::Unfenced, operation) => !matches!(
                 operation,
                 RunnerOperation::McpGateway(_)
@@ -148,6 +179,36 @@ impl PendingDispatchFence {
         }
         match self {
             Self::Unfenced | Self::McpGateway(_) => None,
+            Self::ProjectIdentity {
+                runner_instance_id,
+                project_id,
+                path,
+                revision,
+                incarnation,
+                access,
+            } => {
+                let valid = runner.is_some_and(|runner| {
+                    runner.runner_instance_id == *runner_instance_id
+                        && runner.disconnected_at.is_none()
+                        && crate::now_ts().saturating_sub(runner.last_seen)
+                            <= crate::RUNNER_ONLINE_WINDOW_SECS
+                        && runner.project_inventory.status.sync_state == "complete"
+                        && runner.supports(RunnerFeature::ProjectPathRegistration)
+                        && access.as_ref().is_none_or(|a| {
+                            super::access_control::assert_runner_access(Some(a), runner).is_ok()
+                        })
+                        && runner.projects.iter().any(|p| {
+                            p.id == *project_id
+                                && p.deferred_root_path.as_ref() == Some(path)
+                                && p.revision.as_ref() == Some(revision)
+                                && p.registration_incarnation.as_ref() == Some(incarnation)
+                        })
+                });
+                (!valid).then(|| {
+                    "stale_project: Project identity observation target changed before dispatch"
+                        .into()
+                })
+            }
             Self::Computer {
                 runner_instance_id,
                 access,
@@ -256,6 +317,8 @@ impl PendingDispatchFence {
                         })
                         && runner.projects.iter().any(|project| {
                             !project.disabled
+                                && (project.deferred_root_path.is_none()
+                                    || project.root_fingerprint.is_some())
                                 && shell.request.runtime_project_id
                                     == format!("agent:{}:{}", runner.client_id, project.id)
                                 && webcodex_core::runner_protocol::workflow_project_identity(

@@ -1496,6 +1496,10 @@ pub struct RunnerProjectSummary {
     /// root. Missing means the Runner could not prove a current root identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_fingerprint: Option<String>,
+    /// Registered path for a root that passive inventory intentionally does not open.
+    /// After an explicit observation, path may hold the canonical root instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_root_path: Option<String>,
     /// Explicit persisted lineage only. Never inferred from paths, repository
     /// names, Git remotes, registration provenance, or project kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]

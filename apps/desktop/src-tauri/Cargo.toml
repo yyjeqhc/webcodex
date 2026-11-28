@@ -49,6 +49,7 @@ winreg = "0.55"
 
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 tempfile = "3"
 
 [profile.dogfood]

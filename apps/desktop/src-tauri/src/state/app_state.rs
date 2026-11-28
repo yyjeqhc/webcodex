@@ -33,6 +33,7 @@ impl AppState {
             connections,
             operations: OperationController::new(activity.clone()),
             refresh_lock: tokio::sync::Mutex::new(()),
+            runner_settings_reader: Arc::new(Mutex::new(())),
             activity,
             shutdown_signal: CancellationSignal::new(),
             shutdown_started: AtomicBool::new(false),
@@ -78,7 +79,16 @@ impl AppState {
             self.connections
                 .project(&mut snapshot.connections, snapshot.readiness.runtime_ready);
         }
-        snapshot.current_operation = self.operations.current();
+        match self.operations.observe() {
+            Ok(current) => snapshot.current_operation = current,
+            Err(error) => {
+                snapshot.current_operation = None;
+                snapshot
+                    .component_errors
+                    .insert(error.component(), error.clone());
+                snapshot.runtime_error = Some(error);
+            }
+        }
         snapshot.environment_setup = environment_invitation::setup_snapshot(&snapshot);
         snapshot.activity_sequence = self.activity.latest_sequence();
         if snapshot.persistent_environment.is_none()
@@ -147,8 +157,8 @@ impl AppState {
         if self.shutdown_signal.is_cancelled() {
             return Err(cancelled_error());
         }
-        if let Some(current) = self.operations.current() {
-            return Err(crate::operation::busy_error(Some(&current)));
+        if let Some(current) = self.operations.observe()? {
+            return Err(crate::operation::busy_error(&current));
         }
         if self.get_state().configuration_issue.is_some() {
             return Err(DesktopError::new(
@@ -163,8 +173,8 @@ impl AppState {
         if self.shutdown_signal.is_cancelled() {
             return Err(cancelled_error());
         }
-        if let Some(current) = self.operations.current() {
-            return Err(crate::operation::busy_error(Some(&current)));
+        if let Some(current) = self.operations.observe()? {
+            return Err(crate::operation::busy_error(&current));
         }
         // Coalesce overlapping background refreshes: if another refresh already
         // published a fresher snapshot while we waited, return it directly.
@@ -195,11 +205,7 @@ impl AppState {
         let plan = {
             let slot = self.core.lock().await;
             let Some(core) = slot.as_ref() else {
-                return Err(DesktopError::new(
-                    "desktop_operation_busy",
-                    "Desktop mutation state is already in use",
-                    "Wait for the current operation to finish.",
-                ));
+                return Err(self.operations.missing_core_error());
             };
             if let Some(environment_id) = core.config.persistent_environment.clone() {
                 RefreshPlan::Persistent { environment_id }
@@ -685,7 +691,7 @@ impl AppState {
         kind: DesktopOperationKind,
         cancellable: bool,
     ) -> DesktopResult<(
-        OperationAdmission,
+        OperationAdmission<'_>,
         CancellationContext,
         DesktopCore,
         ProcessBaseline,
@@ -702,30 +708,41 @@ impl AppState {
                 "Open Diagnostics or explicitly restore the previous known-good configuration.",
             ));
         }
-        let operation = self.operations.admit(kind, cancellable)?;
-        let cancellation =
-            CancellationContext::new(operation.cancellation.clone(), self.shutdown_signal.clone());
-        let baseline = self.capture_process_baseline().await;
-        let core = {
+        let mut operation = self.operations.admit(kind, cancellable)?;
+        let cancellation = operation.cancellation_context(self.shutdown_signal.clone());
+        // Both waits precede dispatch. Cancelling either wait cannot lose the
+        // core, leave a queued write, or skip cleanup of an external effect.
+        let start_deadline = Deadline::after(OPERATION_SLOT_TIMEOUT);
+        let prepare = async {
+            let baseline = self.capture_process_baseline().await;
             let mut slot = self.core.lock().await;
-            slot.take()
+            cancellation.check()?;
+            if start_deadline.is_elapsed() {
+                return Err(operation_start_timeout());
+            }
+            let core = slot.take().ok_or_else(crate::operation::core_unavailable)?;
+            Ok((core, baseline))
         };
-        let Some(core) = core else {
-            let error = DesktopError::new(
-                "desktop_operation_busy",
-                "Desktop mutation state is already in use",
-                "Wait for the current operation to finish.",
-            );
-            let result: DesktopResult<()> = Err(error.clone());
-            self.operations.finish(&operation.id, &result);
-            return Err(error);
+        let prepared = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(cancelled_error()),
+            _ = tokio::time::sleep_until(start_deadline.instant()) => Err(operation_start_timeout()),
+            result = prepare => result,
         };
+        let (core, baseline) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                operation.finish(&Err::<(), _>(error.clone()));
+                return Err(error);
+            }
+        };
+        operation.mark_dispatched();
         Ok((operation, cancellation, core, baseline))
     }
 
     async fn finish_operation(
         &self,
-        operation: OperationAdmission,
+        operation: OperationAdmission<'_>,
         cancellation: CancellationContext,
         mut core: DesktopCore,
         baseline: ProcessBaseline,
@@ -745,8 +762,23 @@ impl AppState {
         }
         let completion =
             operation_completion::OperationCompletion::new(operation.kind, result.as_ref().err());
+        let recovery_error = || {
+            crate::operation::core_unavailable().with_operation_context(
+                Some(&operation.id),
+                None,
+                None,
+                None,
+            )
+        };
         let cleanup = if completion.requires_process_cleanup() {
-            Some(self.cleanup_new_owned_processes(&baseline).await)
+            let mut supervisor =
+                tokio::time::timeout(OPERATION_SLOT_TIMEOUT, self.supervisor.lock())
+                    .await
+                    .map_err(|_| recovery_error())?;
+            Some(
+                self.cleanup_new_owned_processes(&mut supervisor, &baseline)
+                    .await,
+            )
         } else {
             None
         };
@@ -757,10 +789,12 @@ impl AppState {
             core.publish_snapshot();
         }
         {
-            let mut slot = self.core.lock().await;
+            let mut slot = tokio::time::timeout(OPERATION_SLOT_TIMEOUT, self.core.lock())
+                .await
+                .map_err(|_| recovery_error())?;
             *slot = Some(core);
         }
-        self.operations.finish(&operation.id, &result);
+        operation.finish(&result);
         match result {
             Ok(_) => Ok(self.get_state()),
             Err(error) => Err(error),
@@ -789,8 +823,11 @@ impl AppState {
         }
     }
 
-    async fn cleanup_new_owned_processes(&self, baseline: &ProcessBaseline) -> ProcessCleanup {
-        let mut supervisor = self.supervisor.lock().await;
+    async fn cleanup_new_owned_processes(
+        &self,
+        supervisor: &mut ProcessSupervisor,
+        baseline: &ProcessBaseline,
+    ) -> ProcessCleanup {
         let mut cleanup = ProcessCleanup::default();
         let mut keys = supervisor.keys();
         keys.sort_by_key(|key| match key {
@@ -883,6 +920,14 @@ impl ProcessCleanup {
             ProcessKey::RegularTunnel(_) => self.regular_tunnel = true,
         }
     }
+}
+
+fn operation_start_timeout() -> DesktopError {
+    DesktopError::new(
+        "desktop_operation_start_timeout",
+        "Desktop timed out waiting to start the operation",
+        "Check Activity and try again. The operation did not start.",
+    )
 }
 
 fn project_not_loaded_error() -> DesktopError {

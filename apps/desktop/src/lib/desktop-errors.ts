@@ -988,6 +988,27 @@ function classifyRule(error: DesktopError, diag: {
     };
   }
 
+  if (code === "desktop_operation_unsettled") {
+    return {
+      titleKey: "operation.overdue",
+      actionKey: "operation.overdueHelp",
+      component: "desktop",
+      recoveryKind: "manual_check",
+      safeAction: "open_activity",
+      retryAllowed: false,
+    };
+  }
+  if (code === "desktop_core_unavailable" || code === "desktop_operation_start_timeout") {
+    const timedOutBeforeStart = code === "desktop_operation_start_timeout";
+    return {
+      titleKey: timedOutBeforeStart ? "error.operationStartTimeout" : "error.coreUnavailable",
+      actionKey: timedOutBeforeStart ? "error.operationStartTimeoutAction" : "error.coreUnavailableAction",
+      component: "desktop",
+      recoveryKind: timedOutBeforeStart ? "user_action" : "manual_check",
+      safeAction: "open_activity",
+      retryAllowed: timedOutBeforeStart,
+    };
+  }
   if (code === "desktop_state_unavailable") {
     return {
       titleKey: "error.stateUnavailableTitle",

@@ -1289,7 +1289,11 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<Option<MachineEventReceiver>> {
         cancellation.check()?;
-        let mut supervisor = self.supervisor.lock().await;
+        let mut supervisor = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(cancelled_error()),
+            supervisor = self.supervisor.lock() => supervisor,
+        };
         cancellation.check()?;
         supervisor.spawn_owned(kind, command, machine_stdout).await
     }

@@ -263,8 +263,7 @@ async fn workspace_observation_fences_completed_concurrent_operations_and_persis
                 .operations
                 .admit(DesktopOperationKind::RuntimeRefresh, false)
                 .unwrap();
-            app.operations
-                .finish(&operation.id, &Ok::<_, DesktopError>(()));
+            operation.finish(&Ok::<_, DesktopError>(()));
         }
         release_tx.send(()).unwrap();
         let result = query.await.unwrap();

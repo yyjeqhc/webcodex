@@ -25,7 +25,8 @@ export async function refreshOrObserveDesktopState(): Promise<DesktopState | nul
   try {
     return await desktopApi.refresh();
   } catch (value) {
-    if (normalizeDesktopError(value).code !== "desktop_operation_busy") throw value;
+    const { code } = normalizeDesktopError(value);
+    if (code !== "desktop_operation_busy" && code !== "desktop_operation_unsettled") throw value;
     return desktopApi.getState().catch(() => null);
   }
 }

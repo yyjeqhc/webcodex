@@ -38,6 +38,7 @@ export function useDesktopWorkspace() {
   const mainRef = useRef<HTMLElement>(null);
   const hasCurrentOperation = Boolean(state?.current_operation);
   const hasLoadedState = Boolean(state);
+  const coreUnavailable = state?.runtime_error?.code === "desktop_core_unavailable" || error?.code === "desktop_core_unavailable";
   const shouldObserveChatgptActivity = Boolean(
     state?.readiness.runtime_ready
       && state?.project?.runtime_project_id
@@ -152,7 +153,7 @@ export function useDesktopWorkspace() {
       try {
         const initial = await desktopApi.getState();
         if (cancelled) return;
-        if (initial.current_operation || initial.configuration_issue) {
+        if (initial.current_operation || initial.configuration_issue || initial.runtime_error?.code === "desktop_core_unavailable") {
           commitState(initial);
           bootstrapSettled = true;
           return;
@@ -249,7 +250,7 @@ export function useDesktopWorkspace() {
       timeoutId = window.setTimeout(() => {
         void (async () => {
           const observedVersion = stateVersionRef.current;
-          const refreshRuntime = Boolean(state?.persistent_environment && !hasCurrentOperation && !refreshing);
+          const refreshRuntime = Boolean(state?.persistent_environment && !coreUnavailable && !hasCurrentOperation && !refreshing);
           // Keep this separate from refreshing: changing that effect dependency
           // would cancel this observation before it can commit its result.
           if (refreshRuntime) setRuntimeObservations(count => count + 1);
@@ -260,7 +261,10 @@ export function useDesktopWorkspace() {
             if (next && !cancelled && stateVersionRef.current === observedVersion) {
               commitState(next);
             }
-          } catch {
+          } catch (value) {
+            if (!cancelled && stateVersionRef.current === observedVersion && normalizeDesktopError(value).code === "desktop_core_unavailable") {
+              recordError(value);
+            }
             // Observation is best-effort. A transient invoke failure must not
             // create an error storm or a second concurrent observer.
           } finally {
@@ -276,7 +280,7 @@ export function useDesktopWorkspace() {
       cancelled = true;
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     };
-  }, [commitState, hasCurrentOperation, hasLoadedState, refreshing, state?.persistent_environment]);
+  }, [commitState, coreUnavailable, hasCurrentOperation, hasLoadedState, recordError, refreshing, state?.persistent_environment]);
 
   useEffect(() => {
     if (!shouldObserveChatgptActivity || !chatgptActivityIdentity) return;

@@ -598,7 +598,7 @@ impl AppState {
         let mut slot = self.core.lock().await;
         let core = slot
             .as_mut()
-            .ok_or_else(|| crate::runtime_selection::error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         if core.configuration_issue.is_some()
             || persisted_environment(&core.config)
             || !core.config.topology.as_ref().is_some_and(|t| {

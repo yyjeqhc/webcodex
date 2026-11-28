@@ -1,9 +1,29 @@
 # Desktop operation completion ownership
 
-The admission model remains serial: `OperationController` permits one mutation,
-`begin_operation` takes the Core without retaining its mutex, and ordinary reads
-use the independently published snapshot. No new parallel operation admission or
-cleanup callback is introduced.
+Desktop admits one mutation at a time. The admission guard owns its exact
+operation ID from admission through completion. Before dispatch, the supervisor
+baseline and Core checkout share a cancellable 30-second wait. Dropping the
+request during that wait releases admission. Ordinary reads can observe the
+independently published snapshot while a mutation owns the Core.
+
+Runner settings reads capture their target, release the Core before supervisor
+and file I/O, then check the target and operation generation before returning.
+A stalled inspection has a 30-second caller deadline. Its file worker retains
+the single reader permit until it exits, so repeated reads stay bounded.
+
+After dispatch, loss of the guard during a panic, task abort, or failed Core
+return records the operation ID and closes mutation admission for this Desktop
+process. Its snapshot reports an internal state error and directs the user to
+fully quit Desktop, reopen it, and verify the outcome. A worker or external
+effect can outlive a dropped future. Successful completion returns the same
+Core before releasing admission. Failure cleanup and Core return each have a
+30-second limit on lock acquisition, and the supervisor retains its existing
+per-process cleanup deadlines.
+
+Cooperatively cancellable operations have a ten-minute outer deadline. The UI
+reports an overdue operation at that deadline, or after 30 seconds of waiting
+for an explicit stop. A live owner retains its slot through settlement,
+including during migration and update. Completion clears the overdue status.
 
 Completion now separates two capabilities. AppState owns the supervisor, exact
 process-generation baseline, cancellation normalization, Core return and admission

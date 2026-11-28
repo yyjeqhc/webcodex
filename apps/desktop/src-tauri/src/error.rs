@@ -298,6 +298,10 @@ impl ErrorDiagnostic {
             | "desktop_data_dir_invalid"
             | "desktop_data_dir_unavailable"
             | "state_io" => (Config, ManualCheck, OpenDiagnostics, false),
+            "desktop_core_unavailable" | "desktop_operation_unsettled" => {
+                (Desktop, ManualCheck, OpenActivity, false)
+            }
+            "desktop_operation_start_timeout" => (Desktop, UserAction, OpenActivity, true),
             "desktop_state_unavailable" => (Desktop, ManualCheck, OpenDiagnostics, false),
             "not_configured" | "setup_not_found" => (Environment, UserAction, OpenSetup, false),
             "runtime_switch_jobs_confirmation_required"

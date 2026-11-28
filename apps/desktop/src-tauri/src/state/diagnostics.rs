@@ -27,7 +27,7 @@ impl AppState {
             let slot = self.core.lock().await;
             let core = slot
                 .as_ref()
-                .ok_or_else(|| crate::operation::busy_error(self.operations.current().as_ref()))?;
+                .ok_or_else(|| self.operations.missing_core_error())?;
             let settings = core.runtime_settings_snapshot().await;
             let runtime = core.config.runtime.clone();
             let trace_target = core.managed_trace_target().await;
@@ -139,7 +139,7 @@ impl AppState {
             let slot = self.core.lock().await;
             let core = slot
                 .as_ref()
-                .ok_or_else(|| diagnostics::diagnostic_error("desktop_operation_busy"))?;
+                .ok_or_else(|| self.operations.missing_core_error())?;
             if core.config.runtime.as_ref().map(runtime_fence) != identity_fence
                 || core.config.runtime_selection_revision != settings.selection_revision
             {
@@ -281,7 +281,7 @@ impl AppState {
         let slot = self.core.lock().await;
         let core = slot
             .as_ref()
-            .ok_or_else(|| diagnostics::diagnostic_error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         let location = match kind {
             ResourceKind::RuntimeConsole => {
                 let runtime =
@@ -346,9 +346,9 @@ impl AppState {
         let slot = self.core.lock().await;
         let core = slot
             .as_ref()
-            .ok_or_else(|| diagnostics::diagnostic_error("desktop_operation_busy"))?;
-        if self.operations.current().is_some() {
-            return Err(diagnostics::diagnostic_error("desktop_operation_busy"));
+            .ok_or_else(|| self.operations.missing_core_error())?;
+        if let Some(current) = self.operations.current() {
+            return Err(crate::operation::busy_error(&current));
         }
         let runtime = core
             .config

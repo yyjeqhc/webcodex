@@ -34,7 +34,8 @@ function DesktopApp() {
   const [extensionTab, setExtensionTab] = useState<ExtensionTab>();
   const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | "access" | undefined>();
   const { state, activity, chatgptActivityQueryStatus, navigation, previousPage, setNavigation, refreshing, preserveWorkspacePollDeadline, error, setError, cancelSubmittingId, showSetup, setupOrigin, closeSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation } = useDesktopWorkspace();
-  const updates = useRuntimeUpdates(Boolean(state && !state.current_operation && !state.configuration_issue));
+  const coreFailure = state?.runtime_error?.code === "desktop_core_unavailable" ? state.runtime_error : null;
+  const updates = useRuntimeUpdates(Boolean(state && !state.current_operation && !state.configuration_issue && !coreFailure));
   const openSettings = (section: "diagnostics" | "runtime" | "network" | "access") => { setSettingsSection(section); setNavigation("settings"); };
   if (!state) {
     return (
@@ -63,6 +64,7 @@ function DesktopApp() {
   }
 
   const needsSetup = !state.topology || showSetup;
+  const shellError = coreFailure ?? error;
   const shellErrorActions: DesktopErrorActions = {
     onRefresh: () => void refresh(),
     onRetry: () => void refresh(),
@@ -105,12 +107,10 @@ function DesktopApp() {
           >
             <div>
               <span className="section-kicker">
-                {state.current_operation.phase === "cancelling"
-                  ? t("operation.cancelling")
-                  : t("operation.running")}
+                {t(`operation.${state.current_operation.phase}`)}
               </span>
               <strong>{operationLabel(state.current_operation.kind, t)}</strong>
-              <span>{t("operation.cancelNote")}</span>
+              <span>{t(state.current_operation.phase === "overdue" ? "operation.overdueHelp" : "operation.cancelNote")}</span>
             </div>
             {state.current_operation.cancellable && (
               <Button
@@ -130,9 +130,9 @@ function DesktopApp() {
             )}
           </section>
         )}
-        {error && !(navigation === "home" && state.runtime_error?.code === error.code) && (
+        {shellError && (coreFailure || !(navigation === "home" && state.runtime_error?.code === shellError.code)) && (
           <DesktopErrorAlert
-            error={error}
+            error={shellError}
             actions={shellErrorActions}
             disabled={refreshing || Boolean(state.current_operation)}
             showSafeMessage
@@ -141,7 +141,7 @@ function DesktopApp() {
         )}
         {navigation !== "settings" && !needsSetup && <ComputerPermissions welcome />}
         {navigation === "home" && !needsSetup && <UpdateBanner updates={updates} />}
-        {navigation === "home" && (state.configuration_issue || (!needsSetup && !completionEnvironment && (state.topology || state.runtime_error))) && <ReadinessBanner state={state} onState={commitState} onDiagnostics={() => openSettings("diagnostics")} onRuntime={() => openSettings("runtime")} onConnection={() => setNavigation("connection")} onActivity={() => setNavigation("activity")} onProjects={() => setNavigation("projects")} onSetup={openSetup} onRefresh={() => void refresh()} onProviders={kind => { setExtensionTab(kind === "mcp" ? "mcpProviders" : "codingAgents"); setNavigation("extensions"); }} />}
+        {navigation === "home" && !coreFailure && (state.configuration_issue || (!needsSetup && !completionEnvironment && (state.topology || state.runtime_error))) && <ReadinessBanner state={state} onState={commitState} onDiagnostics={() => openSettings("diagnostics")} onRuntime={() => openSettings("runtime")} onConnection={() => setNavigation("connection")} onActivity={() => setNavigation("activity")} onProjects={() => setNavigation("projects")} onSetup={openSetup} onRefresh={() => void refresh()} onProviders={kind => { setExtensionTab(kind === "mcp" ? "mcpProviders" : "codingAgents"); setNavigation("extensions"); }} />}
         {navigation === "home" && !state.configuration_issue && (!needsSetup && completionEnvironment !== null && completionEnvironment === (state.environment_setup?.environment_id ?? state.persistent_environment) && state.topology?.experience === "full" ? (
           <FirstRunCompletion onComplete={() => setCompletionEnvironment(null)}
             onProjects={() => { setCompletionEnvironment(null); setNavigation("projects"); }}

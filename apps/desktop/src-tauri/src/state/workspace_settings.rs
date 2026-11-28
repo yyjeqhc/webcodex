@@ -26,23 +26,55 @@ impl AppState {
     pub async fn runner_settings(
         &self,
     ) -> DesktopResult<crate::webcodex::settings::RunnerSettings> {
-        let mut slot = self.core.lock().await;
-        let core = slot
-            .as_mut()
-            .ok_or_else(|| crate::operation::busy_error(self.operations.current().as_ref()))?;
-        let runtime = core.runner_settings_runtime()?;
-        let can_restart = if core.config.persistent_environment.is_some() {
+        tokio::time::timeout(OPERATION_SLOT_TIMEOUT, self.inspect_runner_settings())
+            .await
+            .map_err(|_| desktop_state_unavailable("Runner settings inspection timed out"))?
+    }
+
+    async fn inspect_runner_settings(
+        &self,
+    ) -> DesktopResult<crate::webcodex::settings::RunnerSettings> {
+        let (runtime, environment, generation) = {
+            let slot = self.core.lock().await;
+            let core = slot
+                .as_ref()
+                .ok_or_else(|| self.operations.missing_core_error())?;
+            (
+                core.runner_settings_runtime()?,
+                core.config.persistent_environment.clone(),
+                self.operations.generation(),
+            )
+        };
+        // A slow supervisor or configuration file must not hold the mutation slot.
+        let reader = Arc::clone(&self.runner_settings_reader).lock_owned().await;
+        let can_restart = if environment.is_some() {
             runtime.runner_config.is_some() && runtime.runner_client_id.is_some()
         } else {
-            core.process_snapshot(ProcessKey::LocalRunner)
+            self.supervisor
+                .lock()
                 .await
+                .snapshot(ProcessKey::LocalRunner)
                 .is_some_and(|p| p.owned_by_desktop && p.phase == ProcessPhase::Running)
         };
-        tokio::task::spawn_blocking(move || {
-            crate::webcodex::settings::inspect(&runtime, can_restart)
+        let target = runtime.clone();
+        let settings = tokio::task::spawn_blocking(move || {
+            // Keep at most one file inspection running even if the caller times out.
+            let _reader = reader;
+            crate::webcodex::settings::inspect(&target, can_restart)
         })
         .await
-        .map_err(|_| desktop_state_unavailable("Settings worker stopped"))?
+        .map_err(|_| desktop_state_unavailable("Settings worker stopped"))?;
+        let slot = self.core.lock().await;
+        let core = slot
+            .as_ref()
+            .ok_or_else(|| self.operations.missing_core_error())?;
+        if self.operations.generation() != generation
+            || core.config.runtime.as_ref() != Some(&runtime)
+            || core.config.persistent_environment != environment
+        {
+            return Err(crate::runtime_selection::error("runtime_selection_changed"));
+        }
+        settings
     }
 
     pub async fn update_runner_settings(

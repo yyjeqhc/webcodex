@@ -11,6 +11,8 @@ pub use environment_invitation::{InvitationRequest, InvitationResponse};
 mod managed_instructions;
 mod mcp_providers;
 mod operation_completion;
+#[cfg(test)]
+mod operation_lifecycle_tests;
 mod path_inventory;
 pub use path_inventory::{ExportInventoryRequest, OpenInventoryRequest};
 #[cfg(all(test, windows, desktop_native_smoke))]
@@ -63,6 +65,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::Mutex;
 
+const OPERATION_SLOT_TIMEOUT: Duration = Duration::from_secs(30);
 const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const STALE_LOOPBACK_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const RUNNER_READY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -101,6 +104,7 @@ pub struct AppState {
     activity: ActivityLog,
     operations: OperationController,
     refresh_lock: tokio::sync::Mutex<()>,
+    runner_settings_reader: Arc<Mutex<()>>,
     shutdown_signal: CancellationSignal,
     shutdown_started: AtomicBool,
     shutdown_complete: CancellationSignal,

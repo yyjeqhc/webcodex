@@ -27,7 +27,7 @@ impl AppState {
             let slot = self.core.lock().await;
             let core = slot
                 .as_ref()
-                .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
+                .ok_or_else(|| self.operations.missing_core_error())?;
             (
                 core.adapter.binaries().ok().cloned(),
                 core.config.runtime_binary_source.clone(),
@@ -63,7 +63,7 @@ impl AppState {
             let slot = self.core.lock().await;
             let core = slot
                 .as_ref()
-                .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
+                .ok_or_else(|| self.operations.missing_core_error())?;
             (
                 core.config.runtime_selection_revision,
                 core.adapter.binaries().ok().cloned(),
@@ -82,7 +82,7 @@ impl AppState {
         let slot = self.core.lock().await;
         let core = slot
             .as_ref()
-            .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         let binaries_unchanged = match (binaries.as_ref(), core.adapter.binaries().ok()) {
             (None, None) => true,
             (Some(before), Some(current)) => {
@@ -146,7 +146,7 @@ impl AppState {
         let cache = {
             let slot = self.core.lock().await;
             slot.as_ref()
-                .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?
+                .ok_or_else(|| self.operations.missing_core_error())?
                 .config
                 .update_cache
                 .clone()
@@ -164,7 +164,7 @@ impl AppState {
                 &cache,
                 now,
                 false,
-                manual.then(|| "update_check_not_saved_runtime_busy".into()),
+                manual.then(|| self.operations.missing_core_error().code),
             ));
         };
         if core.configuration_issue.is_some() {
@@ -226,7 +226,7 @@ impl AppState {
         let mut slot = self.core.lock().await;
         let core = slot
             .as_mut()
-            .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         if core.configuration_issue.is_some() {
             return Err(runtime_selection::error("configuration_migration_failed"));
         }
@@ -310,7 +310,7 @@ impl AppState {
         let mut slot = self.core.lock().await;
         let core = slot
             .as_mut()
-            .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         if core.configuration_issue.is_some() {
             return Err(runtime_selection::error("configuration_migration_failed"));
         }
@@ -329,7 +329,7 @@ impl AppState {
         let slot = self.core.lock().await;
         let core = slot
             .as_ref()
-            .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         let notice = core
             .config
             .update_cache

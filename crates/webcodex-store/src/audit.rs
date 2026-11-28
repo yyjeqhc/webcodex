@@ -198,8 +198,28 @@ impl Database {
         changed_files_count: i64,
         job_ids_count: i64,
     ) -> anyhow::Result<()> {
-        let mut conn = self.lock_connection(crate::StoreDomain::Audit);
-        let tx = conn.transaction()?;
+        let conn = self.lock_connection(crate::StoreDomain::Audit);
+        // Reserve the writer before repairing window inventory.
+        let mut retries = 0;
+        let tx = loop {
+            match rusqlite::Transaction::new_unchecked(
+                &conn,
+                rusqlite::TransactionBehavior::Immediate,
+            ) {
+                Ok(tx) => break tx,
+                Err(rusqlite::Error::SqliteFailure(code, _))
+                    if retries < 2
+                        && matches!(
+                            code.code,
+                            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                        ) =>
+                {
+                    retries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(100 * retries));
+                }
+                Err(err) => return Err(err.into()),
+            }
+        };
         crate::window_inventory::repair_dirty_for_event(&tx, event.client_window_key.as_deref())?;
         insert_action_event_on_conn(&tx, event)?;
         for link in workflow_links {

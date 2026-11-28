@@ -28,6 +28,7 @@ pub(super) fn passive_project_read(tool: &str) -> bool {
         tool,
         "list_sessions"
             | "read_session_handoff"
+            | "get_session_handoff_state"
             | "get_work_result_state"
             | "read_work_result_activity_detail"
             | "list_external_observations"

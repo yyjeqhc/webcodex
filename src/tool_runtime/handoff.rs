@@ -193,7 +193,7 @@ impl ToolRuntime {
         let include_workspace = include_workspace.unwrap_or(deferred_target.is_none());
         let include_checkpoints = include_checkpoints.unwrap_or(deferred_target.is_none());
         let include_validation = include_validation.unwrap_or(true);
-        if let Some(target) = deferred_target.filter(|_| {
+        let observed = if let Some(target) = deferred_target.filter(|_| {
             include_workspace || (cfg!(feature = "workspace-checkpoints") && include_checkpoints)
         }) {
             let observed = self
@@ -210,7 +210,10 @@ impl ToolRuntime {
                 },
             )
             .await?;
-        }
+            Some(observed)
+        } else {
+            None
+        };
         let session_project = self
             .sessions
             .session_project(&session_id)
@@ -437,7 +440,12 @@ impl ToolRuntime {
                 })
                 .unwrap_or_else(|| (Vec::new(), false));
             let (workspace, continuity, observation) = self
-                .handoff_workspace_summary(&project, &continuity_changed_paths, history_complete)
+                .handoff_workspace_summary(
+                    &project,
+                    observed.as_ref(),
+                    &continuity_changed_paths,
+                    history_complete,
+                )
                 .await;
             closeout_workspace = observation;
             output["workspace"] = workspace;
@@ -448,7 +456,9 @@ impl ToolRuntime {
         #[cfg(feature = "workspace-checkpoints")]
         if has_project && include_checkpoints {
             let project = project.clone().unwrap_or_default();
-            let checkpoints = self.handoff_checkpoint_summary(&project, limit).await;
+            let checkpoints = self
+                .handoff_checkpoint_summary(&project, observed.as_ref(), limit)
+                .await;
             output["checkpoints"] = checkpoints;
         }
 
@@ -638,11 +648,21 @@ impl ToolRuntime {
     async fn handoff_workspace_summary(
         &self,
         project: &str,
+        observed: Option<&super::ResolvedProject>,
         session_changed_paths: &[Value],
         history_complete: bool,
     ) -> (Value, Value, Observation<WorkspaceFacts>) {
         let show_result = self
-            .show_changes(project.to_string(), None, Some(false), None, None, None)
+            .show_changes_observation(
+                project.to_string(),
+                None,
+                Some(false),
+                None,
+                None,
+                None,
+                false,
+                observed,
+            )
             .await;
         if !show_result.success {
             // Non-git project or git failure: do not fail the whole handoff.
@@ -742,10 +762,21 @@ impl ToolRuntime {
     /// `last_known_good` checkpoint (preferring `validation_status == passed`)
     /// and a bounded recent list. Never returns validation.commands or diffs.
     #[cfg(feature = "workspace-checkpoints")]
-    async fn handoff_checkpoint_summary(&self, project: &str, limit: usize) -> Value {
-        let list_result = self
-            .workspace_checkpoint_list(project.to_string(), Some(limit))
-            .await;
+    async fn handoff_checkpoint_summary(
+        &self,
+        project: &str,
+        observed: Option<&super::ResolvedProject>,
+        limit: usize,
+    ) -> Value {
+        let list_result = match observed {
+            Some(target) => {
+                self.list_resolved_checkpoints(project, &target.resolved_id, Some(limit))
+            }
+            None => {
+                self.workspace_checkpoint_list(project.to_string(), Some(limit))
+                    .await
+            }
+        };
         if !list_result.success {
             return json!({
                 "latest_last_known_good": Value::Null,

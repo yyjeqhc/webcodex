@@ -582,6 +582,8 @@ async fn deferred_root_discovery_is_passive_and_explicit_reference_rechecks_iden
     row.revision = Some(format!("sha256:{}", "1".repeat(64)));
     let caps = RunnerCapabilities {
         project_path_registration: true,
+        shell: true,
+        internal_posix_script: true,
         ..Default::default()
     };
     register_agent_projects(
@@ -653,23 +655,27 @@ async fn deferred_root_discovery_is_passive_and_explicit_reference_rechecks_iden
     .await
     .unwrap();
     assert!(summary.success, "{summary:?}");
-    let handoff = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        runtime.session_handoff_summary(
-            original_session.clone(),
-            Some(reference.clone()),
-            None,
-            None,
-            None,
-            false,
-            None,
-            auth,
-        ),
-    )
-    .await
-    .unwrap();
-    assert!(handoff.success, "{handoff:?}");
-    assert!(handoff.output.get("workspace").is_none());
+    let default_handoff = || async {
+        let handoff = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            runtime.session_handoff_summary(
+                original_session.clone(),
+                Some(reference.clone()),
+                None,
+                None,
+                None,
+                true,
+                None,
+                auth,
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(handoff.success, "{handoff:?}");
+        assert!(handoff.output.get("workspace").is_none());
+        assert!(handoff.output.get("checkpoints").is_none());
+    };
+    default_handoff().await;
     async fn reply(
         runtime: &ToolRuntime,
         row: &RunnerProjectSummary,
@@ -706,38 +712,44 @@ async fn deferred_root_discovery_is_passive_and_explicit_reference_rechecks_iden
         resolved.workflow_project_identity().as_deref(),
         Some(identity.as_str())
     );
-    let reused = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        runtime.resolve_project_input_for_auth(&reference, auth),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(
-        reused.workflow_project_identity(),
-        resolved.workflow_project_identity()
+    default_handoff().await;
+    let (explicit_handoff, ()) = tokio::join!(
+        runtime.session_handoff_summary(
+            original_session.clone(),
+            Some(reference.clone()),
+            Some(true),
+            Some(true),
+            None,
+            true,
+            None,
+            auth
+        ),
+        async {
+            reply(&runtime, &row, canonical_path, root('5')).await;
+            let request =
+                wait_for_runner_request_for_instance(&runtime, "deferred", "inst-deferred").await;
+            assert_ne!(
+                request.kind, "project_probe_identity",
+                "workspace must reuse the authorized root"
+            );
+            assert_eq!(request.cwd.as_deref(), Some(canonical_path));
+            let stdout = crate::tool_runtime::framed_clean_show_changes_test_stdout("head", false);
+            complete_patch_agent_request_for_instance(
+                &runtime,
+                "deferred",
+                "inst-deferred",
+                &request.request_id,
+                0,
+                &stdout,
+                "",
+            )
+            .await;
+        }
     );
-    // A different registration revision invalidates the previous observation.
-    row.revision = Some(format!("sha256:{}", "2".repeat(64)));
-    register_agent_projects(
-        &runtime,
-        "deferred",
-        Some("owner"),
-        RunnerCapabilities {
-            project_path_registration: true,
-            shell: true,
-            ..Default::default()
-        },
-        vec![row.clone()],
-    )
-    .await;
-    let (redirect, ()) = tokio::join!(
-        runtime.resolve_project_input_for_auth(&reference, auth),
-        reply(&runtime, &row, "/canonical/path", root('5'))
-    );
-    assert_eq!(redirect.unwrap().config.path, "/canonical/path");
-    // A mutable alias needs one observation for this request. The business
-    // Session guard and shell executor must both use that same target.
+    assert!(explicit_handoff.success, "{explicit_handoff:?}");
+    assert_eq!(explicit_handoff.output["workspace"]["git_available"], true);
+    // A separate execution verifies even a previously observed ordinary root.
+    // Its Session guard and shell executor share that single observation.
     let call = ToolCall::from_tool_name(
         "run_shell",
         json!({"project":reference,"session_id":original_session,
@@ -750,7 +762,7 @@ async fn deferred_root_discovery_is_passive_and_explicit_reference_rechecks_iden
             assert!(result.success, "{result:?}");
         },
         async {
-            reply(&runtime, &row, "/canonical/path", root('5')).await;
+            reply(&runtime, &row, canonical_path, root('5')).await;
             let command =
                 wait_for_runner_request_for_instance(&runtime, "deferred", "inst-deferred").await;
             assert_eq!(
@@ -758,26 +770,45 @@ async fn deferred_root_discovery_is_passive_and_explicit_reference_rechecks_iden
                 "unexpected second root probe: {}",
                 command.kind
             );
-            assert_eq!(command.cwd.as_deref(), Some("/canonical/path"));
+            assert_eq!(command.cwd.as_deref(), Some(canonical_path));
             complete_patch_agent_request_for_instance(
                 &runtime,
                 "deferred",
                 "inst-deferred",
                 &command.request_id,
                 0,
-                "/canonical/path",
+                canonical_path,
                 "",
             )
             .await;
         }
     );
-    // A verified alias is mutable even at the same TOML revision.
-    let (changed, ()) = tokio::join!(
+    // The registration, revision and allowed roots stay the same when the
+    // directory becomes a symlink. Neither the previous Ref nor the Session
+    // may inherit the newly observed root.
+    let (stale_ref, ()) = tokio::join!(
         runtime.resolve_project_input_for_auth(&reference, auth),
         reply(&runtime, &row, "/retargeted/path", root('6'))
     );
-    assert!(
-        changed.is_err(),
-        "old Project reference must never retarget"
+    assert!(stale_ref.is_err());
+    let session_call = ToolCall::from_tool_name(
+        "run_shell",
+        json!({
+            "project":canonical, "session_id":original_session, "command":"pwd"
+        }),
+    )
+    .unwrap();
+    let (denied, ()) = tokio::join!(
+        runtime.dispatch_with_auth(session_call, auth),
+        reply(&runtime, &row, "/retargeted/path", root('6'))
     );
+    assert!(!denied.success, "{denied:?}");
+    assert_eq!(
+        denied.output["error_kind"],
+        "session_project_identity_changed"
+    );
+    assert!(runtime
+        .resolve_project_input_for_auth(&reference, auth)
+        .await
+        .is_err());
 }

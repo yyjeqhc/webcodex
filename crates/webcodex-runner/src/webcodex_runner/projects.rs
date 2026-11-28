@@ -318,6 +318,24 @@ mod durability_tests {
             serde_json::json!(summary.root_fingerprint)
         );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), content);
+        #[cfg(unix)]
+        {
+            let other = tmp.path().join("other");
+            std::fs::create_dir(&other).unwrap();
+            policy.allowed_roots.push(other.clone());
+            std::fs::remove_dir(&root).unwrap();
+            std::os::unix::fs::symlink(&other, &root).unwrap();
+            let result = probe(&policy, &payload);
+            assert_eq!(result.exit_code, Some(0), "{result:?}");
+            let observed: serde_json::Value =
+                serde_json::from_str(&result.stdout.unwrap()).unwrap();
+            assert_eq!(
+                observed["path"],
+                other.canonicalize().unwrap().to_str().unwrap()
+            );
+            assert_ne!(observed["root_fingerprint"], output["root_fingerprint"]);
+            assert_eq!(observed["revision"], output["revision"]);
+        }
         let mut denied = policy.clone();
         denied.allowed_roots = vec![registry.clone()];
         assert_ne!(probe(&denied, &payload).exit_code, Some(0));

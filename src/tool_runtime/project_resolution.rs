@@ -64,6 +64,7 @@ pub(crate) struct ResolvedProject {
     pub(crate) input: String,
     pub(crate) resolved_id: String,
     pub(crate) config: ProjectConfig,
+    /// Inventory defers this root, even after an earlier request observed it.
     pub(crate) root_probe_deferred: bool,
     /// Root identity from the same Runner project-inventory snapshot that
     /// produced this resolution. It is descriptive only and never authorizes
@@ -506,13 +507,7 @@ impl ToolRuntime {
             name: project.name.clone(),
             path: project.path.clone(),
             allow_patch: project.allow_patch,
-            // A known redirect can change without editing its registration TOML.
-            root_probe_deferred: project.deferred_root_path.as_ref().is_some_and(|raw| {
-                let verbatim_unc = project.path.strip_prefix(r"\\?\UNC\");
-                let same_root = raw == &project.path
-                    || verbatim_unc.is_some_and(|tail| raw.strip_prefix(r"\\") == Some(tail));
-                project.root_fingerprint.is_none() || !same_root
-            }),
+            root_probe_deferred: project.deferred_root_path.is_some(),
             root_fingerprint: project.root_fingerprint.clone(),
             // Keep the registration identity from the last complete inventory
             // across a disconnect. An incomplete inventory proves no binding.

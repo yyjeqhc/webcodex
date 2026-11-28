@@ -2650,6 +2650,7 @@ impl ToolRuntime {
             max_hunk_lines,
             session_event_limit,
             false,
+            None,
         )
         .await
     }
@@ -2660,11 +2661,11 @@ impl ToolRuntime {
         &self,
         project: String,
     ) -> ToolResult {
-        self.show_changes_observation(project, None, Some(false), None, None, None, true)
+        self.show_changes_observation(project, None, Some(false), None, None, None, true, None)
             .await
     }
 
-    async fn show_changes_observation(
+    pub(in crate::tool_runtime) async fn show_changes_observation(
         &self,
         project: String,
         session_id: Option<String>,
@@ -2673,6 +2674,7 @@ impl ToolRuntime {
         max_hunk_lines: Option<usize>,
         session_event_limit: Option<usize>,
         read_only_presentation: bool,
+        observed: Option<&crate::tool_runtime::ResolvedProject>,
     ) -> ToolResult {
         let include_diff = include_diff.unwrap_or(false);
         let max_hunks = max_hunks
@@ -2713,10 +2715,17 @@ set +e
                 safe_config = super::super::changes::CHANGES_GIT_SAFE_CONFIG_SETUP,
             );
         }
-        let output = match self
-            .run_project_internal_posix_script_capture(&project, command, 30, None)
-            .await
-        {
+        let capture = match observed {
+            Some(target) => {
+                self.run_resolved_project_command_capture(&target.config, command, 30, None, true)
+                    .await
+            }
+            None => {
+                self.run_project_internal_posix_script_capture(&project, command, 30, None)
+                    .await
+            }
+        };
+        let output = match capture {
             Ok(output) => output,
             Err(e) => return ToolResult::err(e),
         };

@@ -122,16 +122,11 @@ function SettingsView({
       if (current()) setLoadingRunnerSettings(false);
     }
   }, [identity, expectedTarget]);
-  useEffect(() => { void refreshRunnerSettings(); }, [refreshRunnerSettings]);
-  const previousOperation = useRef(state.current_operation?.kind);
   useEffect(() => {
-    const wasRefresh = previousOperation.current === "runtime_refresh";
-    previousOperation.current = state.current_operation?.kind;
-    if (wasRefresh && !operationBusy && runnerSettingsError
-      && ["desktop_operation_busy", "desktop_state_unavailable"].includes(runnerSettingsError.code)) {
-      void refreshRunnerSettings();
-    }
-  }, [state.current_operation?.kind, operationBusy, runnerSettingsError, refreshRunnerSettings]);
+    if (operationBusy) return;
+    void refreshRunnerSettings();
+    return () => reading.current?.abort();
+  }, [operationBusy, refreshRunnerSettings]);
   useEffect(() => {
     let cancelled = false;
     void desktopApi.getLaunchAtLogin().then(enabled => {

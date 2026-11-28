@@ -480,6 +480,29 @@ beforeEach(() => {
     }
   });
 
+  it.each(["startup", "poll"] as const)("shows the competing operation after a persistent %s refresh collision", async trigger => {
+    vi.useFakeTimers();
+    const idle = { ...readyState, persistent_environment: "fixture-environment" };
+    const running = { ...idle, current_operation: localSetupOperationState().current_operation };
+    api.getState.mockResolvedValueOnce(idle).mockResolvedValueOnce(running).mockResolvedValue(idle);
+    if (trigger === "poll") api.refresh.mockResolvedValueOnce(idle);
+    api.refresh.mockRejectedValueOnce({ code: "desktop_operation_busy", message: "Busy", next_action: "Wait" });
+    const view = renderApp();
+    try {
+      await act(async () => {});
+      if (trigger === "poll") await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+      expect(screen.getByRole("status", { name: "当前 Desktop 操作" })).toHaveAttribute("data-webcodex-operation", "local_setup");
+      expect(screen.getByRole("button", { name: "停止当前操作" })).toBeEnabled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(screen.queryByRole("status", { name: "当前 Desktop 操作" })).not.toBeInTheDocument();
+      expect(api.cancelOperation).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("treats a Refresh collision with an already running Desktop operation as state observation", async () => {
     api.getState
       .mockResolvedValueOnce(readyState)

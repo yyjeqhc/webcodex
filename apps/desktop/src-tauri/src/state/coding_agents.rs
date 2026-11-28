@@ -34,11 +34,7 @@ impl AppState {
             .begin_operation(DesktopOperationKind::RunnerSettingsUpdate, false)
             .await?;
         let result = async {
-            let runtime = core
-                .config
-                .runtime
-                .clone()
-                .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
+            let runtime = core.runner_settings_runtime()?;
             crate::webcodex::settings::verify_target(&runtime, &target)?;
             let mut candidate = core.coding_agents.clone();
             let candidate = tokio::task::spawn_blocking(move || {

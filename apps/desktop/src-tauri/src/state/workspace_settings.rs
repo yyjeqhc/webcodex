@@ -1,5 +1,27 @@
 use super::*;
 
+impl DesktopCore {
+    pub(super) fn runner_settings_runtime(&self) -> DesktopResult<StoredRuntime> {
+        let has_runner = self
+            .config
+            .topology
+            .as_ref()
+            .is_none_or(|topology| topology.runner == RunnerTopology::Local);
+        self.config
+            .runtime
+            .as_ref()
+            .filter(|_| has_runner)
+            .cloned()
+            .ok_or_else(|| {
+                DesktopError::new(
+                    "local_runner_required",
+                    "These settings require a local Runner",
+                    "Configure a Runner on this computer to use its settings.",
+                )
+            })
+    }
+}
+
 impl AppState {
     pub async fn runner_settings(
         &self,
@@ -7,12 +29,8 @@ impl AppState {
         let mut slot = self.core.lock().await;
         let core = slot
             .as_mut()
-            .ok_or_else(|| desktop_state_unavailable("Desktop is busy"))?;
-        let runtime = core
-            .config
-            .runtime
-            .clone()
-            .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
+            .ok_or_else(|| crate::operation::busy_error(self.operations.current().as_ref()))?;
+        let runtime = core.runner_settings_runtime()?;
         let can_restart = if core.config.persistent_environment.is_some() {
             runtime.runner_config.is_some() && runtime.runner_client_id.is_some()
         } else {
@@ -35,11 +53,7 @@ impl AppState {
             .begin_operation(DesktopOperationKind::RunnerSettingsUpdate, false)
             .await?;
         let result = async {
-            let runtime = core
-                .config
-                .runtime
-                .clone()
-                .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
+            let runtime = core.runner_settings_runtime()?;
             let edit = tokio::task::spawn_blocking({
                 let runtime = runtime.clone();
                 move || crate::webcodex::settings::stage_paths_update(&runtime, request)
@@ -62,11 +76,7 @@ impl AppState {
             .begin_operation(DesktopOperationKind::RunnerSettingsUpdate, false)
             .await?;
         let result = async {
-            let runtime = core
-                .config
-                .runtime
-                .clone()
-                .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
+            let runtime = core.runner_settings_runtime()?;
             let edit = tokio::task::spawn_blocking({
                 let runtime = runtime.clone();
                 move || crate::webcodex::settings::stage_allowed_roots_update(&runtime, request)
@@ -107,11 +117,7 @@ impl AppState {
                     "Change the configuration through the Runner's actual process owner.",
                 ));
             }
-            let runtime = core
-                .config
-                .runtime
-                .clone()
-                .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
+            let runtime = core.runner_settings_runtime()?;
             let edit = tokio::task::spawn_blocking({
                 let runtime = runtime.clone();
                 move || crate::webcodex::settings::stage_job_concurrency(&runtime, request)
@@ -201,11 +207,7 @@ impl AppState {
             .begin_operation(DesktopOperationKind::RunnerSettingsUpdate, false)
             .await?;
         let result = async {
-            let runtime = core
-                .config
-                .runtime
-                .clone()
-                .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
+            let runtime = core.runner_settings_runtime()?;
             tokio::task::spawn_blocking(move || {
                 crate::webcodex::settings::add_plugin(&runtime, request)
             })

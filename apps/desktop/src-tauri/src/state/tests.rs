@@ -841,6 +841,38 @@ WEBCODEX_WINDOWS
         );
     }
 
+    #[test]
+    fn failed_settings_save_across_reopen_is_not_operation_contention() {
+        use crate::error::SafeRecoveryAction;
+
+        let dir = tempfile::tempdir().unwrap();
+        let primary = dir.path().join("desktop-state.json");
+        let backup = desktop_state_backup_path(&primary);
+        let activity = ActivityLog::default();
+        let save = || {
+            let mut config = load_config(&primary, &activity)?;
+            config.tunnel_proxy.mode = TunnelProxyMode::Direct;
+            save_config_atomically(&primary, &serde_json::to_vec(&config).unwrap())
+        };
+
+        let original = serde_json::to_vec(&StoredDesktopConfig::default()).unwrap();
+        std::fs::write(&primary, &original).unwrap();
+        // A directory at the backup destination makes replacement fail even as root.
+        std::fs::create_dir(&backup).unwrap();
+        for _ in 0..2 {
+            let error = save().unwrap_err();
+            assert_eq!(error.code, "desktop_state_unavailable");
+            let diagnostic = error.diagnostic_ref().unwrap();
+            assert_eq!(diagnostic.safe_action, SafeRecoveryAction::OpenDiagnostics);
+            assert!(!diagnostic.retry_allowed);
+            assert_eq!(std::fs::read(&primary).unwrap(), original);
+        }
+        std::fs::remove_dir(backup).unwrap();
+        save().unwrap();
+        let reloaded = load_config(&primary, &activity).unwrap();
+        assert_eq!(reloaded.tunnel_proxy.mode, TunnelProxyMode::Direct);
+    }
+
     #[tokio::test]
     async fn diagnostics_contention_keeps_the_competing_operation_observable() {
         let data_dir = tempfile::tempdir().unwrap();
@@ -849,6 +881,8 @@ WEBCODEX_WINDOWS
             data_dir.path().join("test-resources"),
         )
         .unwrap();
+        // Model a Desktop with no configured Runner regardless of the host environment.
+        state.core.lock().await.as_mut().unwrap().config.runtime = None;
         for kind in [
             DesktopOperationKind::RuntimeRefresh,
             DesktopOperationKind::RuntimeSwitch,
@@ -865,6 +899,16 @@ WEBCODEX_WINDOWS
             let competing = observed.current_operation.as_ref().unwrap();
             assert_eq!(competing.id, operation.id);
             assert_eq!(competing.kind, kind);
+            let settings_error = state.runner_settings().await.err().unwrap();
+            assert_eq!(settings_error.code, "desktop_operation_busy");
+            assert_eq!(
+                settings_error
+                    .diagnostic_ref()
+                    .unwrap()
+                    .operation_id
+                    .as_ref(),
+                Some(&operation.id)
+            );
 
             state
                 .finish_operation(operation, cancellation, core, baseline, Ok(observed))
@@ -872,6 +916,10 @@ WEBCODEX_WINDOWS
                 .unwrap();
             assert!(state.get_state().current_operation.is_none());
             assert!(state.diagnostics().await.is_ok());
+            assert_eq!(
+                state.runner_settings().await.err().unwrap().code,
+                "local_runner_required"
+            );
         }
     }
 

@@ -23,10 +23,10 @@ afterEach(() => { vi.useRealTimers(); });
 
 describe("configuration location observations", () => {
 
-  it.each(["desktop_operation_busy", "desktop_state_unavailable"])("recovers a passive refresh collision reported as %s", async code => {
+  it("recovers a passive refresh collision", async () => {
     vi.useFakeTimers();
     vi.mocked(desktopApi.getState).mockResolvedValue({ ...state, current_operation: { id: "refresh", kind: "runtime_refresh", phase: "running", started_at_ms: 1, cancellable: false } });
-    vi.mocked(desktopApi.pathInventory).mockRejectedValueOnce({ code, message: "private refresh detail", next_action: "Wait" }).mockResolvedValueOnce(inventory());
+    vi.mocked(desktopApi.pathInventory).mockRejectedValueOnce({ code: "desktop_operation_busy", message: "private refresh detail", next_action: "Wait" }).mockResolvedValueOnce(inventory());
     render(view()); await act(async () => {});
     await act(async () => { await vi.advanceTimersByTimeAsync(200); });
     expect(screen.getByText("/private/desktop.root")).toBeVisible();

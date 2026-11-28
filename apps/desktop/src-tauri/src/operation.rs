@@ -66,6 +66,23 @@ pub(crate) fn cancelled_error() -> DesktopError {
     )
 }
 
+pub(crate) fn busy_error(current: Option<&DesktopOperationSnapshot>) -> DesktopError {
+    let error = DesktopError::new(
+        "desktop_operation_busy",
+        "Another Desktop operation is still running",
+        "Wait for the current operation to finish or stop it if it is cancellable.",
+    );
+    match current {
+        Some(current) => error
+            .with_details(serde_json::json!({
+                "operation_id": current.id,
+                "operation_kind": current.kind.as_str(),
+            }))
+            .with_operation_context(Some(&current.id), None, None, None),
+        None => error,
+    }
+}
+
 struct ActiveOperation {
     snapshot: DesktopOperationSnapshot,
     cancellation: CancellationSignal,
@@ -107,15 +124,7 @@ impl OperationController {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(current) = active.as_ref() {
-            return Err(DesktopError::new(
-                "desktop_operation_busy",
-                "Another Desktop operation is still running",
-                "Wait for the current operation to finish or stop it before starting another one.",
-            )
-            .with_details(serde_json::json!({
-                "operation_id": current.snapshot.id,
-                "operation_kind": current.snapshot.kind.as_str(),
-            })));
+            return Err(busy_error(Some(&current.snapshot)));
         }
 
         let sequence = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;

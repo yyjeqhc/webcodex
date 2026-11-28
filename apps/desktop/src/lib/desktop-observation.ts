@@ -19,6 +19,17 @@ export function desktopIdentity(state: DesktopState): string {
   ]);
 }
 
+// Refresh probes the runtime. The published state remains available while a
+// mutation owns it and carries the exact operation the user can observe or stop.
+export async function refreshOrObserveDesktopState(): Promise<DesktopState | null> {
+  try {
+    return await desktopApi.refresh();
+  } catch (value) {
+    if (normalizeDesktopError(value).code !== "desktop_operation_busy") throw value;
+    return desktopApi.getState().catch(() => null);
+  }
+}
+
 function retryDelay(signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -69,9 +80,7 @@ export async function readDesktopObservation<T>(
     } catch (value) {
       signal.throwIfAborted();
       const error = normalizeDesktopError(value);
-      // runnerSettings currently uses desktop_state_unavailable while its core
-      // is borrowed. Real failures retain their original error after this bound.
-      if ((error.code !== "desktop_operation_busy" && error.code !== "desktop_state_unavailable")
+      if (error.code !== "desktop_operation_busy"
         || retries >= 5 || performance.now() >= deadline) throw value;
       await checkRetry(error);
       await retryDelay(signal);

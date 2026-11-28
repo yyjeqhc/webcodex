@@ -148,16 +148,7 @@ impl AppState {
             return Err(cancelled_error());
         }
         if let Some(current) = self.operations.current() {
-            return Err(DesktopError::new(
-                "desktop_operation_busy",
-                "Another Desktop operation is still running",
-                "Wait for the current operation to finish or stop it before starting another one.",
-            )
-            .with_details(serde_json::json!({
-                "operation_id": current.id,
-                "operation_kind": current.kind.as_str(),
-            }))
-            .with_operation_context(Some(&current.id), None, None, None));
+            return Err(crate::operation::busy_error(Some(&current)));
         }
         if self.get_state().configuration_issue.is_some() {
             return Err(DesktopError::new(
@@ -173,16 +164,7 @@ impl AppState {
             return Err(cancelled_error());
         }
         if let Some(current) = self.operations.current() {
-            return Err(DesktopError::new(
-                "desktop_operation_busy",
-                "Another Desktop operation is still running",
-                "Wait for the current operation to finish or stop it before starting another one.",
-            )
-            .with_details(serde_json::json!({
-                "operation_id": current.id,
-                "operation_kind": current.kind.as_str(),
-            }))
-            .with_operation_context(Some(&current.id), None, None, None));
+            return Err(crate::operation::busy_error(Some(&current)));
         }
         // Coalesce overlapping background refreshes: if another refresh already
         // published a fresher snapshot while we waited, return it directly.

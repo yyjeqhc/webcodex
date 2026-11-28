@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeDesktopNavigation } from "../lib/desktop-navigation";
 import { desktopApi } from "../lib/desktop-api";
-import { desktopIdentity, type ChatgptActivityQueryStatus } from "../lib/desktop-observation";
+import { desktopIdentity, refreshOrObserveDesktopState, type ChatgptActivityQueryStatus } from "../lib/desktop-observation";
 import { isErrorStaleForState, reconcileDesktopStateErrors } from "../lib/desktop-errors";
 import type { ActivityEntry, DesktopError, DesktopState } from "../models/topology";
 import { normalizeDesktopError } from "../i18n/presentation";
@@ -180,8 +180,8 @@ export function useDesktopWorkspace() {
           // it must not restart a service the user explicitly stopped.
           setRefreshing(true);
           try {
-            const observed = await desktopApi.refresh();
-            if (!cancelled) commitState(observed);
+            const observed = await refreshOrObserveDesktopState();
+            if (!cancelled && observed) commitState(observed);
           } catch (value) {
             if (!cancelled) recordError(value);
           } finally {
@@ -255,9 +255,9 @@ export function useDesktopWorkspace() {
           if (refreshRuntime) setRuntimeObservations(count => count + 1);
           try {
             const next = refreshRuntime
-              ? await desktopApi.refresh()
+              ? await refreshOrObserveDesktopState()
               : await desktopApi.getState();
-            if (!cancelled && stateVersionRef.current === observedVersion) {
+            if (next && !cancelled && stateVersionRef.current === observedVersion) {
               commitState(next);
             }
           } catch {
@@ -335,19 +335,10 @@ export function useDesktopWorkspace() {
     setRefreshing(true);
     setError(null);
     try {
-      commitState(await desktopApi.refresh());
+      const next = await refreshOrObserveDesktopState();
+      if (next) commitState(next);
     } catch (value) {
-      const failure = normalizeDesktopError(value);
-      if (failure.code === "desktop_operation_busy") {
-        try {
-          commitState(await desktopApi.getState());
-        } catch {
-          // The competing operation remains authoritative; a failed observation
-          // must not turn an ordinary Refresh race into a second error.
-        }
-      } else {
-        await observeFailedOperation(value);
-      }
+      await observeFailedOperation(value);
     } finally {
       setRefreshing(false);
     }

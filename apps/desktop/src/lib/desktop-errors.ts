@@ -767,7 +767,17 @@ function classifyRule(error: DesktopError, diag: {
       retryAllowed: true,
     };
   }
-  if (code === "runner_enrollment_required" || code === "local_runner_required" || code === "not_configured" || code === "setup_not_found" || code === "cloudflare_environment_required") {
+  if (code === "local_runner_required") {
+    return {
+      titleKey: "error.localRunnerRequiredTitle",
+      actionKey: "error.localRunnerRequiredAction",
+      component: "runner",
+      recoveryKind: "user_action",
+      safeAction: "open_setup",
+      retryAllowed: false,
+    };
+  }
+  if (code === "runner_enrollment_required" || code === "not_configured" || code === "setup_not_found" || code === "cloudflare_environment_required") {
     return {
       titleKey: "error.runtimeTitle",
       actionKey: "error.runtimeAction",
@@ -978,8 +988,18 @@ function classifyRule(error: DesktopError, diag: {
     };
   }
 
+  if (code === "desktop_state_unavailable") {
+    return {
+      titleKey: "error.stateUnavailableTitle",
+      actionKey: "error.stateUnavailableAction",
+      component: "desktop",
+      recoveryKind: "manual_check",
+      safeAction: "open_diagnostics",
+      retryAllowed: false,
+    };
+  }
   // Contention / stale operation / cancellation
-  if (code === "desktop_operation_busy" || code === "desktop_state_unavailable" || code === "desktop_operation_not_cancellable") {
+  if (code === "desktop_operation_busy" || code === "desktop_operation_not_cancellable") {
     return {
       titleKey: "error.operationBusyTitle",
       actionKey: "error.operationBusyAction",
@@ -1268,7 +1288,6 @@ export function isTransientErrorResolvedByState(error: DesktopError, state: Desk
     case "runtime_not_ready":
       return state.readiness.runtime_ready;
     case "desktop_operation_busy":
-    case "desktop_state_unavailable":
       return !state.current_operation;
     default:
       return false;

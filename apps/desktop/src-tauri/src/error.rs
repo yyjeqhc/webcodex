@@ -298,6 +298,11 @@ impl ErrorDiagnostic {
             | "desktop_data_dir_invalid"
             | "desktop_data_dir_unavailable"
             | "state_io" => (Config, ManualCheck, OpenDiagnostics, false),
+            "desktop_core_unavailable" | "desktop_operation_unsettled" => {
+                (Desktop, ManualCheck, OpenActivity, false)
+            }
+            "desktop_operation_start_timeout" => (Desktop, UserAction, OpenActivity, true),
+            "desktop_state_unavailable" => (Desktop, ManualCheck, OpenDiagnostics, false),
             "not_configured" | "setup_not_found" => (Environment, UserAction, OpenSetup, false),
             "runtime_switch_jobs_confirmation_required"
             | "full_trace_confirmation_required"
@@ -318,9 +323,7 @@ impl ErrorDiagnostic {
             "pairing_recovery_required" => (Auth, ManualCheck, ObserveBeforeRetry, false),
 
             // 12. Background operation contention
-            "desktop_operation_busy"
-            | "desktop_state_unavailable"
-            | "desktop_operation_not_cancellable" => {
+            "desktop_operation_busy" | "desktop_operation_not_cancellable" => {
                 (Desktop, AutoRecovering, WaitAutoRecovery, true)
             }
             "desktop_operation_not_current" => (Desktop, UserAction, RefreshState, false),

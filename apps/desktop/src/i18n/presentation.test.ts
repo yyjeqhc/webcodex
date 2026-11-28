@@ -264,6 +264,9 @@ describe("Unified Desktop error normalization, classification, and reconciliatio
     expect(reconciled.component_errors?.server).toEqual(serverUnreachable);
     expect(reconciled.runtime_error).toEqual(serverUnreachable);
 
+    const unavailable = { code: "desktop_state_unavailable", message: "Could not save", next_action: "Check permissions" };
+    expect(isErrorStaleForState(unavailable, { ...stateRunnerRecovered, current_operation: null })).toBe(false);
+
     // Port conflicts are not safe to retry, but a new Server=Ready
     // observation proves the old error is no longer current.
     const resolvedPortConflict = {

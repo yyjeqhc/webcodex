@@ -480,6 +480,29 @@ beforeEach(() => {
     }
   });
 
+  it.each(["startup", "poll"] as const)("shows the competing operation after a persistent %s refresh collision", async trigger => {
+    vi.useFakeTimers();
+    const idle = { ...readyState, persistent_environment: "fixture-environment" };
+    const running = { ...idle, current_operation: localSetupOperationState().current_operation };
+    api.getState.mockResolvedValueOnce(idle).mockResolvedValueOnce(running).mockResolvedValue(idle);
+    if (trigger === "poll") api.refresh.mockResolvedValueOnce(idle);
+    api.refresh.mockRejectedValueOnce({ code: "desktop_operation_busy", message: "Busy", next_action: "Wait" });
+    const view = renderApp();
+    try {
+      await act(async () => {});
+      if (trigger === "poll") await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+      expect(screen.getByRole("status", { name: "当前 Desktop 操作" })).toHaveAttribute("data-webcodex-operation", "local_setup");
+      expect(screen.getByRole("button", { name: "停止当前操作" })).toBeEnabled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(screen.queryByRole("status", { name: "当前 Desktop 操作" })).not.toBeInTheDocument();
+      expect(api.cancelOperation).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("treats a Refresh collision with an already running Desktop operation as state observation", async () => {
     api.getState
       .mockResolvedValueOnce(readyState)
@@ -1297,6 +1320,34 @@ beforeEach(() => {
     expect(disabledCancel).toBeDisabled();
     fireEvent.click(disabledCancel);
     expect(api.cancelOperation).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows recovery guidance while an overdue owner retains the operation", async () => {
+    const running = localSetupOperationState();
+    api.getState.mockResolvedValueOnce(readyState).mockResolvedValue({
+      ...running, current_operation: { ...running.current_operation!, phase: "overdue", cancellable: false },
+    });
+    api.refresh.mockRejectedValueOnce({ code: "desktop_operation_unsettled", message: "Operation overdue", next_action: "Check Activity" });
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "刷新" }));
+    const status = await screen.findByRole("status", { name: "当前 Desktop 操作" });
+    expect(status).toHaveTextContent("操作用时超出预期");
+    expect(status).toHaveTextContent("核实操作结果");
+    expect(screen.queryByRole("button", { name: "停止当前操作" })).not.toBeInTheDocument();
+    expect(api.cancelOperation).not.toHaveBeenCalled();
+  });
+
+  it("shows an interrupted first-run owner without resuming setup or offering Stop", async () => {
+    api.getState.mockResolvedValue({ ...firstRunState, runtime_error: {
+      code: "desktop_core_unavailable", message: "Desktop state unavailable", next_action: "Check Activity",
+    } });
+    renderApp();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Desktop 内部操作状态不可用");
+    expect(alert).toHaveTextContent("完全退出并重新打开");
+    expect(screen.queryByRole("button", { name: "停止当前操作" })).not.toBeInTheDocument();
+    expect(api.configureEnvironment).not.toHaveBeenCalled();
+    expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
   });
 
   it("does not let an older polling response resurrect a completed operation", async () => {

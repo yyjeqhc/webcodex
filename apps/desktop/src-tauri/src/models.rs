@@ -323,6 +323,7 @@ impl DesktopOperationKind {
 pub enum DesktopOperationPhase {
     Running,
     Cancelling,
+    Overdue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

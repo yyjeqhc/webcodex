@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeDesktopNavigation } from "../lib/desktop-navigation";
 import { desktopApi } from "../lib/desktop-api";
-import { desktopIdentity, type ChatgptActivityQueryStatus } from "../lib/desktop-observation";
+import { desktopIdentity, refreshOrObserveDesktopState, type ChatgptActivityQueryStatus } from "../lib/desktop-observation";
 import { isErrorStaleForState, reconcileDesktopStateErrors } from "../lib/desktop-errors";
 import type { ActivityEntry, DesktopError, DesktopState } from "../models/topology";
 import { normalizeDesktopError } from "../i18n/presentation";
@@ -38,6 +38,7 @@ export function useDesktopWorkspace() {
   const mainRef = useRef<HTMLElement>(null);
   const hasCurrentOperation = Boolean(state?.current_operation);
   const hasLoadedState = Boolean(state);
+  const coreUnavailable = state?.runtime_error?.code === "desktop_core_unavailable" || error?.code === "desktop_core_unavailable";
   const shouldObserveChatgptActivity = Boolean(
     state?.readiness.runtime_ready
       && state?.project?.runtime_project_id
@@ -152,7 +153,7 @@ export function useDesktopWorkspace() {
       try {
         const initial = await desktopApi.getState();
         if (cancelled) return;
-        if (initial.current_operation || initial.configuration_issue) {
+        if (initial.current_operation || initial.configuration_issue || initial.runtime_error?.code === "desktop_core_unavailable") {
           commitState(initial);
           bootstrapSettled = true;
           return;
@@ -180,8 +181,8 @@ export function useDesktopWorkspace() {
           // it must not restart a service the user explicitly stopped.
           setRefreshing(true);
           try {
-            const observed = await desktopApi.refresh();
-            if (!cancelled) commitState(observed);
+            const observed = await refreshOrObserveDesktopState();
+            if (!cancelled && observed) commitState(observed);
           } catch (value) {
             if (!cancelled) recordError(value);
           } finally {
@@ -249,18 +250,21 @@ export function useDesktopWorkspace() {
       timeoutId = window.setTimeout(() => {
         void (async () => {
           const observedVersion = stateVersionRef.current;
-          const refreshRuntime = Boolean(state?.persistent_environment && !hasCurrentOperation && !refreshing);
+          const refreshRuntime = Boolean(state?.persistent_environment && !coreUnavailable && !hasCurrentOperation && !refreshing);
           // Keep this separate from refreshing: changing that effect dependency
           // would cancel this observation before it can commit its result.
           if (refreshRuntime) setRuntimeObservations(count => count + 1);
           try {
             const next = refreshRuntime
-              ? await desktopApi.refresh()
+              ? await refreshOrObserveDesktopState()
               : await desktopApi.getState();
-            if (!cancelled && stateVersionRef.current === observedVersion) {
+            if (next && !cancelled && stateVersionRef.current === observedVersion) {
               commitState(next);
             }
-          } catch {
+          } catch (value) {
+            if (!cancelled && stateVersionRef.current === observedVersion && normalizeDesktopError(value).code === "desktop_core_unavailable") {
+              recordError(value);
+            }
             // Observation is best-effort. A transient invoke failure must not
             // create an error storm or a second concurrent observer.
           } finally {
@@ -276,7 +280,7 @@ export function useDesktopWorkspace() {
       cancelled = true;
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     };
-  }, [commitState, hasCurrentOperation, hasLoadedState, refreshing, state?.persistent_environment]);
+  }, [commitState, coreUnavailable, hasCurrentOperation, hasLoadedState, recordError, refreshing, state?.persistent_environment]);
 
   useEffect(() => {
     if (!shouldObserveChatgptActivity || !chatgptActivityIdentity) return;
@@ -335,19 +339,10 @@ export function useDesktopWorkspace() {
     setRefreshing(true);
     setError(null);
     try {
-      commitState(await desktopApi.refresh());
+      const next = await refreshOrObserveDesktopState();
+      if (next) commitState(next);
     } catch (value) {
-      const failure = normalizeDesktopError(value);
-      if (failure.code === "desktop_operation_busy") {
-        try {
-          commitState(await desktopApi.getState());
-        } catch {
-          // The competing operation remains authoritative; a failed observation
-          // must not turn an ordinary Refresh race into a second error.
-        }
-      } else {
-        await observeFailedOperation(value);
-      }
+      await observeFailedOperation(value);
     } finally {
       setRefreshing(false);
     }

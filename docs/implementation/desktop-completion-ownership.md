@@ -1,9 +1,29 @@
 # Desktop operation completion ownership
 
-The admission model remains serial: `OperationController` permits one mutation,
-`begin_operation` takes the Core without retaining its mutex, and ordinary reads
-use the independently published snapshot. No new parallel operation admission or
-cleanup callback is introduced.
+Desktop admits one mutation at a time. The admission guard owns its exact
+operation ID from admission through completion. Before dispatch, the supervisor
+baseline and Core checkout share a cancellable 30-second wait. Dropping the
+request during that wait releases admission. Ordinary reads can observe the
+independently published snapshot while a mutation owns the Core.
+
+Runner settings reads capture their target and the idle operation generation
+together under the Core lock. They release the Core during supervisor and file
+I/O and return settings only if the target and idle generation still match.
+A stalled inspection has a 30-second caller deadline. Its file worker retains
+the single reader permit until it exits, so repeated reads stay bounded.
+
+After dispatch, loss of the guard during a panic or task abort
+records the operation ID and closes mutation admission for this Desktop
+process. Its snapshot reports an internal state error and directs the user to
+fully quit Desktop, reopen it, and verify the outcome. A worker or external
+effect can outlive a dropped future. A live owner waits for any required
+failure cleanup and returns the same Core before releasing admission. The
+supervisor retains its per-process cleanup deadlines.
+
+Cooperatively cancellable operations have a ten-minute outer deadline. The UI
+reports an overdue operation at that deadline, or after 30 seconds of waiting
+for an explicit stop. A live owner retains its slot through settlement,
+including during migration and update. Completion clears the overdue status.
 
 Completion now separates two capabilities. AppState owns the supervisor, exact
 process-generation baseline, cancellation normalization, Core return and admission

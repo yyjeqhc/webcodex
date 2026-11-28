@@ -48,7 +48,7 @@ impl AppState {
         let slot = self.core.lock().await;
         let core = slot
             .as_ref()
-            .ok_or_else(|| inventory_error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         let root =
             webcodex_environment::default_environment_dir().map_err(environment::desktop_error)?;
         let inventory = desktop_inventory(core, &root, self.desktop_data_dir.source.label());
@@ -65,7 +65,7 @@ impl AppState {
         let slot = self.core.lock().await;
         let core = slot
             .as_ref()
-            .ok_or_else(|| inventory_error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         let root =
             webcodex_environment::default_environment_dir().map_err(environment::desktop_error)?;
         let inventory = desktop_inventory(core, &root, self.desktop_data_dir.source.label());
@@ -80,7 +80,7 @@ impl AppState {
         let slot = self.core.lock().await;
         let core = slot
             .as_ref()
-            .ok_or_else(|| inventory_error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         let root =
             webcodex_environment::default_environment_dir().map_err(environment::desktop_error)?;
         let inventory = desktop_inventory(core, &root, self.desktop_data_dir.source.label());
@@ -101,7 +101,7 @@ impl AppState {
         let slot = self.core.lock().await;
         let core = slot
             .as_ref()
-            .ok_or_else(|| inventory_error("desktop_operation_busy"))?;
+            .ok_or_else(|| self.operations.missing_core_error())?;
         let root =
             webcodex_environment::default_environment_dir().map_err(environment::desktop_error)?;
         let inventory = desktop_inventory(core, &root, self.desktop_data_dir.source.label());

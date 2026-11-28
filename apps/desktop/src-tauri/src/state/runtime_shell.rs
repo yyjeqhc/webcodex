@@ -48,7 +48,7 @@ impl AppState {
             let slot = self.core.lock().await;
             let core = slot
                 .as_ref()
-                .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
+                .ok_or_else(|| self.operations.missing_core_error())?;
             (
                 core.runtime_settings_snapshot().await,
                 core.config.clone(),

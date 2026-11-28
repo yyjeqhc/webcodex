@@ -28,11 +28,7 @@ impl AppState {
             .begin_operation(DesktopOperationKind::RunnerSettingsUpdate, false)
             .await?;
         let result = async {
-            let runtime = core
-                .config
-                .runtime
-                .clone()
-                .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
+            let runtime = core.runner_settings_runtime()?;
             crate::webcodex::settings::verify_target(&runtime, &request.target)?;
             let managed = Arc::clone(&self.managed_instructions);
             let edit = tokio::task::spawn_blocking({

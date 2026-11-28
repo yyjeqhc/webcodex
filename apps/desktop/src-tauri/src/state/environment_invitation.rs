@@ -125,7 +125,7 @@ impl AppState {
         if self.shutdown_signal.is_cancelled() {
             return Err(cancelled_error());
         }
-        let operation = self
+        let mut operation = self
             .operations
             .admit(DesktopOperationKind::EnvironmentInvite, false)?;
         // This operation cannot launch or replace runtime processes. Do not
@@ -139,8 +139,9 @@ impl AppState {
                 ));
             }
             verify_target(&self.get_state(), store, &request.environment_id)?;
-            let code = NativeEnvironment::new()
-                .map_err(environment::desktop_error)?
+            let native = NativeEnvironment::new().map_err(environment::desktop_error)?;
+            operation.mark_dispatched();
+            let code = native
                 .invite_for_environment(store, &request.environment_id)
                 .await
                 .map_err(environment::desktop_error)?;
@@ -154,7 +155,7 @@ impl AppState {
             })
         }
         .await;
-        self.operations.finish(&operation.id, &result);
+        operation.finish(&result);
         result
     }
 }

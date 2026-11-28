@@ -152,7 +152,7 @@ export type DesktopOperationKind =
   | "runner_restart"
   | "runtime_probe" | "runtime_switch" | "trace_update" | "configuration_restore";
 
-export type DesktopOperationPhase = "running" | "cancelling";
+export type DesktopOperationPhase = "running" | "cancelling" | "overdue";
 
 export interface DesktopOperation {
   id: string;

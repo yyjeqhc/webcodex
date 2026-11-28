@@ -207,7 +207,7 @@ describe("workspace configuration boundaries", () => {
 
   it("retries only the file-access readback when a background refresh temporarily owns the core", async () => {
     settings.file_access = { ...settings.file_access, configured_roots: ["/fixture/work"], effective_roots: ["/fixture/work"], using_default_roots: false };
-    api.runnerSettings.mockRejectedValueOnce({ code: "desktop_state_unavailable", message: "Refreshing", next_action: "Refresh" });
+    api.runnerSettings.mockRejectedValueOnce({ code: "desktop_operation_busy", message: "Refreshing", next_action: "Refresh" });
     render(wrap(<FileAccessHarness />));
     fireEvent.click(screen.getByRole("button", { name: "Restore default access" }));
     await screen.findByText("No custom folders configured.");

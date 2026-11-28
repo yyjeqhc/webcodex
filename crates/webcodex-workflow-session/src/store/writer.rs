@@ -252,7 +252,12 @@ fn persist_batch_observed(
             0
         } else {
             database.write(&writes).map_err(|error| {
-                super::bound_summary_string(&format!("Session persistence failed: {error}"))
+                let prefix = if error.kind() == std::io::ErrorKind::WouldBlock {
+                    "Session persistence temporarily busy:"
+                } else {
+                    "Session persistence failed:"
+                };
+                super::bound_summary_string(&format!("{prefix} {error}"))
             })?
         };
         Ok((bytes, writes, cold))
@@ -302,6 +307,8 @@ fn writer_loop(
     write_mutex: Arc<Mutex<()>>,
     window: Duration,
 ) {
+    let mut automatic_retries = 0;
+    let mut retry_generation = None;
     loop {
         {
             let mut state = shared.state.lock().expect("Session writer state poisoned");
@@ -329,14 +336,28 @@ fn writer_loop(
         state.write_attempts = state.write_attempts.saturating_add(1);
         state.attempted_generation = generation;
         let notifications = generation.saturating_sub(state.writes_completed);
+        if retry_generation != Some(generation) {
+            retry_generation = Some(generation);
+            automatic_retries = 0;
+        }
+        let mut retry_delay = None;
         match &result {
             Ok(_) => {
+                automatic_retries = 0;
                 state.writes_completed = generation;
                 if state.dirty_generation <= generation {
                     state.dirty_since = None;
                 }
             }
-            Err(_) => state.failed_attempts = state.failed_attempts.saturating_add(1),
+            Err(error) => {
+                state.failed_attempts = state.failed_attempts.saturating_add(1);
+                if !state.shutdown && automatic_retries < 2
+                    && error.starts_with("Session persistence temporarily busy:")
+                {
+                    automatic_retries += 1;
+                    retry_delay = Some(Duration::from_millis(250 * automatic_retries));
+                }
+            }
         }
         state.last_attempt = Some(WriteAttemptObservation {
             success: result.is_ok(),
@@ -348,6 +369,15 @@ fn writer_loop(
         });
         shared.cvar.notify_all();
         shared.completed.notify_waiters();
+        if let Some(delay) = retry_delay {
+            drop(state);
+            std::thread::sleep(delay);
+            let mut state = shared.state.lock().expect("Session writer state poisoned");
+            if !state.shutdown && state.dirty_generation > state.writes_completed {
+                state.dirty_since.get_or_insert_with(Instant::now);
+                state.flush_generation = state.flush_generation.max(state.dirty_generation);
+            }
+        }
     }
 }
 

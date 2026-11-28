@@ -115,12 +115,34 @@ impl SessionDatabase {
     }
 
     pub(crate) fn write(&self, writes: &[SessionWrite]) -> io::Result<u64> {
-        let mut connection = self.connection.lock().map_err(error)?;
+        let connection = self.connection.lock().map_err(error)?;
         // Reserve the writer before reading revisions. An intervening WAL commit
         // would leave a deferred transaction with a snapshot it cannot promote.
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(error)?;
+        let mut retries = 0;
+        let transaction = loop {
+            match rusqlite::Transaction::new_unchecked(
+                &connection,
+                TransactionBehavior::Immediate,
+            ) {
+                Ok(transaction) => break transaction,
+                Err(rusqlite::Error::SqliteFailure(code, _))
+                    if retries < 2
+                        && matches!(
+                            code.code,
+                            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                        ) =>
+                {
+                    retries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(100 * retries));
+                }
+                Err(err @ rusqlite::Error::SqliteFailure(code, _))
+                    if matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) =>
+                {
+                    return Err(io::Error::new(io::ErrorKind::WouldBlock, err));
+                }
+                Err(err) => return Err(error(err)),
+            }
+        };
         let mut bytes = 0_u64;
         for write in writes {
             bytes = bytes.saturating_add(write_row(&transaction, write)?);

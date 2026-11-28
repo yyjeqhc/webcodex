@@ -456,3 +456,34 @@ fn window_inventory_query_benchmark() {
         }
     }
 }
+
+#[test]
+fn concurrent_external_writer_preserves_audit_commits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("audit-contention.db");
+    let db = Database::open(&path).unwrap();
+    seed_session(&db);
+    db.conn_for_tests().execute_batch("CREATE TABLE competing_write(id INTEGER PRIMARY KEY);").unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let peer = barrier.clone();
+    let worker = std::thread::spawn(move || {
+        let mut conn = rusqlite::Connection::open(path).unwrap();
+        conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        peer.wait();
+        for id in 0..128 {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).unwrap();
+            tx.execute("INSERT INTO competing_write VALUES (?1)", [id]).unwrap();
+            tx.commit().unwrap();
+            std::thread::yield_now();
+        }
+    });
+    barrier.wait();
+    for n in 0..128 {
+        append(&db, event(&format!("event-{n}"), "window", "alice", "a", n + 100), &[]);
+    }
+    worker.join().unwrap();
+    let conn = db.conn_for_tests();
+    assert_eq!(conn.query_row("SELECT count(*) FROM action_events", [], |r| r.get::<_, i64>(0)).unwrap(), 128);
+    assert_eq!(conn.query_row("SELECT total_actions FROM action_sessions WHERE session_id='audit-session'", [], |r| r.get::<_, i64>(0)).unwrap(), 128);
+    assert_eq!(conn.query_row("SELECT count(*) FROM competing_write", [], |r| r.get::<_, i64>(0)).unwrap(), 128);
+}

@@ -466,3 +466,99 @@ fn abrupt_exit_child() {
     // This exercises process death, not a claim about hardware power-loss safety.
     std::process::exit(0);
 }
+
+#[test]
+fn concurrent_external_writer_preserves_session_commits() {
+    let (temporary, store) = persistent_fixture(Duration::from_secs(60));
+    let path = temporary.path().join("sessions.sqlite3");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("CREATE TABLE competing_write(id INTEGER PRIMARY KEY);").unwrap();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let peer = barrier.clone();
+    let worker = std::thread::spawn(move || {
+        let mut conn = rusqlite::Connection::open(path).unwrap();
+        conn.busy_timeout(Duration::from_secs(5)).unwrap();
+        peer.wait();
+        for id in 0..128 {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).unwrap();
+            tx.execute("INSERT INTO competing_write VALUES (?1)", [id]).unwrap();
+            tx.commit().unwrap();
+            std::thread::yield_now();
+        }
+    });
+    barrier.wait();
+    let mut ids = Vec::new();
+    for _ in 0..64 {
+        ids.push(store.start_session(None, None).session_id);
+        store.flush_persistence();
+        assert!(store.status().last_persist_error.is_none());
+    }
+    worker.join().unwrap();
+    assert_eq!(store.persistence_observation().writer.unwrap().failed_attempts, 0);
+    assert_eq!(connection.query_row("SELECT count(*) FROM competing_write", [], |r| r.get::<_, i64>(0)).unwrap(), 128);
+    drop(store);
+    let restored = super::super::SessionStore::with_persistence(temporary.path().join("sessions.json"), 1, 20);
+    for id in ids { assert!(restored.contains_session(&id)); }
+}
+
+#[test]
+fn busy_writer_recovers_without_new_notifications() {
+    let (temporary, store) = persistent_fixture(Duration::from_millis(20));
+    store.inner.lock().unwrap().persistence.as_ref().unwrap().database
+        .connection_for_test().busy_timeout(Duration::from_millis(10)).unwrap();
+    let mut peer = rusqlite::Connection::open(temporary.path().join("sessions.sqlite3")).unwrap();
+    let lock = peer.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).unwrap();
+    let id = store.start_session(None, None).session_id;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let writer = store.persistence_observation().writer.unwrap();
+        if writer.failed_attempts > 0 {
+            assert_eq!(writer.pending_notifications, 1);
+            break;
+        }
+        assert!(Instant::now() < deadline, "expected exhausted transaction retry");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    lock.commit().unwrap();
+    loop {
+        let writer = store.persistence_observation().writer.unwrap();
+        if writer.pending_notifications == 0 {
+            assert_eq!(writer.failed_attempts, 1);
+            assert!(writer.last_attempt.unwrap().success);
+            break;
+        }
+        assert!(Instant::now() < deadline, "automatic recovery timed out");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(store.status().last_persist_error.is_none());
+    drop(store);
+    let restored = super::super::SessionStore::with_persistence(temporary.path().join("sessions.json"), 1, 20);
+    assert!(restored.contains_session(&id));
+}
+
+#[test]
+fn busy_writer_stops_after_bounded_automatic_retries() {
+    let (temporary, store) = persistent_fixture(Duration::from_millis(20));
+    store.inner.lock().unwrap().persistence.as_ref().unwrap().database
+        .connection_for_test().busy_timeout(Duration::from_millis(10)).unwrap();
+    let mut peer = rusqlite::Connection::open(temporary.path().join("sessions.sqlite3")).unwrap();
+    let lock = peer.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).unwrap();
+    let id = store.start_session(None, None).session_id;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let writer = store.persistence_observation().writer.unwrap();
+        if writer.failed_attempts >= 3 { break; }
+        assert!(Instant::now() < deadline, "retry limit not reached");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(800));
+    let writer = store.persistence_observation().writer.unwrap();
+    assert_eq!(writer.failed_attempts, 3);
+    assert_eq!(writer.pending_notifications, 1);
+    lock.commit().unwrap();
+    store.flush_persistence();
+    assert!(store.status().last_persist_error.is_none());
+    drop(store);
+    let restored = super::super::SessionStore::with_persistence(temporary.path().join("sessions.json"), 1, 20);
+    assert!(restored.contains_session(&id));
+}

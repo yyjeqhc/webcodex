@@ -3,7 +3,7 @@
 //! The database is authoritative backing for clean cache entries, never a replay
 //! engine. Loading history cannot dispatch a tool or change Session authority.
 use super::*;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -116,7 +116,11 @@ impl SessionDatabase {
 
     pub(crate) fn write(&self, writes: &[SessionWrite]) -> io::Result<u64> {
         let mut connection = self.connection.lock().map_err(error)?;
-        let transaction = connection.transaction().map_err(error)?;
+        // Reserve the writer before reading revisions. An intervening WAL commit
+        // would leave a deferred transaction with a snapshot it cannot promote.
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(error)?;
         let mut bytes = 0_u64;
         for write in writes {
             bytes = bytes.saturating_add(write_row(&transaction, write)?);
@@ -138,6 +142,11 @@ impl SessionDatabase {
             result.push(cold);
         }
         Ok(result)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn connection_for_test(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.connection.lock().unwrap()
     }
 
     #[cfg(any(test, feature = "root-test-support"))]

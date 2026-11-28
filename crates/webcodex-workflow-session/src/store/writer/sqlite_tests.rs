@@ -139,6 +139,66 @@ fn latest_instruction_and_closed_identity_survive_history_and_session_churn() {
 }
 
 #[test]
+fn unrelated_wal_write_cannot_invalidate_the_session_revision_read() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+
+    let (temporary, store) = persistent_fixture(Duration::from_secs(60));
+    let id = store.start_session(None, None).session_id;
+    store.flush_persistence();
+    let path = temporary.path().join("sessions.sqlite3");
+    let audit = rusqlite::Connection::open(&path).unwrap();
+    audit
+        .execute("CREATE TABLE audit_fixture (id INTEGER PRIMARY KEY)", [])
+        .unwrap();
+    audit.busy_timeout(Duration::ZERO).unwrap();
+    const INSERT_AUDIT: &str = "INSERT INTO audit_fixture VALUES (1)";
+
+    // Preparing the Session upsert happens after the revision SELECT has run.
+    // Attempt the independent commit at precisely that point on a second connection.
+    let (attempt, result) = std::sync::mpsc::channel();
+    let database = store
+        .inner
+        .lock()
+        .unwrap()
+        .persistence
+        .as_ref()
+        .unwrap()
+        .database
+        .clone();
+    database
+        .connection_for_test()
+        .authorizer(Some(move |context: AuthContext<'_>| {
+            if let AuthAction::Insert {
+                table_name: "workflow_sessions",
+            } = context.action
+            {
+                let _ = attempt.send(audit.execute(INSERT_AUDIT, []));
+            }
+            Authorization::Allow
+        }))
+        .unwrap();
+
+    append_read_fixture(&store, &id, 1);
+    store.flush_persistence();
+    assert_eq!(store.status().last_persist_error, None);
+    assert_eq!(
+        result.try_recv().unwrap().unwrap_err().sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy)
+    );
+
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(connection.execute(INSERT_AUDIT, []).unwrap(), 1);
+    let events: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM workflow_session_events WHERE session_id=?1",
+            [&id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(events, 2);
+}
+
+#[test]
 fn stale_second_writer_fails_closed_instead_of_overwriting_a_newer_commit() {
     let (temporary, store) = persistent_fixture(Duration::from_secs(60));
     let id = store.start_session(None, None).session_id;

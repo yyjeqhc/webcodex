@@ -324,8 +324,15 @@ pub async fn set_launch_at_login(
 pub async fn refresh_runtime_status(
     app: AppHandle,
     state: State<'_, AppState>,
+    automatic: Option<bool>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
-    project_state_result(&app, state.refresh_runtime_status().await)
+    // Omitted by existing/manual callers: always request a fresh observation.
+    let result = if automatic.unwrap_or(false) {
+        state.observe_runtime_status().await
+    } else {
+        state.refresh_runtime_status().await
+    };
+    project_state_result(&app, result)
 }
 
 #[tauri::command]

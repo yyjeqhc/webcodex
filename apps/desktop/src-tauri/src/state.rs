@@ -60,7 +60,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -91,6 +91,18 @@ struct ChatGptActivityProbe {
     runtime_selection_revision: u64,
 }
 
+// Presentation-only budget shared by renderer and native tray observations.
+// Neither this record nor a cached snapshot authorizes a service operation.
+struct RuntimeRefreshAttempt {
+    environment_id: Option<String>,
+    operation_generation: u64,
+    runtime_selection_revision: u64,
+    started_at: Instant,
+    completed: Option<(Instant, u64)>,
+}
+
+const AUTOMATIC_RUNTIME_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
 pub struct AppState {
     core: Mutex<Option<DesktopCore>>,
     desktop_data_dir: crate::desktop_data_dir::DesktopDataDir,
@@ -100,7 +112,7 @@ pub struct AppState {
     supervisor: SharedSupervisor,
     activity: ActivityLog,
     operations: OperationController,
-    refresh_lock: tokio::sync::Mutex<()>,
+    refresh_lock: tokio::sync::Mutex<Option<RuntimeRefreshAttempt>>,
     shutdown_signal: CancellationSignal,
     shutdown_started: AtomicBool,
     shutdown_complete: CancellationSignal,

@@ -1584,14 +1584,280 @@ WEBCODEX_WINDOWS
         );
     }
 
-    #[tokio::test]
-    async fn readonly_refresh_does_not_claim_exclusive_operation_slot_or_block_diagnostics() {
+    async fn unconfigured_refresh_state() -> (tempfile::TempDir, AppState) {
         let data_dir = tempfile::tempdir().unwrap();
         let state = AppState::new(
             data_dir.path().to_path_buf(),
             data_dir.path().join("test-resources"),
         )
         .unwrap();
+        {
+            // Construction may adopt this machine's saved Environment. Keep
+            // these observation fixtures entirely in memory and unconfigured.
+            let mut slot = state.core.lock().await;
+            let core = slot.as_mut().unwrap();
+            core.config = StoredDesktopConfig::default();
+            core.configuration_issue = None;
+            core.snapshot = DesktopStateSnapshot::default();
+            core.publish_snapshot();
+        }
+        (data_dir, state)
+    }
+
+    #[tokio::test]
+    async fn automatic_runtime_refresh_reuses_one_full_observation_and_manual_stays_fresh() {
+        let (_data_dir, state) = unconfigured_refresh_state().await;
+        // The unconfigured full-observation path publishes once, without native
+        // services or network fixtures. get_state never publishes by itself.
+        let first = state.observe_runtime_status().await.unwrap();
+        for _ in 0..4 {
+            let observed = state.observe_runtime_status().await.unwrap();
+            assert_eq!(observed.state_generation, first.state_generation);
+        }
+        let manual = state.refresh_runtime_status().await.unwrap();
+        assert!(manual.state_generation > first.state_generation);
+        let observed = state.observe_runtime_status().await.unwrap();
+        assert_eq!(observed.state_generation, manual.state_generation);
+    }
+
+    #[tokio::test]
+    async fn automatic_runtime_refresh_keeps_budget_across_presentation_publication() {
+        let (_data_dir, state) = unconfigured_refresh_state().await;
+        state.observe_runtime_status().await.unwrap();
+        let published = {
+            let mut slot = state.core.lock().await;
+            let core = slot.as_mut().unwrap();
+            core.snapshot.chatgpt_activity = Some(ChatGptActivitySnapshot {
+                observed: true,
+                last_meaningful_activity_at_ms: Some(123),
+            });
+            core.publish_snapshot()
+        };
+        let observed = state.observe_runtime_status().await.unwrap();
+        assert_eq!(observed.state_generation, published.state_generation);
+        assert_eq!(
+            observed
+                .chatgpt_activity
+                .unwrap()
+                .last_meaningful_activity_at_ms,
+            Some(123),
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_runtime_refresh_does_not_coalesce_unrelated_publication() {
+        use std::future::Future;
+        let (_data_dir, state) = unconfigured_refresh_state().await;
+        state.observe_runtime_status().await.unwrap();
+        let guard = state.refresh_lock.lock().await;
+        let mut manual = Box::pin(state.refresh_runtime_status());
+        std::future::poll_fn(|cx| {
+            assert!(manual.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        let published = state.core.lock().await.as_mut().unwrap().publish_snapshot();
+        drop(guard);
+        let refreshed = manual.await.unwrap();
+        assert!(refreshed.state_generation > published.state_generation);
+    }
+
+    #[tokio::test]
+    async fn runtime_refresh_coalesces_concurrent_automatic_and_fresh_requests() {
+        use std::future::Future;
+        let (_data_dir, state) = unconfigured_refresh_state().await;
+        let before = state.get_state().state_generation;
+        let core_guard = state.core.lock().await;
+        let mut first = Box::pin(state.observe_runtime_status());
+        let mut second = Box::pin(state.observe_runtime_status());
+        let mut manual = Box::pin(state.refresh_runtime_status());
+        std::future::poll_fn(|cx| {
+            assert!(first.as_mut().poll(cx).is_pending());
+            assert!(second.as_mut().poll(cx).is_pending());
+            assert!(manual.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(core_guard);
+        let (first, second, manual) = tokio::join!(first, second, manual);
+        let first = first.unwrap();
+        assert_eq!(first.state_generation, before + 1);
+        assert_eq!(second.unwrap().state_generation, first.state_generation);
+        assert_eq!(manual.unwrap().state_generation, first.state_generation);
+    }
+
+    #[tokio::test]
+    async fn runtime_refresh_operation_generation_invalidates_budget_and_busy_stays_visible() {
+        let (_data_dir, state) = unconfigured_refresh_state().await;
+        let first = state.observe_runtime_status().await.unwrap();
+        let operation = state
+            .operations
+            .admit(DesktopOperationKind::RuntimeResume, true)
+            .unwrap();
+        let error =
+            tokio::time::timeout(Duration::from_millis(250), state.observe_runtime_status())
+                .await
+                .expect("cached observation must not wait for a busy operation")
+                .unwrap_err();
+        assert_eq!(error.code, "desktop_operation_busy");
+        state.operations.finish(&operation.id, &Ok(()));
+        let refreshed = state.observe_runtime_status().await.unwrap();
+        assert!(refreshed.state_generation > first.state_generation);
+        state.shutdown_signal.cancel();
+        assert_eq!(
+            state.observe_runtime_status().await.unwrap_err().code,
+            "desktop_operation_cancelled",
+        );
+    }
+
+    #[tokio::test]
+    async fn automatic_runtime_refresh_expires_after_thirty_seconds() {
+        let (_data_dir, state) = unconfigured_refresh_state().await;
+        let first = state.observe_runtime_status().await.unwrap();
+        {
+            let mut guard = state.refresh_lock.lock().await;
+            guard.as_mut().unwrap().completed.as_mut().unwrap().0 =
+                Instant::now() - Duration::from_secs(29);
+        }
+        assert_eq!(
+            state
+                .observe_runtime_status()
+                .await
+                .unwrap()
+                .state_generation,
+            first.state_generation,
+        );
+        {
+            let mut guard = state.refresh_lock.lock().await;
+            guard.as_mut().unwrap().completed.as_mut().unwrap().0 =
+                Instant::now() - Duration::from_secs(31);
+        }
+        assert!(
+            state
+                .observe_runtime_status()
+                .await
+                .unwrap()
+                .state_generation
+                > first.state_generation
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_refresh_does_not_reuse_another_environment_or_runtime_revision() {
+        let (_data_dir, state) = unconfigured_refresh_state().await;
+        let first = state.observe_runtime_status().await.unwrap();
+        // Model the retained result of the previous environment without opening
+        // either a real Environment store or a native service fixture.
+        state
+            .refresh_lock
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .environment_id = Some("previous-environment".to_string());
+        let switched = state.observe_runtime_status().await.unwrap();
+        assert!(switched.state_generation > first.state_generation);
+        let published = {
+            let mut slot = state.core.lock().await;
+            let core = slot.as_mut().unwrap();
+            core.config.runtime_selection_revision += 1;
+            core.publish_snapshot()
+        };
+        assert!(
+            state
+                .observe_runtime_status()
+                .await
+                .unwrap()
+                .state_generation
+                > published.state_generation,
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_refresh_failed_attempt_cools_automatic_retries_but_not_manual_refresh() {
+        let (_data_dir, state) = unconfigured_refresh_state().await;
+        let before = state.get_state().state_generation;
+        // Retain the exact gate state left by an unsuccessful observation. The
+        // native error itself is not synthesized by launching real services.
+        *state.refresh_lock.lock().await = Some(RuntimeRefreshAttempt {
+            environment_id: None,
+            operation_generation: state.operations.generation(),
+            runtime_selection_revision: 0,
+            started_at: Instant::now(),
+            completed: None,
+        });
+        assert_eq!(
+            state
+                .observe_runtime_status()
+                .await
+                .unwrap()
+                .state_generation,
+            before
+        );
+        assert!(state
+            .refresh_lock
+            .lock()
+            .await
+            .as_ref()
+            .unwrap()
+            .completed
+            .is_none());
+        let manual = state.refresh_runtime_status().await.unwrap();
+        assert!(manual.state_generation > before);
+        {
+            let mut guard = state.refresh_lock.lock().await;
+            let attempt = guard.as_mut().unwrap();
+            attempt.completed = None;
+            attempt.started_at = Instant::now() - Duration::from_secs(31);
+        }
+        assert!(
+            state
+                .observe_runtime_status()
+                .await
+                .unwrap()
+                .state_generation
+                > manual.state_generation
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_refresh_intervening_operation_cannot_complete_the_new_identity_budget() {
+        use std::future::Future;
+        let (_data_dir, state) = unconfigured_refresh_state().await;
+        let before = state.get_state().state_generation;
+        let core_guard = state.core.lock().await;
+        let mut observed = Box::pin(state.observe_runtime_status());
+        std::future::poll_fn(|cx| {
+            assert!(observed.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        let operation = state
+            .operations
+            .admit(DesktopOperationKind::RuntimeResume, true)
+            .unwrap();
+        state.operations.finish(&operation.id, &Ok(()));
+        drop(core_guard);
+        assert_eq!(observed.await.unwrap().state_generation, before);
+        {
+            let guard = state.refresh_lock.lock().await;
+            let attempt = guard.as_ref().unwrap();
+            assert!(attempt.completed.is_none());
+            assert_ne!(attempt.operation_generation, state.operations.generation());
+        }
+        assert!(
+            state
+                .observe_runtime_status()
+                .await
+                .unwrap()
+                .state_generation
+                > before
+        );
+    }
+
+    #[tokio::test]
+    async fn readonly_refresh_does_not_claim_exclusive_operation_slot_or_block_diagnostics() {
+        let (_data_dir, state) = unconfigured_refresh_state().await;
         let before_gen = state.get_state().state_generation;
         let (refresh_result, diag_result) =
             tokio::join!(state.refresh_runtime_status(), state.diagnostics());

@@ -1,5 +1,7 @@
 //! Native Messaging host. Authentication stays in this process, never in the
 //! extension, stdout diagnostics, browser pages or model-visible output.
+#[cfg(all(test, windows))]
+mod tests;
 use super::{profiles, protocol, Hello, Rendezvous};
 use protocol::{EXTENSION_ID, MAX_COMMAND, MAX_RESPONSE, VERSION};
 use serde_json::json;
@@ -53,6 +55,100 @@ fn parent_pid() -> io::Result<u32> {
     }
 }
 
+struct ParentProcess {
+    pid: u32,
+    #[cfg(windows)]
+    process: std::os::windows::io::OwnedHandle,
+}
+
+impl ParentProcess {
+    fn capture() -> io::Result<Self> {
+        let pid = parent_pid()?;
+        let parent = Self {
+            pid,
+            #[cfg(windows)]
+            process: open_parent_process(pid)?,
+        };
+        parent.ensure_alive()?;
+        Ok(parent)
+    }
+
+    fn ensure_alive(&self) -> io::Result<()> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::{
+                Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
+                System::Threading::WaitForSingleObject,
+            };
+            // The handle keeps the original process identity even after exit.
+            // A repeated Toolhelp snapshot is expensive and only returns the
+            // immutable creation-time parent PID; it cannot detect parent exit.
+            match unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) } {
+                WAIT_TIMEOUT => Ok(()),
+                WAIT_OBJECT_0 => Err(protocol::invalid()),
+                WAIT_FAILED => Err(io::Error::last_os_error()),
+                _ => Err(protocol::invalid()),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if parent_pid()? == self.pid {
+                Ok(())
+            } else {
+                Err(protocol::invalid())
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn open_parent_process(pid: u32) -> io::Result<std::os::windows::io::OwnedHandle> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+    use windows_sys::Win32::{
+        Foundation::{FILETIME, HANDLE},
+        System::Threading::{
+            GetCurrentProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_SYNCHRONIZE,
+        },
+    };
+
+    fn created_at(process: HANDLE) -> io::Result<u64> {
+        let mut created = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut exited = created;
+        let mut kernel = created;
+        let mut user = created;
+        if unsafe { GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) }
+            == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+    }
+
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            pid,
+        )
+    };
+    if handle.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // Own immediately so errors during identity validation also close it.
+    let handle = unsafe { OwnedHandle::from_raw_handle(handle as RawHandle) };
+    // If the original parent exited before OpenProcess, its PID may now name a
+    // later process. That object cannot be our parent; fail closed.
+    if created_at(handle.as_raw_handle())? > created_at(unsafe { GetCurrentProcess() })? {
+        return Err(protocol::invalid());
+    }
+    Ok(handle)
+}
+
 /// Called only by the dedicated Native Messaging binary, not by a tool gateway.
 /// The manifest supplies the allowed caller origin; no endpoint/token argument is
 /// accepted. Stdio framing and caller identity are validated before connecting.
@@ -86,7 +182,7 @@ fn run_inner() -> io::Result<()> {
     {
         return Err(protocol::invalid());
     }
-    let parent = parent_pid()?;
+    let parent = ParentProcess::capture()?;
     let mut socket = TcpStream::connect_timeout(&config.address, Duration::from_secs(2))?;
     socket.set_read_timeout(Some(Duration::from_millis(100)))?;
     socket.set_write_timeout(Some(Duration::from_secs(1)))?;
@@ -96,7 +192,7 @@ fn run_inner() -> io::Result<()> {
         instance: config.instance,
         token: config.token,
         extension_id: EXTENSION_ID.into(),
-        parent_pid: parent,
+        parent_pid: parent.pid,
     };
     protocol::write_frame(
         &mut socket,
@@ -141,9 +237,7 @@ fn run_inner() -> io::Result<()> {
     )?;
     loop {
         // Exact parent lifetime, not an untrusted PID reported by JavaScript.
-        if parent_pid()? != parent {
-            return Err(protocol::invalid());
-        }
+        parent.ensure_alive()?;
         if let Some(value) = frames.poll(&mut socket)? {
             protocol::write_frame(&mut stdout, &value, MAX_COMMAND, true)?;
         }
